@@ -19,6 +19,104 @@ const db = new sqlite3.Database("kiosco.db", (err) => {
   else console.log("Conectado a la base de datos SQLite.");
 });
 
+// --- AGREGAR ESTO JUSTO AQUÍ DEBAJO ---
+db.serialize(() => {
+  // 1. Tabla Usuarios
+  db.run(`CREATE TABLE IF NOT EXISTS usuarios (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario TEXT UNIQUE,
+    password TEXT
+  )`);
+
+  // 2. Tablas de Productos y Ventas (Las que ya tenías)
+  db.run(`CREATE TABLE IF NOT EXISTS productos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT,
+    precio REAL,
+    stock INTEGER,
+    categoria TEXT
+  )`);
+  db.run(`CREATE TABLE IF NOT EXISTS ventas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticket_id TEXT,
+    producto TEXT,
+    cantidad INTEGER,
+    precio_total REAL,
+    metodo_pago TEXT,
+    categoria TEXT,
+    fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+    db.run(`CREATE TABLE IF NOT EXISTS cigarrillos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT,
+    precio REAL,
+    precio_qr REAL,
+    stock INTEGER
+  )`);
+   db.run(`CREATE TABLE IF NOT EXISTS gastos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    monto REAL,
+    descripcion TEXT,
+    categoria TEXT,
+    fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  // 3. TABLAS NUEVAS (ESTAS SON LAS QUE TE FALTAN) 👇
+  
+  // Clientes y Fiados
+  db.run(`CREATE TABLE IF NOT EXISTS clientes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT,
+    telefono TEXT
+  )`);
+  
+  db.run(`CREATE TABLE IF NOT EXISTS fiados (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cliente_id INTEGER,
+    monto REAL,
+    descripcion TEXT,
+    fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  // Proveedores y Cuenta Corriente
+  db.run(`CREATE TABLE IF NOT EXISTS proveedores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT,
+    telefono TEXT
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS movimientos_proveedores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    proveedor_id INTEGER,
+    monto REAL,
+    descripcion TEXT,
+    fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+  
+    // Historial de Cierres
+  db.run(`CREATE TABLE IF NOT EXISTS historial_cierres (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tipo TEXT,
+    total_ventas REAL,
+    total_gastos REAL,
+    total_sistema REAL,
+    total_fisico REAL,
+    diferencia REAL,
+    fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+    
+    // Aperturas de caja
+    db.run(`CREATE TABLE IF NOT EXISTS aperturas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    monto REAL,
+    observacion TEXT,
+    fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  console.log("Tablas verificadas/creadas correctamente.");
+});
+// ----------------------------------------
+
 // 3. RUTAS PRINCIPALES
 app.post("/login", (req, res) => {
   const { usuario, password } = req.body;
