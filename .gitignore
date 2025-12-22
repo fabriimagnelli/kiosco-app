@@ -1,0 +1,18 @@
+# Dependencias (NUNCA SUBIR ESTO)
+node_modules/
+
+# Archivos de compilación
+dist/
+build/
+
+# Base de datos (Binarios)
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs y archivos de sistema
+*.log
+.DS_Store
+
+# Variables de entorno (Claves secretas)
+.env
