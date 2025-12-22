@@ -6,7 +6,7 @@ function Login() {
   const [usuario, setUsuario] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const { login } = useAuth(); // Usamos la función del contexto
+  const { login } = useAuth();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -22,7 +22,7 @@ function Login() {
       const data = await res.json();
 
       if (res.ok && data.success) {
-        login(data.usuario); // ¡Éxito! Guardamos sesión
+        login(data.usuario);
       } else {
         setError("Usuario o contraseña incorrectos");
       }
@@ -36,8 +36,13 @@ function Login() {
       <div className="w-full max-w-md bg-white p-8 rounded-2xl shadow-2xl animate-fade-in mx-4">
         
         <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-slate-800 tracking-tight">MI KIOSCO</h1>
-            <p className="text-slate-500 text-sm mt-1">Inicia sesión para gestionar tu negocio</p>
+            {/* LOGO GRANDE */}
+            <div className="flex justify-center mb-4">
+                <img src="/logo.png" alt="SACWare Logo" className="h-20 w-auto object-contain drop-shadow-md" />
+            </div>
+
+            <h1 className="text-3xl font-bold text-slate-800 tracking-tight">SACWare</h1>
+            <p className="text-slate-500 text-sm mt-1">Bienvenido a tu Sistema de Gestión</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -81,7 +86,7 @@ function Login() {
         </form>
 
         <p className="text-center text-xs text-slate-400 mt-8">
-            Sistema de Gestión v1.0
+            SACWare v1.0
         </p>
       </div>
     </div>
