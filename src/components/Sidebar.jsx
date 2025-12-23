@@ -86,7 +86,7 @@ function Sidebar() {
           className="flex items-center gap-3 px-4 py-3 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors w-full text-left rounded-lg group"
         >
           <Database size={20} className="group-hover:text-blue-400"/>
-          <span className="font-medium">Crear Respaldoo</span>
+          <span className="font-medium">Crear Respaldo</span>
         </button>
 
         <button 
