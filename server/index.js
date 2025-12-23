@@ -19,166 +19,235 @@ const db = new sqlite3.Database("kiosco.db", (err) => {
   else console.log("Conectado a la base de datos SQLite.");
 });
 
-// --- AGREGAR ESTO JUSTO AQUÍ DEBAJO ---
+// --- CREACIÓN DE TABLAS ---
 db.serialize(() => {
-  // 1. Tabla Usuarios
-  db.run(`CREATE TABLE IF NOT EXISTS usuarios (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    usuario TEXT UNIQUE,
-    password TEXT
-  )`);
-
-  // 2. Tablas de Productos y Ventas (Las que ya tenías)
-  db.run(`CREATE TABLE IF NOT EXISTS productos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    nombre TEXT,
-    precio REAL,
-    stock INTEGER,
-    categoria TEXT
-  )`);
+  // Usuarios
+  db.run(`CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT UNIQUE, password TEXT)`);
+  
+  // Productos y Categorías
+  db.run(`CREATE TABLE IF NOT EXISTS productos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, precio REAL, stock INTEGER, categoria TEXT)`);
+  db.run(`CREATE TABLE IF NOT EXISTS categorias_productos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT)`);
+  
+  // Cigarrillos
+  db.run(`CREATE TABLE IF NOT EXISTS cigarrillos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, precio REAL, precio_qr REAL, stock INTEGER)`);
+  
+  // Ventas
   db.run(`CREATE TABLE IF NOT EXISTS ventas (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ticket_id TEXT,
-    producto TEXT,
-    cantidad INTEGER,
-    precio_total REAL,
-    metodo_pago TEXT,
-    categoria TEXT,
-    fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id TEXT, producto TEXT, cantidad INTEGER, 
+    precio_total REAL, metodo_pago TEXT, categoria TEXT, fecha DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
-    db.run(`CREATE TABLE IF NOT EXISTS cigarrillos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    nombre TEXT,
-    precio REAL,
-    precio_qr REAL,
-    stock INTEGER
-  )`);
-   db.run(`CREATE TABLE IF NOT EXISTS gastos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    monto REAL,
-    descripcion TEXT,
-    categoria TEXT,
-    fecha DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
-
-  // 3. TABLAS NUEVAS (ESTAS SON LAS QUE TE FALTAN) 👇
   
+  // Gastos
+  db.run(`CREATE TABLE IF NOT EXISTS gastos (id INTEGER PRIMARY KEY AUTOINCREMENT, monto REAL, descripcion TEXT, categoria TEXT, fecha DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+  db.run(`CREATE TABLE IF NOT EXISTS categorias_gastos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT)`);
+
   // Clientes y Fiados
-  db.run(`CREATE TABLE IF NOT EXISTS clientes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    nombre TEXT,
-    telefono TEXT
-  )`);
+  db.run(`CREATE TABLE IF NOT EXISTS clientes (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, telefono TEXT)`);
+  db.run(`CREATE TABLE IF NOT EXISTS fiados (id INTEGER PRIMARY KEY AUTOINCREMENT, cliente_id INTEGER, monto REAL, descripcion TEXT, fecha DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+
+  // Proveedores
+  db.run(`CREATE TABLE IF NOT EXISTS proveedores (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, telefono TEXT)`);
+  db.run(`CREATE TABLE IF NOT EXISTS movimientos_proveedores (id INTEGER PRIMARY KEY AUTOINCREMENT, proveedor_id INTEGER, monto REAL, descripcion TEXT, fecha DATETIME DEFAULT CURRENT_TIMESTAMP)`);
   
-  db.run(`CREATE TABLE IF NOT EXISTS fiados (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    cliente_id INTEGER,
-    monto REAL,
-    descripcion TEXT,
-    fecha DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
+  // Aperturas
+  db.run(`CREATE TABLE IF NOT EXISTS aperturas (id INTEGER PRIMARY KEY AUTOINCREMENT, monto REAL, observacion TEXT, fecha DATETIME DEFAULT CURRENT_TIMESTAMP)`);
 
-  // Proveedores y Cuenta Corriente
-  db.run(`CREATE TABLE IF NOT EXISTS proveedores (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    nombre TEXT,
-    telefono TEXT
-  )`);
+  // Usuario Admin por defecto
+  db.get("SELECT count(*) as count FROM usuarios", (err, row) => {
+      if (row && row.count === 0) {
+          db.run("INSERT INTO usuarios (usuario, password) VALUES (?, ?)", ["admin", "1234"]);
+          console.log("✅ Admin creado: admin / 1234");
+      }
+  });
 
-  db.run(`CREATE TABLE IF NOT EXISTS movimientos_proveedores (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    proveedor_id INTEGER,
-    monto REAL,
-    descripcion TEXT,
-    fecha DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
-  
-    // Historial de Cierres
-  db.run(`CREATE TABLE IF NOT EXISTS historial_cierres (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tipo TEXT,
-    total_ventas REAL,
-    total_gastos REAL,
-    total_sistema REAL,
-    total_fisico REAL,
-    diferencia REAL,
-    fecha DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
-    
-    // Aperturas de caja
-    db.run(`CREATE TABLE IF NOT EXISTS aperturas (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    monto REAL,
-    observacion TEXT,
-    fecha DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
+  // Categorías de Gastos por defecto (Soluciona el botón vacío)
+  db.get("SELECT count(*) as count FROM categorias_gastos", (err, row) => {
+      if (row && row.count === 0) {
+          const cats = ["Mercadería", "Luz", "Internet", "Alquiler", "Limpieza", "Varios"];
+          cats.forEach(c => db.run("INSERT INTO categorias_gastos (nombre) VALUES (?)", [c]));
+      }
+  });
 
-  console.log("Tablas verificadas/creadas correctamente.");
+  console.log("Tablas verificadas correctamente.");
 });
-// ----------------------------------------
 
-// 3. RUTAS PRINCIPALES
+// ==========================================
+// RUTAS (ENDPOINTS) - AQUÍ ESTABA EL PROBLEMA
+// ==========================================
+
+// --- LOGIN ---
 app.post("/login", (req, res) => {
   const { usuario, password } = req.body;
   db.get("SELECT * FROM usuarios WHERE usuario = ? AND password = ?", [usuario, password], (err, row) => {
     if (row) res.json({ success: true, usuario: row.usuario });
-    else res.status(401).json({ success: false, message: "Error" });
+    else res.status(401).json({ success: false, message: "Error credenciales" });
   });
 });
 
+// --- DASHBOARD ---
+app.get("/dashboard", (req, res) => {
+  const sqlVentas = `SELECT SUM(precio_total) as total, COUNT(*) as tickets FROM ventas WHERE date(fecha) = date('now', 'localtime')`;
+  const sqlGastos = `SELECT SUM(monto) as total FROM gastos WHERE date(fecha) = date('now', 'localtime')`;
+  const sqlStockBajo = `SELECT nombre, stock FROM productos WHERE stock <= 5 UNION SELECT nombre, stock FROM cigarrillos WHERE stock <= 5`;
+
+  db.get(sqlVentas, [], (err, v) => {
+    db.get(sqlGastos, [], (err, g) => {
+        db.all(sqlStockBajo, [], (err, s) => {
+            res.json({ ventas_hoy: v?.total || 0, tickets_hoy: v?.tickets || 0, gastos_hoy: g?.total || 0, bajo_stock: s || [] });
+        });
+    });
+  });
+});
+
+// --- PRODUCTOS ---
 app.get("/productos", (req, res) => db.all("SELECT * FROM productos", (err, r) => res.json(r)));
-app.post("/ventas", (req, res) => {
-    res.json({ message: "Venta registrada (Simulada para prueba)" });
+app.post("/productos", (req, res) => {
+    const { nombre, precio, stock, categoria } = req.body;
+    db.run("INSERT INTO productos (nombre, precio, stock, categoria) VALUES (?,?,?,?)", [nombre, precio, stock, categoria], (err) => res.json({id: this.lastID}));
+});
+app.put("/productos/:id", (req, res) => {
+    const { nombre, precio, stock, categoria } = req.body;
+    db.run("UPDATE productos SET nombre=?, precio=?, stock=?, categoria=? WHERE id=?", [nombre, precio, stock, categoria, req.params.id], () => res.json({success: true}));
+});
+app.delete("/productos/:id", (req, res) => {
+    db.run("DELETE FROM productos WHERE id = ?", [req.params.id], () => res.json({success: true}));
 });
 
-// Rutas "dummy" para que no de error 404 si el frontend las pide
-app.get("/cigarrillos", (req, res) => db.all("SELECT * FROM cigarrillos", (err, r) => res.json(r)));
+// --- CATEGORIAS PRODUCTOS ---
 app.get("/categorias_productos", (req, res) => db.all("SELECT * FROM categorias_productos", (err, r) => res.json(r)));
-app.get("/clientes", (req, res) => db.all("SELECT * FROM clientes", (err, r) => res.json(r)));
-app.get("/proveedores", (req, res) => db.all("SELECT * FROM proveedores", (err, r) => res.json(r)));
-app.get("/gastos", (req, res) => db.all("SELECT * FROM gastos", (err, r) => res.json(r)));
-app.get("/dashboard", (req, res) => res.json({ventas_hoy:0, tickets_hoy:0, gastos_hoy:0, bajo_stock:[]}));
+app.post("/categorias_productos", (req, res) => {
+    db.run("INSERT INTO categorias_productos (nombre) VALUES (?)", [req.body.nombre], () => res.json({success: true}));
+});
 
-// --- RUTA PARA BACKUP (COPIA DE SEGURIDAD) ---
-app.get("/backup", (req, res) => {
-  const fecha = new Date();
-  // Formato seguro para nombre de archivo: AAAA-MM-DD_HH-MM
-  const nombreFecha = fecha.toISOString().replace(/T/, '_').replace(/:/g, '-').split('.')[0];
-  const nombreArchivo = `Respaldo_${nombreFecha}.db`;
+// --- CIGARRILLOS ---
+app.get("/cigarrillos", (req, res) => db.all("SELECT * FROM cigarrillos", (err, r) => res.json(r)));
+app.post("/cigarrillos", (req, res) => {
+    const { nombre, precio, precio_qr, stock } = req.body;
+    db.run("INSERT INTO cigarrillos (nombre, precio, precio_qr, stock) VALUES (?,?,?,?)", [nombre, precio, precio_qr, stock], () => res.json({success: true}));
+});
+app.put("/cigarrillos/:id", (req, res) => {
+    const { nombre, precio, precio_qr, stock } = req.body;
+    db.run("UPDATE cigarrillos SET nombre=?, precio=?, precio_qr=?, stock=? WHERE id=?", [nombre, precio, precio_qr, stock, req.params.id], () => res.json({success: true}));
+});
+app.delete("/cigarrillos/:id", (req, res) => {
+    db.run("DELETE FROM cigarrillos WHERE id = ?", [req.params.id], () => res.json({success: true}));
+});
+
+// --- VENTAS (REGISTRAR Y DESCONTAR STOCK) ---
+app.post("/ventas", (req, res) => {
+  const { productos, metodo_pago } = req.body;
+  if (!productos || productos.length === 0) return res.status(400).json({ error: "Vacío" });
+
+  const ticket_id = Date.now().toString(); 
   
-  // Rutas
-  const rutaDB = path.join(__dirname, "kiosco.db");
-  const carpetaBackups = path.join(__dirname, "../Backups");
-  const rutaDestino = path.join(carpetaBackups, nombreArchivo);
+  db.serialize(() => {
+    db.run("BEGIN TRANSACTION");
+    const stmtVenta = db.prepare("INSERT INTO ventas (ticket_id, producto, cantidad, precio_total, metodo_pago, categoria, fecha) VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))");
+    const stmtStockProd = db.prepare("UPDATE productos SET stock = stock - ? WHERE id = ?");
+    const stmtStockCig = db.prepare("UPDATE cigarrillos SET stock = stock - ? WHERE id = ?");
 
-  // 1. Crear carpeta Backups si no existe
-  if (!fs.existsSync(carpetaBackups)) {
-    fs.mkdirSync(carpetaBackups);
-  }
+    productos.forEach((item) => {
+      stmtVenta.run(ticket_id, item.nombre, item.cantidad, item.precio * item.cantidad, metodo_pago, item.tipo || 'General');
+      if (item.tipo === "cigarrillo") stmtStockCig.run(item.cantidad, item.id);
+      else stmtStockProd.run(item.cantidad, item.id);
+    });
 
-  // 2. Copiar el archivo
-  fs.copyFile(rutaDB, rutaDestino, (err) => {
-    if (err) {
-      console.error("Error Backup:", err);
-      return res.status(500).json({ error: "No se pudo crear el respaldo" });
-    }
-    res.json({ message: "¡Copia de seguridad creada exitosamente!", archivo: nombreArchivo });
+    stmtVenta.finalize();
+    stmtStockProd.finalize();
+    stmtStockCig.finalize();
+
+    db.run("COMMIT", (err) => {
+        if(err) { db.run("ROLLBACK"); res.status(500).send(err); }
+        else res.json({ success: true });
+    });
   });
 });
 
-// Opción extra: Descargar el archivo directamente (Download)
-app.get("/descargar_db", (req, res) => {
-  const rutaDB = path.join(__dirname, "kiosco.db");
-  res.download(rutaDB, `Kiosco_Respaldo_${Date.now()}.db`);
+// --- HISTORIAL VENTAS (REPORTES) ---
+app.get("/historial", (req, res) => {
+    db.all("SELECT * FROM ventas ORDER BY fecha DESC", (err, rows) => res.json(rows));
 });
 
-// 4. REDIRECCIÓN FINAL (CORREGIDA)
-// Usamos /(.*)/ en lugar de "*" para evitar el PathError
+// --- GASTOS ---
+app.get("/gastos", (req, res) => db.all("SELECT * FROM gastos ORDER BY fecha DESC LIMIT 50", (err, r) => res.json(r)));
+app.post("/gastos", (req, res) => {
+    const { monto, descripcion, categoria } = req.body;
+    db.run("INSERT INTO gastos (monto, descripcion, categoria, fecha) VALUES (?, ?, ?, datetime('now', 'localtime'))", [monto, descripcion, categoria], () => res.json({success: true}));
+});
+app.delete("/gastos/:id", (req, res) => {
+    db.run("DELETE FROM gastos WHERE id=?", [req.params.id], () => res.json({success: true}));
+});
+// Categorías de Gastos
+app.get("/categorias_gastos", (req, res) => db.all("SELECT * FROM categorias_gastos", (err, r) => res.json(r)));
+app.post("/categorias_gastos", (req, res) => {
+    db.run("INSERT INTO categorias_gastos (nombre) VALUES (?)", [req.body.nombre], () => res.json({success: true}));
+});
+
+// --- DEUDORES (CLIENTES) ---
+app.get("/clientes", (req, res) => {
+    // Traemos cliente + cálculo de deuda total
+    const sql = `
+      SELECT c.*, SUM(f.monto) as total_deuda 
+      FROM clientes c 
+      LEFT JOIN fiados f ON c.id = f.cliente_id 
+      GROUP BY c.id
+    `;
+    db.all(sql, (err, rows) => res.json(rows));
+});
+app.post("/clientes", (req, res) => {
+    db.run("INSERT INTO clientes (nombre, telefono) VALUES (?,?)", [req.body.nombre, req.body.telefono], () => res.json({success: true}));
+});
+
+// Movimientos Fiados
+app.get("/fiados/:id", (req, res) => {
+    db.all("SELECT * FROM fiados WHERE cliente_id = ? ORDER BY fecha DESC", [req.params.id], (err, rows) => res.json(rows));
+});
+app.post("/fiados", (req, res) => {
+    const { cliente_id, monto, descripcion } = req.body;
+    db.run("INSERT INTO fiados (cliente_id, monto, descripcion, fecha) VALUES (?,?,?, datetime('now', 'localtime'))", [cliente_id, monto, descripcion], () => res.json({success: true}));
+});
+
+// --- PROVEEDORES ---
+app.get("/proveedores", (req, res) => {
+    const sql = `
+      SELECT p.*, SUM(m.monto) as total_deuda 
+      FROM proveedores p 
+      LEFT JOIN movimientos_proveedores m ON p.id = m.proveedor_id 
+      GROUP BY p.id
+    `;
+    db.all(sql, (err, rows) => res.json(rows));
+});
+app.post("/proveedores", (req, res) => {
+    db.run("INSERT INTO proveedores (nombre, telefono) VALUES (?,?)", [req.body.nombre, req.body.telefono], () => res.json({success: true}));
+});
+
+// Movimientos Proveedores
+app.get("/movimientos_proveedores/:id", (req, res) => {
+    db.all("SELECT * FROM movimientos_proveedores WHERE proveedor_id = ? ORDER BY fecha DESC", [req.params.id], (err, rows) => res.json(rows));
+});
+app.post("/movimientos_proveedores", (req, res) => {
+    const { proveedor_id, monto, descripcion } = req.body;
+    db.run("INSERT INTO movimientos_proveedores (proveedor_id, monto, descripcion, fecha) VALUES (?,?,?, datetime('now', 'localtime'))", [proveedor_id, monto, descripcion], () => res.json({success: true}));
+});
+
+// --- APERTURA DE CAJA ---
+app.post("/apertura", (req, res) => {
+    const { monto, observacion } = req.body;
+    db.run("INSERT INTO aperturas (monto, observacion, fecha) VALUES (?, ?, datetime('now', 'localtime'))", [monto, observacion], () => res.json({success: true}));
+});
+
+// --- BACKUP ---
+app.get("/backup", (req, res) => {
+  const rutaDB = path.join(__dirname, "kiosco.db");
+  const nombreArchivo = `Respaldo_Kiosco_${Date.now()}.db`;
+  res.download(rutaDB, nombreArchivo);
+});
+
+// --- SERVIR FRONTEND ---
 app.get(/(.*)/, (req, res) => {
   res.sendFile(path.join(__dirname, "../dist/index.html"));
 });
 
 app.listen(port, () => {
-  console.log(`🚀 Servidor listo en http://localhost:${port}`);
+  console.log(`🚀 Servidor Kiosco arreglado corriendo en http://localhost:${port}`);
 });
-
