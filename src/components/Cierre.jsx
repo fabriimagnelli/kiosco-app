@@ -36,7 +36,6 @@ function Cierre() {
     setTotalFisico(suma);
   }, [billetes]);
 
-  // Cuando cambiamos de pestaña, limpiamos los billetes para empezar a contar esa caja específica
   const cambiarPestana = (tab) => {
     setActiveTab(tab);
     setBilletes({ 20000: "", 10000: "", 2000: "", 1000: "", 500: "", 200: "", 100: "", 50: "", 20: "", 10: "" });
@@ -44,11 +43,24 @@ function Cierre() {
 
   const cambiarCantidad = (valor, cantidad) => setBilletes({ ...billetes, [valor]: cantidad });
 
-  // Determinar valores según la pestaña activa
+  // --- LÓGICA INTELIGENTE DE CÁLCULO ---
   const esGeneral = activeTab === "general";
   const infoActual = esGeneral ? datos.general : datos.cigarrillos;
   const saldoEsperado = infoActual.esperado;
-  const diferencia = totalFisico - saldoEsperado;
+
+  // 1. Cálculo Real (Contable) para saber si falta o sobra de verdad
+  // Si da negativo: Falta plata. Si da positivo: Sobra plata.
+  const diferenciaReal = totalFisico - saldoEsperado;
+
+  // 2. Cálculo Visual (Lo que tú quieres ver en pantalla)
+  // - General: Invertimos (Esperado - Físico) para ver cuánto falta como número positivo (Cuenta Regresiva).
+  // - Cigarrillos: Mantenemos el estándar (Físico - Esperado) donde negativo es faltante.
+  const diferenciaVisual = esGeneral ? (saldoEsperado - totalFisico) : diferenciaReal;
+
+  // Helpers para colores y textos (Basados en la realidad, no en lo visual)
+  const esFaltante = diferenciaReal < 0; 
+  const esSobrante = diferenciaReal > 0;
+  const esPerfecto = diferenciaReal === 0;
 
   const guardarCierre = () => {
     const nombreCaja = esGeneral ? "CAJA GENERAL (Kiosco)" : "CAJA CIGARRILLOS";
@@ -56,11 +68,11 @@ function Cierre() {
 
     const body = {
         tipo: esGeneral ? "GENERAL" : "CIGARRILLOS",
-        total_ventas: esGeneral ? infoActual.ventas : infoActual.ventas, 
+        total_ventas: infoActual.ventas, 
         total_gastos: esGeneral ? (infoActual.gastos + infoActual.pagos) : 0,
         total_sistema: saldoEsperado,
         total_fisico: totalFisico,
-        diferencia: diferencia
+        diferencia: diferenciaReal // Guardamos el dato contable real para no romper reportes
     };
 
     fetch("http://localhost:3001/cierres", {
@@ -81,7 +93,7 @@ function Cierre() {
     const doc = new jsPDF();
     const fecha = new Date().toLocaleDateString("es-AR");
 
-    doc.setFillColor(esGeneral ? 30 : 202, esGeneral ? 41 : 138, esGeneral ? 59 : 4); // Azul o Amarillo Oscuro
+    doc.setFillColor(esGeneral ? 30 : 202, esGeneral ? 41 : 138, esGeneral ? 59 : 4); 
     doc.rect(0, 0, 210, 40, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(22);
@@ -174,7 +186,7 @@ function Cierre() {
         {/* DERECHA: INFORMACIÓN DEL SISTEMA */}
         <div className="w-full md:w-1/2 flex flex-col gap-4">
             
-            {/* TARJETA DE RESUMEN (CAMBIA SEGÚN PESTAÑA) */}
+            {/* TARJETA DE RESUMEN */}
             <div className={`p-6 rounded-xl shadow-sm border-l-4 relative overflow-hidden flex-1 ${esGeneral ? "bg-white border-blue-600" : "bg-white border-yellow-500"}`}>
                 <div className="flex justify-between items-start mb-4">
                     <div>
@@ -211,17 +223,21 @@ function Cierre() {
                 </div>
             </div>
 
-            {/* TARJETA DE RESULTADO */}
-            <div className={`p-6 rounded-xl shadow-sm border border-slate-200 text-center transition-colors ${diferencia === 0 ? "bg-green-50" : diferencia < 0 ? "bg-red-50" : "bg-blue-50"}`}>
+            {/* TARJETA DE RESULTADO - LÓGICA HÍBRIDA */}
+            <div className={`p-6 rounded-xl shadow-sm border border-slate-200 text-center transition-colors ${esPerfecto ? "bg-green-50" : esFaltante ? "bg-red-50" : "bg-blue-50"}`}>
                 <p className="text-xs font-bold text-slate-500 uppercase mb-1">Resultado</p>
                 <div className="flex justify-center items-center gap-2 mb-2">
-                    <span className={`text-4xl font-bold ${diferencia === 0 ? "text-green-600" : diferencia < 0 ? "text-red-600" : "text-blue-600"}`}>
-                        {diferencia > 0 ? "+" : ""}${diferencia.toLocaleString()}
+                    {/* Mostramos diferenciaVisual (ajustada a tu gusto por pestaña) */}
+                    <span className={`text-4xl font-bold ${esPerfecto ? "text-green-600" : esFaltante ? "text-red-600" : "text-blue-600"}`}>
+                        {diferenciaVisual > 0 ? (esGeneral ? "" : "+") : (esGeneral ? "-" : "")}${Math.abs(diferenciaVisual).toLocaleString()}
                     </span>
                 </div>
                 <div className="flex justify-center gap-2 text-sm font-medium">
-                    {diferencia === 0 && <span className="text-green-700 flex items-center gap-1"><CheckCircle size={16}/> Perfecto</span>}
-                    {diferencia !== 0 && <span className={`${diferencia < 0 ? "text-red-700" : "text-blue-700"} flex items-center gap-1`}><AlertTriangle size={16}/> {diferencia < 0 ? "Faltante" : "Sobrante"}</span>}
+                    {esPerfecto && <span className="text-green-700 flex items-center gap-1"><CheckCircle size={16}/> Perfecto</span>}
+                    {/* Usamos esFaltante/esSobrante (lógica real) para el texto y color */}
+                    {!esPerfecto && <span className={`${esFaltante ? "text-red-700" : "text-blue-700"} flex items-center gap-1`}>
+                        <AlertTriangle size={16}/> {esFaltante ? "Faltante" : "Sobrante"}
+                    </span>}
                 </div>
             </div>
 
