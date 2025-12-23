@@ -216,7 +216,7 @@ function Cierre() {
                 <p className="text-xs font-bold text-slate-500 uppercase mb-1">Resultado</p>
                 <div className="flex justify-center items-center gap-2 mb-2">
                     <span className={`text-4xl font-bold ${diferencia === 0 ? "text-green-600" : diferencia < 0 ? "text-red-600" : "text-blue-600"}`}>
-                        {diferencia > 0 ? "+" : ""}{diferencia}
+                        {diferencia > 0 ? "+" : ""}${diferencia.toLocaleString()}
                     </span>
                 </div>
                 <div className="flex justify-center gap-2 text-sm font-medium">

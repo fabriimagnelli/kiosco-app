@@ -243,6 +243,123 @@ app.get("/backup", (req, res) => {
   res.download(rutaDB, nombreArchivo);
 });
 
+// ==========================================
+// RUTAS FALTANTES PARA CIERRE Y BALANCE
+// ==========================================
+
+// 1. Crear tabla de CIERRES si no existe (Agrégalo junto a las otras tablas o déjalo aquí)
+db.run(`CREATE TABLE IF NOT EXISTS cierres (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, 
+    tipo TEXT, 
+    total_ventas REAL, 
+    total_gastos REAL, 
+    total_sistema REAL, 
+    total_fisico REAL, 
+    diferencia REAL, 
+    fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+)`);
+
+// 2. Ruta: RESUMEN DEL DÍA (Para el Cierre de Caja)
+app.get("/resumen_dia_independiente", (req, res) => {
+    const hoy = "date('now', 'localtime')";
+    
+    // Consultas SQL auxiliares
+    const sqlApertura = `SELECT monto FROM aperturas WHERE date(fecha) = ${hoy} ORDER BY id DESC LIMIT 1`;
+    const sqlVentasGral = `SELECT SUM(precio_total) as total FROM ventas WHERE categoria != 'cigarrillo' AND metodo_pago = 'Efectivo' AND date(fecha) = ${hoy}`;
+    const sqlVentasCig = `SELECT SUM(precio_total) as total FROM ventas WHERE categoria = 'cigarrillo' AND metodo_pago = 'Efectivo' AND date(fecha) = ${hoy}`;
+    const sqlDigital = `SELECT SUM(precio_total) as total FROM ventas WHERE metodo_pago != 'Efectivo' AND date(fecha) = ${hoy}`;
+    const sqlGastos = `SELECT SUM(monto) as total FROM gastos WHERE date(fecha) = ${hoy}`;
+    const sqlPagosProv = `SELECT SUM(monto) as total FROM movimientos_proveedores WHERE date(fecha) = ${hoy}`; // Asumiendo pagos positivos
+    // Asumimos que "Cobros" son pagos de deudores (fiados negativos o lógica similar). Si no usas pagos en fiados, esto será 0.
+    const sqlCobros = `SELECT SUM(ABS(monto)) as total FROM fiados WHERE monto < 0 AND date(fecha) = ${hoy}`; 
+
+    db.serialize(() => {
+        let datos = {
+            general: { saldo_inicial: 0, ventas: 0, cobros: 0, gastos: 0, pagos: 0, esperado: 0 },
+            cigarrillos: { ventas: 0, esperado: 0 },
+            digital: 0
+        };
+
+        db.get(sqlApertura, (err, row) => { if(row) datos.general.saldo_inicial = row.monto; });
+        db.get(sqlVentasGral, (err, row) => { if(row) datos.general.ventas = row.total || 0; });
+        db.get(sqlVentasCig, (err, row) => { if(row) datos.cigarrillos.ventas = row.total || 0; });
+        db.get(sqlDigital, (err, row) => { if(row) datos.digital = row.total || 0; });
+        db.get(sqlGastos, (err, row) => { if(row) datos.general.gastos = row.total || 0; });
+        db.get(sqlPagosProv, (err, row) => { if(row) datos.general.pagos = row.total || 0; });
+        db.get(sqlCobros, (err, row) => { 
+            if(row) datos.general.cobros = row.total || 0; 
+            
+            // CÁLCULOS FINALES
+            datos.general.esperado = datos.general.saldo_inicial + datos.general.ventas + datos.general.cobros - datos.general.gastos - datos.general.pagos;
+            datos.cigarrillos.esperado = datos.cigarrillos.ventas;
+
+            res.json(datos);
+        });
+    });
+});
+
+// 3. Ruta: GUARDAR CIERRE
+app.post("/cierres", (req, res) => {
+    const { tipo, total_ventas, total_gastos, total_sistema, total_fisico, diferencia } = req.body;
+    db.run(
+        "INSERT INTO cierres (tipo, total_ventas, total_gastos, total_sistema, total_fisico, diferencia, fecha) VALUES (?,?,?,?,?,?, datetime('now', 'localtime'))",
+        [tipo, total_ventas, total_gastos, total_sistema, total_fisico, diferencia],
+        (err) => {
+            if (err) res.status(500).json({ error: err.message });
+            else res.json({ success: true });
+        }
+    );
+});
+
+// 4. Ruta: BALANCE POR RANGO DE FECHAS
+app.get("/balance_rango", (req, res) => {
+    const { desde, hasta } = req.query;
+    if(!desde || !hasta) return res.status(400).json({error: "Faltan fechas"});
+
+    const filtroFecha = `date(fecha) BETWEEN date('${desde}') AND date('${hasta}')`;
+
+    const queries = {
+        kiosco_efvo: `SELECT SUM(precio_total) as t FROM ventas WHERE categoria != 'cigarrillo' AND metodo_pago = 'Efectivo' AND ${filtroFecha}`,
+        cigarros_efvo: `SELECT SUM(precio_total) as t FROM ventas WHERE categoria = 'cigarrillo' AND metodo_pago = 'Efectivo' AND ${filtroFecha}`,
+        digital: `SELECT SUM(precio_total) as t FROM ventas WHERE metodo_pago != 'Efectivo' AND ${filtroFecha}`,
+        cobros_deuda: `SELECT SUM(ABS(monto)) as t FROM fiados WHERE monto < 0 AND ${filtroFecha}`,
+        gastos_varios: `SELECT SUM(monto) as t FROM gastos WHERE ${filtroFecha}`,
+        pagos_proveedores: `SELECT SUM(monto) as t FROM movimientos_proveedores WHERE ${filtroFecha}`
+    };
+
+    let resultados = {};
+    let completados = 0;
+    const totalQueries = Object.keys(queries).length;
+
+    Object.keys(queries).forEach(key => {
+        db.get(queries[key], (err, row) => {
+            resultados[key] = row?.t || 0;
+            completados++;
+            
+            if(completados === totalQueries) {
+                const total_ingresos = resultados.kiosco_efvo + resultados.cigarros_efvo + resultados.digital + resultados.cobros_deuda;
+                const total_egresos = resultados.gastos_varios + resultados.pagos_proveedores;
+                
+                res.json({
+                    ingresos: {
+                        kiosco_efvo: resultados.kiosco_efvo,
+                        cigarros_efvo: resultados.cigarros_efvo,
+                        digital: resultados.digital,
+                        cobros_deuda: resultados.cobros_deuda
+                    },
+                    egresos: {
+                        gastos_varios: resultados.gastos_varios,
+                        pagos_proveedores: resultados.pagos_proveedores
+                    },
+                    total_ingresos,
+                    total_egresos,
+                    balance_neto: total_ingresos - total_egresos
+                });
+            }
+        });
+    });
+});
+
 // --- SERVIR FRONTEND ---
 app.get(/(.*)/, (req, res) => {
   res.sendFile(path.join(__dirname, "../dist/index.html"));
