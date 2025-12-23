@@ -52,6 +52,18 @@ db.serialize(() => {
   // Aperturas
   db.run(`CREATE TABLE IF NOT EXISTS aperturas (id INTEGER PRIMARY KEY AUTOINCREMENT, monto REAL, observacion TEXT, fecha DATETIME DEFAULT CURRENT_TIMESTAMP)`);
 
+  // CIERRES DE CAJA (La tabla que faltaba)
+  db.run(`CREATE TABLE IF NOT EXISTS cierres (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, 
+    tipo TEXT, 
+    total_ventas REAL, 
+    total_gastos REAL, 
+    total_sistema REAL, 
+    total_fisico REAL, 
+    diferencia REAL, 
+    fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
   // Usuario Admin por defecto
   db.get("SELECT count(*) as count FROM usuarios", (err, row) => {
       if (row && row.count === 0) {
@@ -60,7 +72,7 @@ db.serialize(() => {
       }
   });
 
-  // Categorías de Gastos por defecto (Soluciona el botón vacío)
+  // Categorías de Gastos por defecto
   db.get("SELECT count(*) as count FROM categorias_gastos", (err, row) => {
       if (row && row.count === 0) {
           const cats = ["Mercadería", "Luz", "Internet", "Alquiler", "Limpieza", "Varios"];
@@ -72,7 +84,7 @@ db.serialize(() => {
 });
 
 // ==========================================
-// RUTAS (ENDPOINTS) - AQUÍ ESTABA EL PROBLEMA
+// RUTAS (ENDPOINTS)
 // ==========================================
 
 // --- LOGIN ---
@@ -133,7 +145,7 @@ app.delete("/cigarrillos/:id", (req, res) => {
     db.run("DELETE FROM cigarrillos WHERE id = ?", [req.params.id], () => res.json({success: true}));
 });
 
-// --- VENTAS (REGISTRAR Y DESCONTAR STOCK) ---
+// --- VENTAS ---
 app.post("/ventas", (req, res) => {
   const { productos, metodo_pago } = req.body;
   if (!productos || productos.length === 0) return res.status(400).json({ error: "Vacío" });
@@ -163,7 +175,6 @@ app.post("/ventas", (req, res) => {
   });
 });
 
-// --- HISTORIAL VENTAS (REPORTES) ---
 app.get("/historial", (req, res) => {
     db.all("SELECT * FROM ventas ORDER BY fecha DESC", (err, rows) => res.json(rows));
 });
@@ -177,7 +188,6 @@ app.post("/gastos", (req, res) => {
 app.delete("/gastos/:id", (req, res) => {
     db.run("DELETE FROM gastos WHERE id=?", [req.params.id], () => res.json({success: true}));
 });
-// Categorías de Gastos
 app.get("/categorias_gastos", (req, res) => db.all("SELECT * FROM categorias_gastos", (err, r) => res.json(r)));
 app.post("/categorias_gastos", (req, res) => {
     db.run("INSERT INTO categorias_gastos (nombre) VALUES (?)", [req.body.nombre], () => res.json({success: true}));
@@ -185,20 +195,12 @@ app.post("/categorias_gastos", (req, res) => {
 
 // --- DEUDORES (CLIENTES) ---
 app.get("/clientes", (req, res) => {
-    // Traemos cliente + cálculo de deuda total
-    const sql = `
-      SELECT c.*, SUM(f.monto) as total_deuda 
-      FROM clientes c 
-      LEFT JOIN fiados f ON c.id = f.cliente_id 
-      GROUP BY c.id
-    `;
+    const sql = `SELECT c.*, SUM(f.monto) as total_deuda FROM clientes c LEFT JOIN fiados f ON c.id = f.cliente_id GROUP BY c.id`;
     db.all(sql, (err, rows) => res.json(rows));
 });
 app.post("/clientes", (req, res) => {
     db.run("INSERT INTO clientes (nombre, telefono) VALUES (?,?)", [req.body.nombre, req.body.telefono], () => res.json({success: true}));
 });
-
-// Movimientos Fiados
 app.get("/fiados/:id", (req, res) => {
     db.all("SELECT * FROM fiados WHERE cliente_id = ? ORDER BY fecha DESC", [req.params.id], (err, rows) => res.json(rows));
 });
@@ -209,19 +211,12 @@ app.post("/fiados", (req, res) => {
 
 // --- PROVEEDORES ---
 app.get("/proveedores", (req, res) => {
-    const sql = `
-      SELECT p.*, SUM(m.monto) as total_deuda 
-      FROM proveedores p 
-      LEFT JOIN movimientos_proveedores m ON p.id = m.proveedor_id 
-      GROUP BY p.id
-    `;
+    const sql = `SELECT p.*, SUM(m.monto) as total_deuda FROM proveedores p LEFT JOIN movimientos_proveedores m ON p.id = m.proveedor_id GROUP BY p.id`;
     db.all(sql, (err, rows) => res.json(rows));
 });
 app.post("/proveedores", (req, res) => {
     db.run("INSERT INTO proveedores (nombre, telefono) VALUES (?,?)", [req.body.nombre, req.body.telefono], () => res.json({success: true}));
 });
-
-// Movimientos Proveedores
 app.get("/movimientos_proveedores/:id", (req, res) => {
     db.all("SELECT * FROM movimientos_proveedores WHERE proveedor_id = ? ORDER BY fecha DESC", [req.params.id], (err, rows) => res.json(rows));
 });
@@ -244,33 +239,20 @@ app.get("/backup", (req, res) => {
 });
 
 // ==========================================
-// RUTAS FALTANTES PARA CIERRE Y BALANCE
+// RUTAS NUEVAS (SOLUCIÓN CIERRE Y BALANCE)
 // ==========================================
 
-// 1. Crear tabla de CIERRES si no existe (Agrégalo junto a las otras tablas o déjalo aquí)
-db.run(`CREATE TABLE IF NOT EXISTS cierres (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, 
-    tipo TEXT, 
-    total_ventas REAL, 
-    total_gastos REAL, 
-    total_sistema REAL, 
-    total_fisico REAL, 
-    diferencia REAL, 
-    fecha DATETIME DEFAULT CURRENT_TIMESTAMP
-)`);
-
-// 2. Ruta: RESUMEN DEL DÍA (Para el Cierre de Caja)
+// 1. Ruta: RESUMEN DEL DÍA
 app.get("/resumen_dia_independiente", (req, res) => {
     const hoy = "date('now', 'localtime')";
     
-    // Consultas SQL auxiliares
+    // Consultas SQL
     const sqlApertura = `SELECT monto FROM aperturas WHERE date(fecha) = ${hoy} ORDER BY id DESC LIMIT 1`;
     const sqlVentasGral = `SELECT SUM(precio_total) as total FROM ventas WHERE categoria != 'cigarrillo' AND metodo_pago = 'Efectivo' AND date(fecha) = ${hoy}`;
     const sqlVentasCig = `SELECT SUM(precio_total) as total FROM ventas WHERE categoria = 'cigarrillo' AND metodo_pago = 'Efectivo' AND date(fecha) = ${hoy}`;
     const sqlDigital = `SELECT SUM(precio_total) as total FROM ventas WHERE metodo_pago != 'Efectivo' AND date(fecha) = ${hoy}`;
     const sqlGastos = `SELECT SUM(monto) as total FROM gastos WHERE date(fecha) = ${hoy}`;
-    const sqlPagosProv = `SELECT SUM(monto) as total FROM movimientos_proveedores WHERE date(fecha) = ${hoy}`; // Asumiendo pagos positivos
-    // Asumimos que "Cobros" son pagos de deudores (fiados negativos o lógica similar). Si no usas pagos en fiados, esto será 0.
+    const sqlPagosProv = `SELECT SUM(monto) as total FROM movimientos_proveedores WHERE date(fecha) = ${hoy}`;
     const sqlCobros = `SELECT SUM(ABS(monto)) as total FROM fiados WHERE monto < 0 AND date(fecha) = ${hoy}`; 
 
     db.serialize(() => {
@@ -280,7 +262,7 @@ app.get("/resumen_dia_independiente", (req, res) => {
             digital: 0
         };
 
-        db.get(sqlApertura, (err, row) => { if(row) datos.general.saldo_inicial = row.monto; });
+        db.get(sqlApertura, (err, row) => { if(row) datos.general.saldo_inicial = row.monto || 0; });
         db.get(sqlVentasGral, (err, row) => { if(row) datos.general.ventas = row.total || 0; });
         db.get(sqlVentasCig, (err, row) => { if(row) datos.cigarrillos.ventas = row.total || 0; });
         db.get(sqlDigital, (err, row) => { if(row) datos.digital = row.total || 0; });
@@ -289,16 +271,16 @@ app.get("/resumen_dia_independiente", (req, res) => {
         db.get(sqlCobros, (err, row) => { 
             if(row) datos.general.cobros = row.total || 0; 
             
-            // CÁLCULOS FINALES
-            datos.general.esperado = datos.general.saldo_inicial + datos.general.ventas + datos.general.cobros - datos.general.gastos - datos.general.pagos;
-            datos.cigarrillos.esperado = datos.cigarrillos.ventas;
+            // CÁLCULO FINAL DE LO QUE DEBERÍA HABER
+            datos.general.esperado = (datos.general.saldo_inicial || 0) + (datos.general.ventas || 0) + (datos.general.cobros || 0) - (datos.general.gastos || 0) - (datos.general.pagos || 0);
+            datos.cigarrillos.esperado = datos.cigarrillos.ventas || 0;
 
             res.json(datos);
         });
     });
 });
 
-// 3. Ruta: GUARDAR CIERRE
+// 2. Ruta: GUARDAR CIERRE
 app.post("/cierres", (req, res) => {
     const { tipo, total_ventas, total_gastos, total_sistema, total_fisico, diferencia } = req.body;
     db.run(
@@ -311,7 +293,7 @@ app.post("/cierres", (req, res) => {
     );
 });
 
-// 4. Ruta: BALANCE POR RANGO DE FECHAS
+// 3. Ruta: BALANCE
 app.get("/balance_rango", (req, res) => {
     const { desde, hasta } = req.query;
     if(!desde || !hasta) return res.status(400).json({error: "Faltan fechas"});
@@ -360,11 +342,11 @@ app.get("/balance_rango", (req, res) => {
     });
 });
 
-// --- SERVIR FRONTEND ---
+// --- SERVIR FRONTEND (SIEMPRE AL FINAL) ---
 app.get(/(.*)/, (req, res) => {
   res.sendFile(path.join(__dirname, "../dist/index.html"));
 });
 
 app.listen(port, () => {
-  console.log(`🚀 Servidor Kiosco arreglado corriendo en http://localhost:${port}`);
+  console.log(`🚀 Servidor Kiosco completo corriendo en http://localhost:${port}`);
 });
