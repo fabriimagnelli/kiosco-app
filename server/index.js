@@ -52,7 +52,7 @@ db.serialize(() => {
   // Aperturas
   db.run(`CREATE TABLE IF NOT EXISTS aperturas (id INTEGER PRIMARY KEY AUTOINCREMENT, monto REAL, observacion TEXT, fecha DATETIME DEFAULT CURRENT_TIMESTAMP)`);
 
-  // CIERRES DE CAJA (La tabla que faltaba)
+  // CIERRES DE CAJA
   db.run(`CREATE TABLE IF NOT EXISTS cierres (
     id INTEGER PRIMARY KEY AUTOINCREMENT, 
     tipo TEXT, 
@@ -96,16 +96,27 @@ app.post("/login", (req, res) => {
   });
 });
 
-// --- DASHBOARD ---
+// --- DASHBOARD (CORREGIDO: Muestra datos de la CAJA ACTUAL, no del día calendario) ---
 app.get("/dashboard", (req, res) => {
-  const sqlVentas = `SELECT SUM(precio_total) as total, COUNT(*) as tickets FROM ventas WHERE date(fecha) = date('now', 'localtime')`;
-  const sqlGastos = `SELECT SUM(monto) as total FROM gastos WHERE date(fecha) = date('now', 'localtime')`;
+  // 1. Buscamos la fecha y hora del ÚLTIMO CIERRE GENERAL
+  const sqlUltimoCierre = "(SELECT IFNULL(MAX(fecha), '1900-01-01') FROM cierres WHERE tipo = 'GENERAL')";
+
+  // 2. Sumamos solo las ventas y gastos que ocurrieron DESPUÉS de ese cierre
+  const sqlVentas = `SELECT SUM(precio_total) as total, COUNT(*) as tickets FROM ventas WHERE fecha > ${sqlUltimoCierre}`;
+  const sqlGastos = `SELECT SUM(monto) as total FROM gastos WHERE fecha > ${sqlUltimoCierre}`;
+  
+  // El stock bajo sigue igual (es el estado actual)
   const sqlStockBajo = `SELECT nombre, stock FROM productos WHERE stock <= 5 UNION SELECT nombre, stock FROM cigarrillos WHERE stock <= 5`;
 
   db.get(sqlVentas, [], (err, v) => {
     db.get(sqlGastos, [], (err, g) => {
         db.all(sqlStockBajo, [], (err, s) => {
-            res.json({ ventas_hoy: v?.total || 0, tickets_hoy: v?.tickets || 0, gastos_hoy: g?.total || 0, bajo_stock: s || [] });
+            res.json({ 
+                ventas_hoy: v?.total || 0, 
+                tickets_hoy: v?.tickets || 0, 
+                gastos_hoy: g?.total || 0, 
+                bajo_stock: s || [] 
+            });
         });
     });
   });
@@ -239,21 +250,25 @@ app.get("/backup", (req, res) => {
 });
 
 // ==========================================
-// RUTAS NUEVAS (SOLUCIÓN CIERRE Y BALANCE)
+// RUTAS NUEVAS (LÓGICA PERSISTENTE)
 // ==========================================
 
-// 1. Ruta: RESUMEN DEL DÍA
+// 1. Ruta: RESUMEN DEL DÍA (Ahora basado en ÚLTIMO CIERRE)
 app.get("/resumen_dia_independiente", (req, res) => {
-    const hoy = "date('now', 'localtime')";
     
-    // Consultas SQL
-    const sqlApertura = `SELECT monto FROM aperturas WHERE date(fecha) = ${hoy} ORDER BY id DESC LIMIT 1`;
-    const sqlVentasGral = `SELECT SUM(precio_total) as total FROM ventas WHERE categoria != 'cigarrillo' AND metodo_pago = 'Efectivo' AND date(fecha) = ${hoy}`;
-    const sqlVentasCig = `SELECT SUM(precio_total) as total FROM ventas WHERE categoria = 'cigarrillo' AND metodo_pago = 'Efectivo' AND date(fecha) = ${hoy}`;
-    const sqlDigital = `SELECT SUM(precio_total) as total FROM ventas WHERE metodo_pago != 'Efectivo' AND date(fecha) = ${hoy}`;
-    const sqlGastos = `SELECT SUM(monto) as total FROM gastos WHERE date(fecha) = ${hoy}`;
-    const sqlPagosProv = `SELECT SUM(monto) as total FROM movimientos_proveedores WHERE date(fecha) = ${hoy}`;
-    const sqlCobros = `SELECT SUM(ABS(monto)) as total FROM fiados WHERE monto < 0 AND date(fecha) = ${hoy}`; 
+    // Subconsultas para obtener la fecha del último cierre de cada tipo
+    // Si no hay cierres, usamos una fecha muy antigua ('1900-01-01') para traer todo el historial.
+    const sqlFechaGeneral = "(SELECT IFNULL(MAX(fecha), '1900-01-01') FROM cierres WHERE tipo = 'GENERAL')";
+    const sqlFechaCig = "(SELECT IFNULL(MAX(fecha), '1900-01-01') FROM cierres WHERE tipo = 'CIGARRILLOS')";
+
+    // Consultas SQL: Traen todo lo que tenga fecha MAYOR (posterior) al último cierre
+    const sqlApertura = `SELECT monto FROM aperturas WHERE fecha > ${sqlFechaGeneral} ORDER BY id DESC LIMIT 1`;
+    const sqlVentasGral = `SELECT SUM(precio_total) as total FROM ventas WHERE categoria != 'cigarrillo' AND metodo_pago = 'Efectivo' AND fecha > ${sqlFechaGeneral}`;
+    const sqlVentasCig = `SELECT SUM(precio_total) as total FROM ventas WHERE categoria = 'cigarrillo' AND metodo_pago = 'Efectivo' AND fecha > ${sqlFechaCig}`; // Usa su propia fecha de cierre
+    const sqlDigital = `SELECT SUM(precio_total) as total FROM ventas WHERE metodo_pago != 'Efectivo' AND fecha > ${sqlFechaGeneral}`;
+    const sqlGastos = `SELECT SUM(monto) as total FROM gastos WHERE fecha > ${sqlFechaGeneral}`;
+    const sqlPagosProv = `SELECT SUM(monto) as total FROM movimientos_proveedores WHERE fecha > ${sqlFechaGeneral}`;
+    const sqlCobros = `SELECT SUM(ABS(monto)) as total FROM fiados WHERE monto < 0 AND fecha > ${sqlFechaGeneral}`; 
 
     db.serialize(() => {
         let datos = {
@@ -271,7 +286,7 @@ app.get("/resumen_dia_independiente", (req, res) => {
         db.get(sqlCobros, (err, row) => { 
             if(row) datos.general.cobros = row.total || 0; 
             
-            // CÁLCULO FINAL DE LO QUE DEBERÍA HABER
+            // CÁLCULOS FINALES
             datos.general.esperado = (datos.general.saldo_inicial || 0) + (datos.general.ventas || 0) + (datos.general.cobros || 0) - (datos.general.gastos || 0) - (datos.general.pagos || 0);
             datos.cigarrillos.esperado = datos.cigarrillos.ventas || 0;
 
@@ -293,7 +308,7 @@ app.post("/cierres", (req, res) => {
     );
 });
 
-// 3. Ruta: BALANCE
+// 3. Ruta: BALANCE POR RANGO DE FECHAS
 app.get("/balance_rango", (req, res) => {
     const { desde, hasta } = req.query;
     if(!desde || !hasta) return res.status(400).json({error: "Faltan fechas"});
@@ -342,11 +357,11 @@ app.get("/balance_rango", (req, res) => {
     });
 });
 
-// --- SERVIR FRONTEND (SIEMPRE AL FINAL) ---
+// --- SERVIR FRONTEND ---
 app.get(/(.*)/, (req, res) => {
   res.sendFile(path.join(__dirname, "../dist/index.html"));
 });
 
 app.listen(port, () => {
-  console.log(`🚀 Servidor Kiosco completo corriendo en http://localhost:${port}`);
+  console.log(`🚀 Servidor Kiosco persistente corriendo en http://localhost:${port}`);
 });

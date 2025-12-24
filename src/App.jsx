@@ -34,11 +34,11 @@ function Layout() {
         <Routes>
           <Route path="/" element={<Inicio />} />
           <Route path="/ventas" element={<Ventas />} />
-          <Route path="/productos" element={<Productos />} />
+          <Route path="inventario" element={<Productos />} />
           <Route path="/reportes" element={<Reportes />} />
           <Route path="/cigarrillos" element={<Cigarrillos />} />
-          <Route path="/gastos" element={<Gastos />} />
-          <Route path="/proveedores" element={<Proveedores />} />
+          <Route path="movimientos" element={<Gastos />} />
+          <Route path="lista-proveedores" element={<Proveedores />} />
           <Route path="/deudores" element={<Deudores />} />
           <Route path="/cierre" element={<Cierre />} />
           <Route path="/balance" element={<Balance />} />

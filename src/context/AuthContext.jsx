@@ -1,22 +1,50 @@
-import React, { createContext, useState, useContext, useEffect } from "react";
+import React, { createContext, useState, useEffect } from "react";
 
-const AuthContext = createContext();
+export const AuthContext = createContext();
 
-export function AuthProvider({ children }) {
-  // Buscamos si ya había una sesión guardada en el navegador
+export const AuthProvider = ({ children }) => {
+  // Usamos sessionStorage: La sesión muere al cerrar la ventana
   const [user, setUser] = useState(() => {
-    const savedUser = localStorage.getItem("kiosco_user");
-    return savedUser ? JSON.parse(savedUser) : null;
+    return sessionStorage.getItem("usuario") || null;
   });
 
-  const login = (userData) => {
-    setUser(userData);
-    localStorage.setItem("kiosco_user", JSON.stringify(userData));
+  // --- LIMPIEZA AUTOMÁTICA ---
+  // Esto borra cualquier error viejo apenas entras
+  useEffect(() => {
+    localStorage.removeItem("usuario"); 
+  }, []);
+
+  const login = async (usuario, password) => {
+    try {
+      const response = await fetch("http://localhost:3001/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ usuario, password }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Error del servidor");
+      }
+
+      const data = await response.json();
+
+      if (data.success) {
+        setUser(data.usuario);
+        sessionStorage.setItem("usuario", data.usuario); // Guardar en sesión temporal
+        return { success: true };
+      } else {
+        return { success: false, message: "Credenciales incorrectas" };
+      }
+    } catch (error) {
+      console.error("Error login:", error);
+      return { success: false, message: "No se pudo conectar con el servidor. Revisa la terminal." };
+    }
   };
 
   const logout = () => {
     setUser(null);
-    localStorage.removeItem("kiosco_user");
+    sessionStorage.removeItem("usuario");
+    localStorage.removeItem("usuario");
   };
 
   return (
@@ -24,7 +52,4 @@ export function AuthProvider({ children }) {
       {children}
     </AuthContext.Provider>
   );
-}
-
-// Hook para usar el contexto fácil
-export const useAuth = () => useContext(AuthContext);
+};

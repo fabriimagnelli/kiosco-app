@@ -106,7 +106,7 @@ function Inicio() {
                     <span className="font-semibold">Nueva Venta</span>
                 </Link>
 
-                <Link to="/gastos" className="bg-slate-800 hover:bg-red-600 p-4 rounded-xl transition-all border border-slate-700 hover:border-red-500 group flex flex-col gap-2">
+                <Link to="/movimientos" className="bg-slate-800 hover:bg-red-600 p-4 rounded-xl transition-all border border-slate-700 hover:border-red-500 group flex flex-col gap-2">
                     <DollarSign className="text-red-400 group-hover:text-white" />
                     <span className="font-semibold">Retirar Dinero</span>
                 </Link>
@@ -167,4 +167,4 @@ function Inicio() {
   );
 }
 
-export default Inicio;
+export default Inicio;  
