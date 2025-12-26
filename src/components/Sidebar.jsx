@@ -27,7 +27,7 @@ function Sidebar() {
       
       <div className="p-5 pb-2 flex-shrink-0">
         <div className="flex items-center gap-3 mb-2 px-2">
-           <img src="/logo.png" alt="Logo" className="w-8 h-8 object-contain" />
+           <img src="/SACWare-logo-sin-fondo-cambio.png" alt="Logo" className="w-8 h-8 object-contain" />
            <div>
              <h1 className="text-xl font-bold text-white tracking-tight leading-none">SACWare</h1>
              <p className="text-xs text-slate-500 font-medium">Sistema de Gestión</p>
