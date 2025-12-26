@@ -2,101 +2,86 @@ import React from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { 
-  LayoutDashboard, Package, ShoppingCart, FileText, 
-  Cigarette, DollarSign, Truck, BookUser, Lock, 
-  Calendar, LogOut, Calculator, LockOpen, Boxes, Database 
+  Home, ShoppingCart, Package, DollarSign, 
+  TrendingUp, Archive, FileText, Users, 
+  Truck, PieChart, Calculator, LogOut, Key, Cigarette 
 } from "lucide-react";
 
 function Sidebar() {
-  const location = useLocation();
   const { logout } = useAuth();
+  const location = useLocation();
 
-  const menuItems = [
-    { path: "/", icon: <LayoutDashboard size={20} />, label: "Inicio" },
-    { path: "/ventas", icon: <ShoppingCart size={20} />, label: "Ventas" },
-    { path: "/inventario", icon: <Package size={20} />, label: "inventario" },
-    { path: "/cigarrillos", icon: <Cigarette size={20} />, label: "Cigarrillos" },
-    { path: "/stock", icon: <Boxes size={20} />, label: "Inventario" },
-    { path: "/movimientos", icon: <DollarSign size={20} />, label: "movimientos" },
-    { path: "/deudores", icon: <BookUser size={20} />, label: "Deudores" },
-    { path: "/lista-proveedores", icon: <Truck size={20} />, label: "lista-proveedores" },
-    { path: "/apertura", icon: <LockOpen size={20} />, label: "Apertura Caja" },
-    { path: "/cierre", icon: <Lock size={20} />, label: "Cierre de Caja" },
-    { path: "/balance", icon: <Calendar size={20} />, label: "Balance" },
-    { path: "/reportes", icon: <FileText size={20} />, label: "Historial" },
-  ];
+  const isActive = (path) => location.pathname === path 
+    ? "bg-blue-600 text-white shadow-md shadow-blue-900/20" 
+    : "text-slate-400 hover:bg-slate-800 hover:text-white";
 
-  const isActive = (path) => location.pathname === path;
-
-  // Función para Backup
-  const hacerBackup = async () => {
-    if(!confirm("¿Quieres crear una copia de seguridad ahora?")) return;
-    
-    try {
-      const res = await fetch("http://localhost:3001/backup");
-      const data = await res.json();
-      if(res.ok) {
-        alert("✅ " + data.message + "\nArchivo: " + data.archivo);
-      } else {
-        alert("❌ Error: " + data.error);
-      }
-    } catch (error) {
-      alert("❌ Error de conexión con el servidor");
-    }
-  };
+  const NavItem = ({ to, icon: Icon, label }) => (
+    <Link to={to} className={`flex items-center gap-3 p-2.5 mx-2 rounded-xl transition-all duration-200 font-medium text-sm ${isActive(to)}`}>
+      <Icon size={18} /> 
+      <span>{label}</span>
+    </Link>
+  );
 
   return (
-    <div className="w-64 bg-slate-900 text-slate-300 h-screen flex flex-col shadow-2xl shrink-0 font-medium">
+    <div className="w-64 bg-slate-900 h-full flex flex-col justify-between border-r border-slate-800 flex-shrink-0">
       
-      {/* HEADER CON LOGO SACWARE */}
-      <div className="p-6 border-b border-slate-800 flex items-center gap-3">
-        <div className="bg-white p-1 rounded-lg h-12 w-12 flex items-center justify-center overflow-hidden">
-          {/* Asegúrate de poner tu imagen 'logo.png' en la carpeta 'public' */}
-          <img src="/logo.png" alt="Logo" className="object-contain h-full w-full" />
-        </div>
-        <div>
-          <h1 className="text-xl font-bold text-white tracking-wide">SACWare</h1>
-          <p className="text-xs text-slate-500">Sistema de Gestión</p>
+      <div className="p-5 pb-2 flex-shrink-0">
+        <div className="flex items-center gap-3 mb-2 px-2">
+           <img src="/logo.png" alt="Logo" className="w-8 h-8 object-contain" />
+           <div>
+             <h1 className="text-xl font-bold text-white tracking-tight leading-none">SACWare</h1>
+             <p className="text-xs text-slate-500 font-medium">Sistema de Gestión</p>
+           </div>
         </div>
       </div>
-      
-      {/* NAVEGACIÓN */}
-      <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-1 custom-scrollbar">
-        {menuItems.map((item) => (
-          <Link key={item.path} to={item.path}>
-            <div className={`
-              flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 group
-              ${isActive(item.path) 
-                ? "bg-blue-600 text-white shadow-lg shadow-blue-900/50 translate-x-1" 
-                : "hover:bg-slate-800 hover:text-white hover:translate-x-1"}
-            `}>
-              <span className={isActive(item.path) ? "text-white" : "text-slate-400 group-hover:text-white"}>
-                {item.icon}
-              </span>
-              <span>{item.label}</span>
-            </div>
-          </Link>
-        ))}
+
+      <nav className="flex-1 overflow-y-auto custom-scrollbar space-y-0.5 pb-2">
+        
+        <div className="px-3">
+          <p className="text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-1 mt-2 px-3">Principal</p>
+          <NavItem to="/" icon={Home} label="Inicio" />
+          <NavItem to="/ventas" icon={ShoppingCart} label="Ventas" />
+        </div>
+
+        <div className="px-3">
+          <p className="text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-1 mt-3 px-3">Gestión</p>
+          <NavItem to="/inventario" icon={Package} label="Productos" />
+          <NavItem to="/cigarrillos" icon={Cigarette} label="Cigarrillos" /> {/* LINK RESTAURADO */}
+          <NavItem to="/stock" icon={TrendingUp} label="Control Stock" />
+          <NavItem to="/movimientos" icon={DollarSign} label="Gastos y Retiros" />
+        </div>
+
+        <div className="px-3">
+          <p className="text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-1 mt-3 px-3">Finanzas</p>
+          <NavItem to="/cierre" icon={Archive} label="Cierre de Caja" />
+          <NavItem to="/balance" icon={PieChart} label="Balance General" />
+          <NavItem to="/reportes" icon={FileText} label="Reportes Históricos" />
+        </div>
+
+        <div className="px-3">
+          <p className="text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-1 mt-3 px-3">Contactos</p>
+          <NavItem to="/deudores" icon={Users} label="Clientes (Fiados)" />
+          <NavItem to="/lista-proveedores" icon={Truck} label="Proveedores" />
+        </div>
+
+        <div className="px-3">
+          <p className="text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-1 mt-3 px-3">Utilidades</p>
+          <NavItem to="/apertura" icon={Key} label="Apertura Caja" />
+          <NavItem to="/calculadora" icon={Calculator} label="Calculadora" />
+        </div>
+
       </nav>
 
-      {/* FOOTER */}
-      <div className="p-4 border-t border-slate-800 bg-slate-900/50 flex flex-col gap-2">
+      <div className="p-3 border-t border-slate-800 bg-slate-900 z-10 flex-shrink-0">
         <button 
-          onClick={hacerBackup}
-          className="flex items-center gap-3 px-4 py-3 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors w-full text-left rounded-lg group"
+          onClick={logout} 
+          className="flex w-full items-center justify-center gap-2 p-2.5 rounded-xl text-red-400 bg-red-500/5 hover:bg-red-500/10 hover:text-red-300 transition-all border border-red-500/10 hover:border-red-500/20"
         >
-          <Database size={20} className="group-hover:text-blue-400"/>
-          <span className="font-medium">Crear Respaldo</span>
-        </button>
-
-        <button 
-            className="w-full flex items-center justify-center gap-2 bg-red-600/10 hover:bg-red-600 text-red-500 hover:text-white py-3 rounded-lg transition-all border border-red-600/20 hover:border-red-600"
-            onClick={logout}
-        >
-          <LogOut size={18} />
-          <span>Cerrar Sesión</span>
+          <LogOut size={18} /> 
+          <span className="font-bold text-sm">Cerrar Sesión</span>
         </button>
       </div>
+
     </div>
   );
 }

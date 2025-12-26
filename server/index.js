@@ -52,7 +52,7 @@ db.serialize(() => {
   // Aperturas
   db.run(`CREATE TABLE IF NOT EXISTS aperturas (id INTEGER PRIMARY KEY AUTOINCREMENT, monto REAL, observacion TEXT, fecha DATETIME DEFAULT CURRENT_TIMESTAMP)`);
 
-  // CIERRES DE CAJA
+  // Cierres
   db.run(`CREATE TABLE IF NOT EXISTS cierres (
     id INTEGER PRIMARY KEY AUTOINCREMENT, 
     tipo TEXT, 
@@ -96,16 +96,14 @@ app.post("/login", (req, res) => {
   });
 });
 
-// --- DASHBOARD (CORREGIDO: Muestra datos de la CAJA ACTUAL, no del día calendario) ---
+// --- DASHBOARD (CORREGIDO: Se reinicia al cerrar caja) ---
 app.get("/dashboard", (req, res) => {
   // 1. Buscamos la fecha y hora del ÚLTIMO CIERRE GENERAL
   const sqlUltimoCierre = "(SELECT IFNULL(MAX(fecha), '1900-01-01') FROM cierres WHERE tipo = 'GENERAL')";
 
-  // 2. Sumamos solo las ventas y gastos que ocurrieron DESPUÉS de ese cierre
+  // 2. Filtramos ventas/gastos posteriores a ese cierre
   const sqlVentas = `SELECT SUM(precio_total) as total, COUNT(*) as tickets FROM ventas WHERE fecha > ${sqlUltimoCierre}`;
   const sqlGastos = `SELECT SUM(monto) as total FROM gastos WHERE fecha > ${sqlUltimoCierre}`;
-  
-  // El stock bajo sigue igual (es el estado actual)
   const sqlStockBajo = `SELECT nombre, stock FROM productos WHERE stock <= 5 UNION SELECT nombre, stock FROM cigarrillos WHERE stock <= 5`;
 
   db.get(sqlVentas, [], (err, v) => {
@@ -156,7 +154,7 @@ app.delete("/cigarrillos/:id", (req, res) => {
     db.run("DELETE FROM cigarrillos WHERE id = ?", [req.params.id], () => res.json({success: true}));
 });
 
-// --- VENTAS ---
+// --- VENTAS (CON LOGICA PARA MANUALES) ---
 app.post("/ventas", (req, res) => {
   const { productos, metodo_pago } = req.body;
   if (!productos || productos.length === 0) return res.status(400).json({ error: "Vacío" });
@@ -170,9 +168,17 @@ app.post("/ventas", (req, res) => {
     const stmtStockCig = db.prepare("UPDATE cigarrillos SET stock = stock - ? WHERE id = ?");
 
     productos.forEach((item) => {
+      // 1. Registramos la venta SIEMPRE
       stmtVenta.run(ticket_id, item.nombre, item.cantidad, item.precio * item.cantidad, metodo_pago, item.tipo || 'General');
-      if (item.tipo === "cigarrillo") stmtStockCig.run(item.cantidad, item.id);
-      else stmtStockProd.run(item.cantidad, item.id);
+
+      // 2. Descontamos STOCK solo si NO es manual y tiene ID válido
+      if (!item.es_manual && item.id) {
+          if (item.tipo === "cigarrillo") {
+              stmtStockCig.run(item.cantidad, item.id);
+          } else {
+              stmtStockProd.run(item.cantidad, item.id);
+          }
+      }
     });
 
     stmtVenta.finalize();
@@ -250,21 +256,20 @@ app.get("/backup", (req, res) => {
 });
 
 // ==========================================
-// RUTAS NUEVAS (LÓGICA PERSISTENTE)
+// RUTAS PARA CIERRE Y BALANCE (PERSISTENTES)
 // ==========================================
 
-// 1. Ruta: RESUMEN DEL DÍA (Ahora basado en ÚLTIMO CIERRE)
+// 1. Ruta: RESUMEN DEL DÍA (Basado en ÚLTIMO CIERRE)
 app.get("/resumen_dia_independiente", (req, res) => {
     
-    // Subconsultas para obtener la fecha del último cierre de cada tipo
-    // Si no hay cierres, usamos una fecha muy antigua ('1900-01-01') para traer todo el historial.
+    // Subconsultas para obtener la fecha del último cierre
     const sqlFechaGeneral = "(SELECT IFNULL(MAX(fecha), '1900-01-01') FROM cierres WHERE tipo = 'GENERAL')";
     const sqlFechaCig = "(SELECT IFNULL(MAX(fecha), '1900-01-01') FROM cierres WHERE tipo = 'CIGARRILLOS')";
 
-    // Consultas SQL: Traen todo lo que tenga fecha MAYOR (posterior) al último cierre
+    // Consultas SQL: Traen todo lo POSTERIOR al último cierre
     const sqlApertura = `SELECT monto FROM aperturas WHERE fecha > ${sqlFechaGeneral} ORDER BY id DESC LIMIT 1`;
     const sqlVentasGral = `SELECT SUM(precio_total) as total FROM ventas WHERE categoria != 'cigarrillo' AND metodo_pago = 'Efectivo' AND fecha > ${sqlFechaGeneral}`;
-    const sqlVentasCig = `SELECT SUM(precio_total) as total FROM ventas WHERE categoria = 'cigarrillo' AND metodo_pago = 'Efectivo' AND fecha > ${sqlFechaCig}`; // Usa su propia fecha de cierre
+    const sqlVentasCig = `SELECT SUM(precio_total) as total FROM ventas WHERE categoria = 'cigarrillo' AND metodo_pago = 'Efectivo' AND fecha > ${sqlFechaCig}`; 
     const sqlDigital = `SELECT SUM(precio_total) as total FROM ventas WHERE metodo_pago != 'Efectivo' AND fecha > ${sqlFechaGeneral}`;
     const sqlGastos = `SELECT SUM(monto) as total FROM gastos WHERE fecha > ${sqlFechaGeneral}`;
     const sqlPagosProv = `SELECT SUM(monto) as total FROM movimientos_proveedores WHERE fecha > ${sqlFechaGeneral}`;
@@ -277,7 +282,7 @@ app.get("/resumen_dia_independiente", (req, res) => {
             digital: 0
         };
 
-        db.get(sqlApertura, (err, row) => { if(row) datos.general.saldo_inicial = row.monto || 0; });
+        db.get(sqlApertura, (err, row) => { if(row) datos.general.saldo_inicial = row.monto; });
         db.get(sqlVentasGral, (err, row) => { if(row) datos.general.ventas = row.total || 0; });
         db.get(sqlVentasCig, (err, row) => { if(row) datos.cigarrillos.ventas = row.total || 0; });
         db.get(sqlDigital, (err, row) => { if(row) datos.digital = row.total || 0; });
@@ -363,5 +368,5 @@ app.get(/(.*)/, (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`🚀 Servidor Kiosco persistente corriendo en http://localhost:${port}`);
+  console.log(`🚀 Servidor Kiosco completo corriendo en http://localhost:${port}`);
 });

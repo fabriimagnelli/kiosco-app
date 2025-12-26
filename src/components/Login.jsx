@@ -1,33 +1,35 @@
 import React, { useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { User, Lock, ArrowRight } from "lucide-react";
+import { Navigate, Outlet } from "react-router-dom";
 
+// --- COMPONENTE DE SEGURIDAD ---
+// Este componente revisa si hay usuario. Si no hay, te manda al Login.
+export const RutaProtegida = () => {
+  const { user } = useAuth();
+  if (!user) return <Navigate to="/login" replace />;
+  return <Outlet />;
+};
+
+// --- PANTALLA DE LOGIN ---
 function Login() {
   const [usuario, setUsuario] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const { login } = useAuth();
+  const { login, user } = useAuth(); // Usamos la función del contexto
+
+  // Si ya estás logueado, te manda al inicio
+  if (user) return <Navigate to="/" replace />;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
 
-    try {
-      const res = await fetch("http://localhost:3001/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ usuario, password }),
-      });
-      
-      const data = await res.json();
+    // Llamamos a la función login del AuthContext
+    const resultado = await login(usuario, password);
 
-      if (res.ok && data.success) {
-        login(data.usuario);
-      } else {
-        setError("Usuario o contraseña incorrectos");
-      }
-    } catch (err) {
-      setError("Error de conexión con el servidor");
+    if (!resultado.success) {
+      setError(resultado.message);
     }
   };
 
@@ -36,7 +38,7 @@ function Login() {
       <div className="w-full max-w-md bg-white p-8 rounded-2xl shadow-2xl animate-fade-in mx-4">
         
         <div className="text-center mb-8">
-            {/* LOGO GRANDE */}
+            {/* LOGO */}
             <div className="flex justify-center mb-4">
                 <img src="/logo.png" alt="SACWare Logo" className="h-20 w-auto object-contain drop-shadow-md" />
             </div>
