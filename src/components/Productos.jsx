@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from "react";
-import { Package, Trash2, Edit, Save, Plus, Tag } from "lucide-react";
+import { Package, Trash2, Edit, Save, Plus, Tag, ScanBarcode } from "lucide-react";
 
 function Productos() {
   const [productos, setProductos] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [busqueda, setBusqueda] = useState("");
   
-  const [form, setForm] = useState({ nombre: "", precio: "", stock: "", categoria: "" });
+  // AÑADIDO: campo codigo_barras
+  const [form, setForm] = useState({ nombre: "", precio: "", stock: "", categoria: "", codigo_barras: "" });
   const [idEditando, setIdEditando] = useState(null);
-  const [nuevaCat, setNuevaCat] = useState(""); // Para crear categorías al vuelo
+  const [nuevaCat, setNuevaCat] = useState(""); 
 
   // Cargar datos
   const cargar = () => {
@@ -21,7 +22,6 @@ function Productos() {
   // Guardar Producto
   const guardar = (e) => {
     e.preventDefault();
-    // Si no eligió categoría, ponemos "General" por defecto
     const productoAGuardar = { ...form, categoria: form.categoria || "General" };
 
     const metodo = idEditando ? "PUT" : "POST";
@@ -33,7 +33,7 @@ function Productos() {
       body: JSON.stringify(productoAGuardar)
     }).then(() => {
       alert("✅ Producto guardado");
-      setForm({ nombre: "", precio: "", stock: "", categoria: "" });
+      setForm({ nombre: "", precio: "", stock: "", categoria: "", codigo_barras: "" });
       setIdEditando(null);
       cargar();
     });
@@ -68,6 +68,21 @@ function Productos() {
         </div>
 
         <form onSubmit={guardar} className="flex flex-col gap-4">
+          
+          {/* CAMPO DE CÓDIGO DE BARRAS AÑADIDO */}
+          <div>
+            <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1 mb-1">
+                <ScanBarcode size={14}/> Código de Barras
+            </label>
+            <input 
+                type="text" 
+                placeholder="Escanea aquí con el lector..." 
+                className="w-full border p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-yellow-50 text-slate-700 font-bold" 
+                value={form.codigo_barras || ""} 
+                onChange={e => setForm({...form, codigo_barras: e.target.value})} 
+            />
+          </div>
+
           <div>
             <label className="text-xs font-bold text-slate-500 uppercase">Nombre</label>
             <input type="text" className="w-full border p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" value={form.nombre} onChange={e => setForm({...form, nombre: e.target.value})} required />
@@ -115,7 +130,7 @@ function Productos() {
           <button className="bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-600/20 mt-2 flex justify-center gap-2">
             <Save size={20}/> Guardar Producto
           </button>
-          {idEditando && <button type="button" onClick={() => {setIdEditando(null); setForm({nombre:"", precio:"", stock:"", categoria:""})}} className="text-slate-500 text-sm hover:underline text-center">Cancelar edición</button>}
+          {idEditando && <button type="button" onClick={() => {setIdEditando(null); setForm({nombre:"", precio:"", stock:"", categoria:"", codigo_barras: ""})}} className="text-slate-500 text-sm hover:underline text-center">Cancelar edición</button>}
         </form>
       </div>
 
@@ -132,7 +147,11 @@ function Productos() {
                 <tbody className="divide-y divide-slate-100">
                     {filtrados.map(p => (
                         <tr key={p.id} className="hover:bg-slate-50">
-                            <td className="p-4 font-bold text-slate-700">{p.nombre}</td>
+                            <td className="p-4 font-bold text-slate-700">
+                                {p.nombre}
+                                {/* Mostramos iconito si tiene código */}
+                                {p.codigo_barras && <span className="ml-2 text-[10px] bg-yellow-100 text-yellow-700 px-1 rounded border border-yellow-200">SCAN</span>}
+                            </td>
                             <td className="p-4"><span className="bg-slate-100 text-slate-600 px-2 py-1 rounded text-xs uppercase font-bold">{p.categoria || 'Gral'}</span></td>
                             <td className="p-4 text-green-600 font-bold">${p.precio}</td>
                             <td className="p-4"><span className={`px-2 py-1 rounded text-xs font-bold ${p.stock <= 5 ? "bg-red-100 text-red-700" : "bg-blue-50 text-blue-700"}`}>{p.stock} un.</span></td>

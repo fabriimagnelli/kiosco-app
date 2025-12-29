@@ -72,6 +72,21 @@ function Ventas() {
     }
   };
 
+  // --- NUEVA FUNCIÓN: DETECTAR ESCANEO ---
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+        // Buscamos coincidencia EXACTA por código de barras en productos generales
+        // (Asumimos que cigarrillos no llevan código de barras o se cargan manual, si lo tienen, agregar aquí la búsqueda también)
+        const productoEscaneado = productos.find(p => p.codigo_barras === busqueda);
+        
+        if (productoEscaneado) {
+            agregarAlCarrito(productoEscaneado);
+            setBusqueda(""); // Limpiamos el buscador para el siguiente producto
+            e.preventDefault(); // Evitamos comportamiento por defecto
+        }
+    }
+  };
+
   const agregarProductoManual = (e) => {
     e.preventDefault();
     if (!manualNombre || !manualPrecio) return;
@@ -150,10 +165,13 @@ function Ventas() {
                 <input
                     ref={inputBusquedaRef}
                     type="text"
-                    placeholder="Buscar producto..."
+                    // MODIFICADO: Placeholder indicando escaneo
+                    placeholder="Buscar producto o Escanear..."
                     className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-lg transition-all"
                     value={busqueda}
                     onChange={(e) => setBusqueda(e.target.value)}
+                    onKeyDown={handleKeyDown} // <--- ESCUCHAMOS EL ENTER DEL ESCÁNER
+                    autoFocus
                 />
             </div>
 

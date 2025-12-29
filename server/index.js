@@ -19,13 +19,20 @@ const db = new sqlite3.Database("kiosco.db", (err) => {
   else console.log("Conectado a la base de datos SQLite.");
 });
 
-// --- CREACIÓN DE TABLAS ---
+// --- CREACIÓN DE TABLAS Y ACTUALIZACIÓN ---
 db.serialize(() => {
   // Usuarios
   db.run(`CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT UNIQUE, password TEXT)`);
   
-  // Productos y Categorías
-  db.run(`CREATE TABLE IF NOT EXISTS productos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, precio REAL, stock INTEGER, categoria TEXT)`);
+  // Productos (Con columna codigo_barras)
+  db.run(`CREATE TABLE IF NOT EXISTS productos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, precio REAL, stock INTEGER, categoria TEXT, codigo_barras TEXT)`);
+  
+  // INTENTO DE MIGRACIÓN AUTOMÁTICA: Si la tabla ya existía sin la columna, esto la agrega.
+  // Si ya existe, dará error y lo ignoramos.
+  db.run("ALTER TABLE productos ADD COLUMN codigo_barras TEXT", (err) => {
+      // Ignoramos el error si la columna ya existe
+  });
+
   db.run(`CREATE TABLE IF NOT EXISTS categorias_productos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT)`);
   
   // Cigarrillos
@@ -120,16 +127,25 @@ app.get("/dashboard", (req, res) => {
   });
 });
 
-// --- PRODUCTOS ---
+// --- PRODUCTOS (MODIFICADO PARA CODIGO DE BARRAS) ---
 app.get("/productos", (req, res) => db.all("SELECT * FROM productos", (err, r) => res.json(r)));
+
 app.post("/productos", (req, res) => {
-    const { nombre, precio, stock, categoria } = req.body;
-    db.run("INSERT INTO productos (nombre, precio, stock, categoria) VALUES (?,?,?,?)", [nombre, precio, stock, categoria], (err) => res.json({id: this.lastID}));
+    const { nombre, precio, stock, categoria, codigo_barras } = req.body;
+    db.run("INSERT INTO productos (nombre, precio, stock, categoria, codigo_barras) VALUES (?,?,?,?,?)", [nombre, precio, stock, categoria, codigo_barras], (err) => {
+        if(err) return res.status(500).json({error: err.message});
+        res.json({id: this.lastID});
+    });
 });
+
 app.put("/productos/:id", (req, res) => {
-    const { nombre, precio, stock, categoria } = req.body;
-    db.run("UPDATE productos SET nombre=?, precio=?, stock=?, categoria=? WHERE id=?", [nombre, precio, stock, categoria, req.params.id], () => res.json({success: true}));
+    const { nombre, precio, stock, categoria, codigo_barras } = req.body;
+    db.run("UPDATE productos SET nombre=?, precio=?, stock=?, categoria=?, codigo_barras=? WHERE id=?", [nombre, precio, stock, categoria, codigo_barras, req.params.id], (err) => {
+        if(err) return res.status(500).json({error: err.message});
+        res.json({success: true});
+    });
 });
+
 app.delete("/productos/:id", (req, res) => {
     db.run("DELETE FROM productos WHERE id = ?", [req.params.id], () => res.json({success: true}));
 });
@@ -362,16 +378,10 @@ app.get("/balance_rango", (req, res) => {
     });
 });
 
-// ... (resto del código anterior) ...
-
 // ==========================================
 // NUEVA RUTA: DATOS PARA GRÁFICOS
 // ==========================================
 app.get("/reportes/ventas_semana", (req, res) => {
-    // Consulta SQL:
-    // 1. Tomamos la fecha (sin hora) usando strftime.
-    // 2. Filtramos los últimos 7 días (date('now', '-6 days')).
-    // 3. Agrupamos por día y sumamos el precio_total.
     const sql = `
         SELECT 
             strftime('%Y-%m-%d', fecha) as fecha_dia, 
@@ -390,8 +400,6 @@ app.get("/reportes/ventas_semana", (req, res) => {
         }
     });
 });
-
-// ... (aquí sigue // --- SERVIR FRONTEND --- y app.listen) ...
 
 // --- SERVIR FRONTEND ---
 app.get(/(.*)/, (req, res) => {
