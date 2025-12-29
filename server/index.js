@@ -362,6 +362,37 @@ app.get("/balance_rango", (req, res) => {
     });
 });
 
+// ... (resto del código anterior) ...
+
+// ==========================================
+// NUEVA RUTA: DATOS PARA GRÁFICOS
+// ==========================================
+app.get("/reportes/ventas_semana", (req, res) => {
+    // Consulta SQL:
+    // 1. Tomamos la fecha (sin hora) usando strftime.
+    // 2. Filtramos los últimos 7 días (date('now', '-6 days')).
+    // 3. Agrupamos por día y sumamos el precio_total.
+    const sql = `
+        SELECT 
+            strftime('%Y-%m-%d', fecha) as fecha_dia, 
+            SUM(precio_total) as total 
+        FROM ventas 
+        WHERE fecha >= date('now', '-6 days', 'localtime')
+        GROUP BY fecha_dia 
+        ORDER BY fecha_dia ASC
+    `;
+
+    db.all(sql, [], (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+        } else {
+            res.json(rows);
+        }
+    });
+});
+
+// ... (aquí sigue // --- SERVIR FRONTEND --- y app.listen) ...
+
 // --- SERVIR FRONTEND ---
 app.get(/(.*)/, (req, res) => {
   res.sendFile(path.join(__dirname, "../dist/index.html"));
