@@ -2,7 +2,6 @@ const express = require("express");
 const cors = require("cors");
 const sqlite3 = require("sqlite3").verbose();
 const path = require("path");
-const fs = require("fs");
 
 const app = express();
 const port = 3001;
@@ -10,91 +9,57 @@ const port = 3001;
 app.use(cors());
 app.use(express.json());
 
-// 1. CONECTAR FRONTEND (Carpeta dist)
 app.use(express.static(path.join(__dirname, "../dist")));
 
-// 2. BASE DE DATOS
 const db = new sqlite3.Database("kiosco.db", (err) => {
   if (err) console.error("Error DB:", err.message);
   else console.log("Conectado a la base de datos SQLite.");
 });
 
-// --- CREACIÓN DE TABLAS Y ACTUALIZACIÓN ---
+// --- MIGRACIÓN Y TABLAS ---
 db.serialize(() => {
-  // Usuarios
   db.run(`CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT UNIQUE, password TEXT)`);
-  
-  // Productos (Con columna codigo_barras)
   db.run(`CREATE TABLE IF NOT EXISTS productos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, precio REAL, stock INTEGER, categoria TEXT, codigo_barras TEXT)`);
-  
-  // INTENTO DE MIGRACIÓN AUTOMÁTICA: Si la tabla ya existía sin la columna, esto la agrega.
-  // Si ya existe, dará error y lo ignoramos.
-  db.run("ALTER TABLE productos ADD COLUMN codigo_barras TEXT", (err) => {
-      // Ignoramos el error si la columna ya existe
-  });
+  db.run("ALTER TABLE productos ADD COLUMN codigo_barras TEXT", (err) => {}); 
 
   db.run(`CREATE TABLE IF NOT EXISTS categorias_productos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT)`);
-  
-  // Cigarrillos
   db.run(`CREATE TABLE IF NOT EXISTS cigarrillos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, precio REAL, precio_qr REAL, stock INTEGER)`);
   
-  // Ventas
   db.run(`CREATE TABLE IF NOT EXISTS ventas (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id TEXT, producto TEXT, cantidad INTEGER, 
-    precio_total REAL, metodo_pago TEXT, categoria TEXT, fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+    precio_total REAL, metodo_pago TEXT, categoria TEXT, fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+    pago_efectivo REAL DEFAULT 0, pago_digital REAL DEFAULT 0
   )`);
-  
-  // Gastos
+  db.run("ALTER TABLE ventas ADD COLUMN pago_efectivo REAL DEFAULT 0", (err) => {});
+  db.run("ALTER TABLE ventas ADD COLUMN pago_digital REAL DEFAULT 0", (err) => {});
+
   db.run(`CREATE TABLE IF NOT EXISTS gastos (id INTEGER PRIMARY KEY AUTOINCREMENT, monto REAL, descripcion TEXT, categoria TEXT, fecha DATETIME DEFAULT CURRENT_TIMESTAMP)`);
   db.run(`CREATE TABLE IF NOT EXISTS categorias_gastos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT)`);
-
-  // Clientes y Fiados
   db.run(`CREATE TABLE IF NOT EXISTS clientes (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, telefono TEXT)`);
   db.run(`CREATE TABLE IF NOT EXISTS fiados (id INTEGER PRIMARY KEY AUTOINCREMENT, cliente_id INTEGER, monto REAL, descripcion TEXT, fecha DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-
-  // Proveedores
   db.run(`CREATE TABLE IF NOT EXISTS proveedores (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, telefono TEXT)`);
   db.run(`CREATE TABLE IF NOT EXISTS movimientos_proveedores (id INTEGER PRIMARY KEY AUTOINCREMENT, proveedor_id INTEGER, monto REAL, descripcion TEXT, fecha DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-  
-  // Aperturas
   db.run(`CREATE TABLE IF NOT EXISTS aperturas (id INTEGER PRIMARY KEY AUTOINCREMENT, monto REAL, observacion TEXT, fecha DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-
-  // Cierres
+  
   db.run(`CREATE TABLE IF NOT EXISTS cierres (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, 
-    tipo TEXT, 
-    total_ventas REAL, 
-    total_gastos REAL, 
-    total_sistema REAL, 
-    total_fisico REAL, 
-    diferencia REAL, 
-    fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+    id INTEGER PRIMARY KEY AUTOINCREMENT, tipo TEXT, total_ventas REAL, total_gastos REAL, 
+    total_sistema REAL, total_fisico REAL, diferencia REAL, fecha DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  // Usuario Admin por defecto
   db.get("SELECT count(*) as count FROM usuarios", (err, row) => {
-      if (row && row.count === 0) {
-          db.run("INSERT INTO usuarios (usuario, password) VALUES (?, ?)", ["admin", "1234"]);
-          console.log("✅ Admin creado: admin / 1234");
-      }
+      if (row && row.count === 0) db.run("INSERT INTO usuarios (usuario, password) VALUES (?, ?)", ["admin", "1234"]);
   });
-
-  // Categorías de Gastos por defecto
   db.get("SELECT count(*) as count FROM categorias_gastos", (err, row) => {
       if (row && row.count === 0) {
-          const cats = ["Mercadería", "Luz", "Internet", "Alquiler", "Limpieza", "Varios"];
-          cats.forEach(c => db.run("INSERT INTO categorias_gastos (nombre) VALUES (?)", [c]));
+          ["Mercadería", "Luz", "Internet", "Alquiler", "Limpieza", "Varios"].forEach(c => db.run("INSERT INTO categorias_gastos (nombre) VALUES (?)", [c]));
       }
   });
-
-  console.log("Tablas verificadas correctamente.");
 });
 
 // ==========================================
-// RUTAS (ENDPOINTS)
+// RUTAS
 // ==========================================
 
-// --- LOGIN ---
 app.post("/login", (req, res) => {
   const { usuario, password } = req.body;
   db.get("SELECT * FROM usuarios WHERE usuario = ? AND password = ?", [usuario, password], (err, row) => {
@@ -103,12 +68,8 @@ app.post("/login", (req, res) => {
   });
 });
 
-// --- DASHBOARD (CORREGIDO: Se reinicia al cerrar caja) ---
 app.get("/dashboard", (req, res) => {
-  // 1. Buscamos la fecha y hora del ÚLTIMO CIERRE GENERAL
   const sqlUltimoCierre = "(SELECT IFNULL(MAX(fecha), '1900-01-01') FROM cierres WHERE tipo = 'GENERAL')";
-
-  // 2. Filtramos ventas/gastos posteriores a ese cierre
   const sqlVentas = `SELECT SUM(precio_total) as total, COUNT(*) as tickets FROM ventas WHERE fecha > ${sqlUltimoCierre}`;
   const sqlGastos = `SELECT SUM(monto) as total FROM gastos WHERE fecha > ${sqlUltimoCierre}`;
   const sqlStockBajo = `SELECT nombre, stock FROM productos WHERE stock <= 5 UNION SELECT nombre, stock FROM cigarrillos WHERE stock <= 5`;
@@ -116,45 +77,66 @@ app.get("/dashboard", (req, res) => {
   db.get(sqlVentas, [], (err, v) => {
     db.get(sqlGastos, [], (err, g) => {
         db.all(sqlStockBajo, [], (err, s) => {
-            res.json({ 
-                ventas_hoy: v?.total || 0, 
-                tickets_hoy: v?.tickets || 0, 
-                gastos_hoy: g?.total || 0, 
-                bajo_stock: s || [] 
-            });
+            res.json({ ventas_hoy: v?.total || 0, tickets_hoy: v?.tickets || 0, gastos_hoy: g?.total || 0, bajo_stock: s || [] });
         });
     });
   });
 });
 
-// --- PRODUCTOS (MODIFICADO PARA CODIGO DE BARRAS) ---
-app.get("/productos", (req, res) => db.all("SELECT * FROM productos", (err, r) => res.json(r)));
+// --- REPORTES PARA GRÁFICOS (NUEVO) ---
+app.get("/reportes/ventas_semana", (req, res) => {
+    // Devuelve fecha (DD/MM) y total vendido de los últimos 7 días
+    const sql = `
+        SELECT strftime('%d/%m', fecha) as fecha, SUM(precio_total) as total 
+        FROM ventas 
+        WHERE fecha >= date('now', '-6 days', 'localtime') 
+        GROUP BY strftime('%Y-%m-%d', fecha) 
+        ORDER BY fecha ASC
+    `;
+    db.all(sql, [], (err, rows) => res.json(rows || []));
+});
 
+app.get("/reportes/productos_top", (req, res) => {
+    // Top 5 productos más vendidos (cantidad)
+    const sql = `SELECT producto as name, SUM(cantidad) as value FROM ventas GROUP BY producto ORDER BY value DESC LIMIT 5`;
+    db.all(sql, [], (err, rows) => res.json(rows || []));
+});
+
+app.get("/reportes/metodos_pago", (req, res) => {
+   // Totales por método de pago para gráfico de torta
+   const sql = `SELECT metodo_pago as name, SUM(precio_total) as value FROM ventas GROUP BY metodo_pago`;
+   db.all(sql, [], (err, rows) => res.json(rows || []));
+});
+// --------------------------------------
+
+// --- PRODUCTOS ---
+app.get("/productos", (req, res) => db.all("SELECT * FROM productos", (err, r) => res.json(r)));
 app.post("/productos", (req, res) => {
     const { nombre, precio, stock, categoria, codigo_barras } = req.body;
-    db.run("INSERT INTO productos (nombre, precio, stock, categoria, codigo_barras) VALUES (?,?,?,?,?)", [nombre, precio, stock, categoria, codigo_barras], (err) => {
+    db.run("INSERT INTO productos (nombre, precio, stock, categoria, codigo_barras) VALUES (?,?,?,?,?)", [nombre, precio, stock, categoria, codigo_barras], function(err) {
         if(err) return res.status(500).json({error: err.message});
         res.json({id: this.lastID});
     });
 });
-
 app.put("/productos/:id", (req, res) => {
     const { nombre, precio, stock, categoria, codigo_barras } = req.body;
-    db.run("UPDATE productos SET nombre=?, precio=?, stock=?, categoria=?, codigo_barras=? WHERE id=?", [nombre, precio, stock, categoria, codigo_barras, req.params.id], (err) => {
-        if(err) return res.status(500).json({error: err.message});
-        res.json({success: true});
+    db.run("UPDATE productos SET nombre=?, precio=?, stock=?, categoria=?, codigo_barras=? WHERE id=?", [nombre, precio, stock, categoria, codigo_barras, req.params.id], (err) => res.json({success: true}));
+});
+app.delete("/productos/:id", (req, res) => db.run("DELETE FROM productos WHERE id = ?", [req.params.id], () => res.json({success: true})));
+app.post("/productos/aumento_masivo", (req, res) => {
+    const { porcentaje, categoria } = req.body;
+    if (!porcentaje || isNaN(porcentaje)) return res.status(400).json({ error: "Porcentaje inválido" });
+    let sql = "UPDATE productos SET precio = precio + (precio * ? / 100)";
+    let params = [porcentaje];
+    if (categoria && categoria !== "Todas") { sql += " WHERE categoria = ?"; params.push(categoria); }
+    db.run(sql, params, function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true, cambios: this.changes });
     });
 });
 
-app.delete("/productos/:id", (req, res) => {
-    db.run("DELETE FROM productos WHERE id = ?", [req.params.id], () => res.json({success: true}));
-});
-
-// --- CATEGORIAS PRODUCTOS ---
 app.get("/categorias_productos", (req, res) => db.all("SELECT * FROM categorias_productos", (err, r) => res.json(r)));
-app.post("/categorias_productos", (req, res) => {
-    db.run("INSERT INTO categorias_productos (nombre) VALUES (?)", [req.body.nombre], () => res.json({success: true}));
-});
+app.post("/categorias_productos", (req, res) => db.run("INSERT INTO categorias_productos (nombre) VALUES (?)", [req.body.nombre], () => res.json({success: true})));
 
 // --- CIGARRILLOS ---
 app.get("/cigarrillos", (req, res) => db.all("SELECT * FROM cigarrillos", (err, r) => res.json(r)));
@@ -166,34 +148,42 @@ app.put("/cigarrillos/:id", (req, res) => {
     const { nombre, precio, precio_qr, stock } = req.body;
     db.run("UPDATE cigarrillos SET nombre=?, precio=?, precio_qr=?, stock=? WHERE id=?", [nombre, precio, precio_qr, stock, req.params.id], () => res.json({success: true}));
 });
-app.delete("/cigarrillos/:id", (req, res) => {
-    db.run("DELETE FROM cigarrillos WHERE id = ?", [req.params.id], () => res.json({success: true}));
-});
+app.delete("/cigarrillos/:id", (req, res) => db.run("DELETE FROM cigarrillos WHERE id = ?", [req.params.id], () => res.json({success: true})));
 
-// --- VENTAS (CON LOGICA PARA MANUALES) ---
+// --- VENTAS ---
 app.post("/ventas", (req, res) => {
-  const { productos, metodo_pago } = req.body;
+  const { productos, metodo_pago, desglose } = req.body;
   if (!productos || productos.length === 0) return res.status(400).json({ error: "Vacío" });
 
   const ticket_id = Date.now().toString(); 
   
   db.serialize(() => {
     db.run("BEGIN TRANSACTION");
-    const stmtVenta = db.prepare("INSERT INTO ventas (ticket_id, producto, cantidad, precio_total, metodo_pago, categoria, fecha) VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))");
+    const stmtVenta = db.prepare(`INSERT INTO ventas 
+        (ticket_id, producto, cantidad, precio_total, metodo_pago, categoria, fecha, pago_efectivo, pago_digital) 
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), ?, ?)`);
+    
     const stmtStockProd = db.prepare("UPDATE productos SET stock = stock - ? WHERE id = ?");
     const stmtStockCig = db.prepare("UPDATE cigarrillos SET stock = stock - ? WHERE id = ?");
 
-    productos.forEach((item) => {
-      // 1. Registramos la venta SIEMPRE
-      stmtVenta.run(ticket_id, item.nombre, item.cantidad, item.precio * item.cantidad, metodo_pago, item.tipo || 'General');
+    let ratioEfectivo = 1; let ratioDigital = 0;
+    if (desglose && desglose.total > 0) {
+        ratioEfectivo = desglose.efectivo / desglose.total;
+        ratioDigital = desglose.digital / desglose.total;
+    } else {
+        if (metodo_pago === 'Efectivo') { ratioEfectivo = 1; ratioDigital = 0; }
+        else { ratioEfectivo = 0; ratioDigital = 1; }
+    }
 
-      // 2. Descontamos STOCK solo si NO es manual y tiene ID válido
+    productos.forEach((item) => {
+      const totalLinea = item.precio * item.cantidad;
+      const parteEfectivo = totalLinea * ratioEfectivo;
+      const parteDigital = totalLinea * ratioDigital;
+      stmtVenta.run(ticket_id, item.nombre, item.cantidad, totalLinea, metodo_pago, item.tipo || 'General', parteEfectivo, parteDigital);
+
       if (!item.es_manual && item.id) {
-          if (item.tipo === "cigarrillo") {
-              stmtStockCig.run(item.cantidad, item.id);
-          } else {
-              stmtStockProd.run(item.cantidad, item.id);
-          }
+          if (item.tipo === "cigarrillo") stmtStockCig.run(item.cantidad, item.id);
+          else stmtStockProd.run(item.cantidad, item.id);
       }
     });
 
@@ -208,85 +198,39 @@ app.post("/ventas", (req, res) => {
   });
 });
 
-app.get("/historial", (req, res) => {
-    db.all("SELECT * FROM ventas ORDER BY fecha DESC", (err, rows) => res.json(rows));
-});
+app.get("/historial", (req, res) => db.all("SELECT * FROM ventas ORDER BY fecha DESC", (err, rows) => res.json(rows)));
 
 // --- GASTOS ---
 app.get("/gastos", (req, res) => db.all("SELECT * FROM gastos ORDER BY fecha DESC LIMIT 50", (err, r) => res.json(r)));
-app.post("/gastos", (req, res) => {
-    const { monto, descripcion, categoria } = req.body;
-    db.run("INSERT INTO gastos (monto, descripcion, categoria, fecha) VALUES (?, ?, ?, datetime('now', 'localtime'))", [monto, descripcion, categoria], () => res.json({success: true}));
-});
-app.delete("/gastos/:id", (req, res) => {
-    db.run("DELETE FROM gastos WHERE id=?", [req.params.id], () => res.json({success: true}));
-});
+app.post("/gastos", (req, res) => db.run("INSERT INTO gastos (monto, descripcion, categoria, fecha) VALUES (?, ?, ?, datetime('now', 'localtime'))", [req.body.monto, req.body.descripcion, req.body.categoria], () => res.json({success: true})));
+app.delete("/gastos/:id", (req, res) => db.run("DELETE FROM gastos WHERE id=?", [req.params.id], () => res.json({success: true})));
 app.get("/categorias_gastos", (req, res) => db.all("SELECT * FROM categorias_gastos", (err, r) => res.json(r)));
-app.post("/categorias_gastos", (req, res) => {
-    db.run("INSERT INTO categorias_gastos (nombre) VALUES (?)", [req.body.nombre], () => res.json({success: true}));
-});
+app.post("/categorias_gastos", (req, res) => db.run("INSERT INTO categorias_gastos (nombre) VALUES (?)", [req.body.nombre], () => res.json({success: true})));
 
-// --- DEUDORES (CLIENTES) ---
-app.get("/clientes", (req, res) => {
-    const sql = `SELECT c.*, SUM(f.monto) as total_deuda FROM clientes c LEFT JOIN fiados f ON c.id = f.cliente_id GROUP BY c.id`;
-    db.all(sql, (err, rows) => res.json(rows));
-});
-app.post("/clientes", (req, res) => {
-    db.run("INSERT INTO clientes (nombre, telefono) VALUES (?,?)", [req.body.nombre, req.body.telefono], () => res.json({success: true}));
-});
-app.get("/fiados/:id", (req, res) => {
-    db.all("SELECT * FROM fiados WHERE cliente_id = ? ORDER BY fecha DESC", [req.params.id], (err, rows) => res.json(rows));
-});
-app.post("/fiados", (req, res) => {
-    const { cliente_id, monto, descripcion } = req.body;
-    db.run("INSERT INTO fiados (cliente_id, monto, descripcion, fecha) VALUES (?,?,?, datetime('now', 'localtime'))", [cliente_id, monto, descripcion], () => res.json({success: true}));
-});
+// --- DEUDORES & PROVEEDORES ---
+app.get("/clientes", (req, res) => db.all("SELECT c.*, SUM(f.monto) as total_deuda FROM clientes c LEFT JOIN fiados f ON c.id = f.cliente_id GROUP BY c.id", (err, rows) => res.json(rows)));
+app.post("/clientes", (req, res) => db.run("INSERT INTO clientes (nombre, telefono) VALUES (?,?)", [req.body.nombre, req.body.telefono], () => res.json({success: true})));
+app.get("/fiados/:id", (req, res) => db.all("SELECT * FROM fiados WHERE cliente_id = ? ORDER BY fecha DESC", [req.params.id], (err, rows) => res.json(rows)));
+app.post("/fiados", (req, res) => db.run("INSERT INTO fiados (cliente_id, monto, descripcion, fecha) VALUES (?,?,?, datetime('now', 'localtime'))", [req.body.cliente_id, req.body.monto, req.body.descripcion], () => res.json({success: true})));
 
-// --- PROVEEDORES ---
-app.get("/proveedores", (req, res) => {
-    const sql = `SELECT p.*, SUM(m.monto) as total_deuda FROM proveedores p LEFT JOIN movimientos_proveedores m ON p.id = m.proveedor_id GROUP BY p.id`;
-    db.all(sql, (err, rows) => res.json(rows));
-});
-app.post("/proveedores", (req, res) => {
-    db.run("INSERT INTO proveedores (nombre, telefono) VALUES (?,?)", [req.body.nombre, req.body.telefono], () => res.json({success: true}));
-});
-app.get("/movimientos_proveedores/:id", (req, res) => {
-    db.all("SELECT * FROM movimientos_proveedores WHERE proveedor_id = ? ORDER BY fecha DESC", [req.params.id], (err, rows) => res.json(rows));
-});
-app.post("/movimientos_proveedores", (req, res) => {
-    const { proveedor_id, monto, descripcion } = req.body;
-    db.run("INSERT INTO movimientos_proveedores (proveedor_id, monto, descripcion, fecha) VALUES (?,?,?, datetime('now', 'localtime'))", [proveedor_id, monto, descripcion], () => res.json({success: true}));
-});
+app.get("/proveedores", (req, res) => db.all("SELECT p.*, SUM(m.monto) as total_deuda FROM proveedores p LEFT JOIN movimientos_proveedores m ON p.id = m.proveedor_id GROUP BY p.id", (err, rows) => res.json(rows)));
+app.post("/proveedores", (req, res) => db.run("INSERT INTO proveedores (nombre, telefono) VALUES (?,?)", [req.body.nombre, req.body.telefono], () => res.json({success: true})));
+app.get("/movimientos_proveedores/:id", (req, res) => db.all("SELECT * FROM movimientos_proveedores WHERE proveedor_id = ? ORDER BY fecha DESC", [req.params.id], (err, rows) => res.json(rows)));
+app.post("/movimientos_proveedores", (req, res) => db.run("INSERT INTO movimientos_proveedores (proveedor_id, monto, descripcion, fecha) VALUES (?,?,?, datetime('now', 'localtime'))", [req.body.proveedor_id, req.body.monto, req.body.descripcion], () => res.json({success: true})));
 
-// --- APERTURA DE CAJA ---
-app.post("/apertura", (req, res) => {
-    const { monto, observacion } = req.body;
-    db.run("INSERT INTO aperturas (monto, observacion, fecha) VALUES (?, ?, datetime('now', 'localtime'))", [monto, observacion], () => res.json({success: true}));
-});
+// --- CAJA ---
+app.post("/apertura", (req, res) => db.run("INSERT INTO aperturas (monto, observacion, fecha) VALUES (?, ?, datetime('now', 'localtime'))", [req.body.monto, req.body.observacion], () => res.json({success: true})));
+app.get("/backup", (req, res) => res.download(path.join(__dirname, "kiosco.db"), `Respaldo_Kiosco_${Date.now()}.db`));
 
-// --- BACKUP ---
-app.get("/backup", (req, res) => {
-  const rutaDB = path.join(__dirname, "kiosco.db");
-  const nombreArchivo = `Respaldo_Kiosco_${Date.now()}.db`;
-  res.download(rutaDB, nombreArchivo);
-});
-
-// ==========================================
-// RUTAS PARA CIERRE Y BALANCE (PERSISTENTES)
-// ==========================================
-
-// 1. Ruta: RESUMEN DEL DÍA (Basado en ÚLTIMO CIERRE)
+// --- RESUMEN DEL DÍA ---
 app.get("/resumen_dia_independiente", (req, res) => {
-    
-    // Subconsultas para obtener la fecha del último cierre
     const sqlFechaGeneral = "(SELECT IFNULL(MAX(fecha), '1900-01-01') FROM cierres WHERE tipo = 'GENERAL')";
     const sqlFechaCig = "(SELECT IFNULL(MAX(fecha), '1900-01-01') FROM cierres WHERE tipo = 'CIGARRILLOS')";
 
-    // Consultas SQL: Traen todo lo POSTERIOR al último cierre
     const sqlApertura = `SELECT monto FROM aperturas WHERE fecha > ${sqlFechaGeneral} ORDER BY id DESC LIMIT 1`;
-    const sqlVentasGral = `SELECT SUM(precio_total) as total FROM ventas WHERE categoria != 'cigarrillo' AND metodo_pago = 'Efectivo' AND fecha > ${sqlFechaGeneral}`;
-    const sqlVentasCig = `SELECT SUM(precio_total) as total FROM ventas WHERE categoria = 'cigarrillo' AND metodo_pago = 'Efectivo' AND fecha > ${sqlFechaCig}`; 
-    const sqlDigital = `SELECT SUM(precio_total) as total FROM ventas WHERE metodo_pago != 'Efectivo' AND fecha > ${sqlFechaGeneral}`;
+    const sqlVentasGral = `SELECT SUM(pago_efectivo) as total FROM ventas WHERE categoria != 'cigarrillo' AND fecha > ${sqlFechaGeneral}`;
+    const sqlVentasCig = `SELECT SUM(pago_efectivo) as total FROM ventas WHERE categoria = 'cigarrillo' AND fecha > ${sqlFechaCig}`; 
+    const sqlDigital = `SELECT SUM(pago_digital) as total FROM ventas WHERE fecha > ${sqlFechaGeneral}`;
     const sqlGastos = `SELECT SUM(monto) as total FROM gastos WHERE fecha > ${sqlFechaGeneral}`;
     const sqlPagosProv = `SELECT SUM(monto) as total FROM movimientos_proveedores WHERE fecha > ${sqlFechaGeneral}`;
     const sqlCobros = `SELECT SUM(ABS(monto)) as total FROM fiados WHERE monto < 0 AND fecha > ${sqlFechaGeneral}`; 
@@ -306,40 +250,29 @@ app.get("/resumen_dia_independiente", (req, res) => {
         db.get(sqlPagosProv, (err, row) => { if(row) datos.general.pagos = row.total || 0; });
         db.get(sqlCobros, (err, row) => { 
             if(row) datos.general.cobros = row.total || 0; 
-            
-            // CÁLCULOS FINALES
             datos.general.esperado = (datos.general.saldo_inicial || 0) + (datos.general.ventas || 0) + (datos.general.cobros || 0) - (datos.general.gastos || 0) - (datos.general.pagos || 0);
             datos.cigarrillos.esperado = datos.cigarrillos.ventas || 0;
-
             res.json(datos);
         });
     });
 });
 
-// 2. Ruta: GUARDAR CIERRE
 app.post("/cierres", (req, res) => {
     const { tipo, total_ventas, total_gastos, total_sistema, total_fisico, diferencia } = req.body;
-    db.run(
-        "INSERT INTO cierres (tipo, total_ventas, total_gastos, total_sistema, total_fisico, diferencia, fecha) VALUES (?,?,?,?,?,?, datetime('now', 'localtime'))",
+    db.run("INSERT INTO cierres (tipo, total_ventas, total_gastos, total_sistema, total_fisico, diferencia, fecha) VALUES (?,?,?,?,?,?, datetime('now', 'localtime'))",
         [tipo, total_ventas, total_gastos, total_sistema, total_fisico, diferencia],
-        (err) => {
-            if (err) res.status(500).json({ error: err.message });
-            else res.json({ success: true });
-        }
-    );
+        (err) => err ? res.status(500).json({ error: err.message }) : res.json({ success: true }));
 });
 
-// 3. Ruta: BALANCE POR RANGO DE FECHAS
 app.get("/balance_rango", (req, res) => {
     const { desde, hasta } = req.query;
     if(!desde || !hasta) return res.status(400).json({error: "Faltan fechas"});
-
     const filtroFecha = `date(fecha) BETWEEN date('${desde}') AND date('${hasta}')`;
 
     const queries = {
-        kiosco_efvo: `SELECT SUM(precio_total) as t FROM ventas WHERE categoria != 'cigarrillo' AND metodo_pago = 'Efectivo' AND ${filtroFecha}`,
-        cigarros_efvo: `SELECT SUM(precio_total) as t FROM ventas WHERE categoria = 'cigarrillo' AND metodo_pago = 'Efectivo' AND ${filtroFecha}`,
-        digital: `SELECT SUM(precio_total) as t FROM ventas WHERE metodo_pago != 'Efectivo' AND ${filtroFecha}`,
+        kiosco_efvo: `SELECT SUM(pago_efectivo) as t FROM ventas WHERE categoria != 'cigarrillo' AND ${filtroFecha}`,
+        cigarros_efvo: `SELECT SUM(pago_efectivo) as t FROM ventas WHERE categoria = 'cigarrillo' AND ${filtroFecha}`,
+        digital: `SELECT SUM(pago_digital) as t FROM ventas WHERE ${filtroFecha}`,
         cobros_deuda: `SELECT SUM(ABS(monto)) as t FROM fiados WHERE monto < 0 AND ${filtroFecha}`,
         gastos_varios: `SELECT SUM(monto) as t FROM gastos WHERE ${filtroFecha}`,
         pagos_proveedores: `SELECT SUM(monto) as t FROM movimientos_proveedores WHERE ${filtroFecha}`
@@ -353,59 +286,17 @@ app.get("/balance_rango", (req, res) => {
         db.get(queries[key], (err, row) => {
             resultados[key] = row?.t || 0;
             completados++;
-            
             if(completados === totalQueries) {
                 const total_ingresos = resultados.kiosco_efvo + resultados.cigarros_efvo + resultados.digital + resultados.cobros_deuda;
                 const total_egresos = resultados.gastos_varios + resultados.pagos_proveedores;
-                
                 res.json({
-                    ingresos: {
-                        kiosco_efvo: resultados.kiosco_efvo,
-                        cigarros_efvo: resultados.cigarros_efvo,
-                        digital: resultados.digital,
-                        cobros_deuda: resultados.cobros_deuda
-                    },
-                    egresos: {
-                        gastos_varios: resultados.gastos_varios,
-                        pagos_proveedores: resultados.pagos_proveedores
-                    },
-                    total_ingresos,
-                    total_egresos,
-                    balance_neto: total_ingresos - total_egresos
+                    ingresos: resultados,
+                    total_ingresos, total_egresos, balance_neto: total_ingresos - total_egresos
                 });
             }
         });
     });
 });
 
-// ==========================================
-// NUEVA RUTA: DATOS PARA GRÁFICOS
-// ==========================================
-app.get("/reportes/ventas_semana", (req, res) => {
-    const sql = `
-        SELECT 
-            strftime('%Y-%m-%d', fecha) as fecha_dia, 
-            SUM(precio_total) as total 
-        FROM ventas 
-        WHERE fecha >= date('now', '-6 days', 'localtime')
-        GROUP BY fecha_dia 
-        ORDER BY fecha_dia ASC
-    `;
-
-    db.all(sql, [], (err, rows) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-        } else {
-            res.json(rows);
-        }
-    });
-});
-
-// --- SERVIR FRONTEND ---
-app.get(/(.*)/, (req, res) => {
-  res.sendFile(path.join(__dirname, "../dist/index.html"));
-});
-
-app.listen(port, () => {
-  console.log(`🚀 Servidor Kiosco completo corriendo en http://localhost:${port}`);
-});
+app.get(/(.*)/, (req, res) => res.sendFile(path.join(__dirname, "../dist/index.html")));
+app.listen(port, () => console.log(`🚀 Servidor Kiosco completo corriendo en http://localhost:${port}`));

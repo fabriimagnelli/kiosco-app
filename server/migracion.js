@@ -7,4 +7,4 @@ db.serialize(() => {
     else console.log("✅ Columna codigo_barras agregada con éxito.");
   });
 });
-db.close();
+db.close(); 

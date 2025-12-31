@@ -1,170 +1,209 @@
-import React, { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { 
-  TrendingUp, ShoppingCart, AlertTriangle, 
-  DollarSign, Package, ArrowRight, Activity 
-} from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { DollarSign, ShoppingCart, TrendingDown, AlertTriangle, TrendingUp, Award, PieChart as PieIcon } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Legend } from "recharts";
 
-function Inicio() {
-  const [datos, setDatos] = useState({
-    ventas_hoy: 0,
-    tickets_hoy: 0,
-    gastos_hoy: 0,
-    bajo_stock: []
-  });
-  const [saludo, setSaludo] = useState("");
+// Colores para el gráfico de torta
+const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
 
-  useEffect(() => {
-    // 1. Cargar Datos
-    fetch("http://localhost:3001/dashboard")
-      .then(r => r.json())
-      .then(setDatos);
+// --- FUNCIÓN PARA DIBUJAR EL PORCENTAJE ---
+const RADIAN = Math.PI / 180;
+const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }) => {
+  const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
+  const x = cx + radius * Math.cos(-midAngle * RADIAN);
+  const y = cy + radius * Math.sin(-midAngle * RADIAN);
 
-    // 2. Definir saludo según hora
-    const hora = new Date().getHours();
-    if (hora < 12) setSaludo("Buenos días");
-    else if (hora < 20) setSaludo("Buenas tardes");
-    else setSaludo("Buenas noches");
-  }, []);
+  // Si el porcentaje es muy chico (menor al 5%), no lo mostramos para que no se encime
+  if (percent < 0.05) return null;
 
   return (
-    <div className="flex flex-col h-full bg-slate-100 p-8 overflow-y-auto custom-scrollbar">
+    <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight="bold">
+      {`${(percent * 100).toFixed(0)}%`}
+    </text>
+  );
+};
+// ------------------------------------------
+
+function Inicio() {
+  const [dashboard, setDashboard] = useState(null);
+  const [ventasSemana, setVentasSemana] = useState([]);
+  const [productosTop, setProductosTop] = useState([]);
+  const [metodosPago, setMetodosPago] = useState([]);
+
+  useEffect(() => {
+    // 1. Datos Resumen
+    fetch("http://localhost:3001/dashboard")
+      .then((res) => res.json())
+      .then(setDashboard)
+      .catch((err) => console.error(err));
+
+    // 2. Gráfico Ventas Semana
+    fetch("http://localhost:3001/reportes/ventas_semana")
+      .then((res) => res.json())
+      .then(setVentasSemana)
+      .catch((err) => console.error(err));
+    
+    // 3. Top Productos
+    fetch("http://localhost:3001/reportes/productos_top")
+      .then((res) => res.json())
+      .then(setProductosTop)
+      .catch((err) => console.error(err));
+
+    // 4. Métodos de Pago
+    fetch("http://localhost:3001/reportes/metodos_pago")
+      .then((res) => res.json())
+      .then(setMetodosPago)
+      .catch((err) => console.error(err));
+
+  }, []);
+
+  if (!dashboard) return <div className="p-10 text-center text-slate-500">Cargando tablero de control...</div>;
+
+  return (
+    <div className="h-full overflow-y-auto custom-scrollbar p-6 space-y-6 bg-slate-50">
       
-      {/* HEADER: SALUDO */}
-      <div className="mb-8 flex justify-between items-end">
-        <div>
-            <h1 className="text-3xl font-bold text-slate-800 tracking-tight">{saludo}, Admin.</h1>
-            <p className="text-slate-500 mt-1">Aquí tienes el resumen de tu negocio hoy.</p>
-        </div>
-        <div className="text-right hidden md:block">
-            <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Fecha</p>
-            <p className="text-xl font-bold text-slate-700">{new Date().toLocaleDateString("es-AR", { weekday: 'long', day: 'numeric', month: 'long' })}</p>
-        </div>
-      </div>
-
-      {/* SECCIÓN 1: KPIs (TARJETAS PRINCIPALES) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        
-        {/* TARJETA VENTAS */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between group hover:shadow-md transition-all">
-            <div>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Ventas Hoy</p>
-                <h3 className="text-3xl font-bold text-slate-800">$ {datos.ventas_hoy.toLocaleString()}</h3>
-                <p className="text-xs text-green-600 font-medium mt-2 flex items-center gap-1">
-                    <Activity size={14} /> {datos.tickets_hoy} operaciones
-                </p>
-            </div>
-            <div className="bg-blue-50 text-blue-600 p-4 rounded-xl group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                <TrendingUp size={28} />
-            </div>
+      {/* 1. TARJETAS DE RESUMEN (KPIs) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4 hover:shadow-md transition-shadow">
+          <div className="bg-blue-100 p-3 rounded-xl text-blue-600"><DollarSign size={28} /></div>
+          <div>
+            <p className="text-slate-500 text-sm font-bold uppercase">Ventas Hoy</p>
+            <p className="text-2xl font-bold text-slate-800">$ {dashboard.ventas_hoy?.toLocaleString()}</p>
+          </div>
         </div>
 
-        {/* TARJETA CAJA NETO */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between group hover:shadow-md transition-all">
-            <div>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Balance Diario</p>
-                <h3 className={`text-3xl font-bold ${datos.ventas_hoy - datos.gastos_hoy >= 0 ? "text-slate-800" : "text-red-600"}`}>
-                    $ {(datos.ventas_hoy - datos.gastos_hoy).toLocaleString()}
-                </h3>
-                <p className="text-xs text-slate-400 font-medium mt-2">
-                    Ingresos - Gastos
-                </p>
-            </div>
-            <div className="bg-green-50 text-green-600 p-4 rounded-xl group-hover:bg-green-600 group-hover:text-white transition-colors">
-                <DollarSign size={28} />
-            </div>
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4 hover:shadow-md transition-shadow">
+          <div className="bg-purple-100 p-3 rounded-xl text-purple-600"><ShoppingCart size={28} /></div>
+          <div>
+            <p className="text-slate-500 text-sm font-bold uppercase">Tickets Hoy</p>
+            <p className="text-2xl font-bold text-slate-800">{dashboard.tickets_hoy}</p>
+          </div>
         </div>
 
-        {/* TARJETA GASTOS */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between group hover:shadow-md transition-all">
-            <div>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Gastos / Retiros</p>
-                <h3 className="text-3xl font-bold text-slate-800">$ {datos.gastos_hoy.toLocaleString()}</h3>
-                <p className="text-xs text-red-500 font-medium mt-2">
-                    Salidas registradas hoy
-                </p>
-            </div>
-            <div className="bg-red-50 text-red-500 p-4 rounded-xl group-hover:bg-red-500 group-hover:text-white transition-colors">
-                <ArrowRight size={28} className="rotate-[-45deg]" />
-            </div>
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4 hover:shadow-md transition-shadow">
+          <div className="bg-red-100 p-3 rounded-xl text-red-600"><TrendingDown size={28} /></div>
+          <div>
+            <p className="text-slate-500 text-sm font-bold uppercase">Gastos Hoy</p>
+            <p className="text-2xl font-bold text-slate-800">$ {dashboard.gastos_hoy?.toLocaleString()}</p>
+          </div>
+        </div>
+
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4 hover:shadow-md transition-shadow">
+          <div className="bg-orange-100 p-3 rounded-xl text-orange-600"><AlertTriangle size={28} /></div>
+          <div>
+            <p className="text-slate-500 text-sm font-bold uppercase">Stock Bajo</p>
+            <p className="text-2xl font-bold text-slate-800">{dashboard.bajo_stock?.length} Prod.</p>
+          </div>
         </div>
       </div>
 
-      {/* SECCIÓN 2: PANELES INFERIORES */}
-      <div className="flex flex-col md:flex-row gap-6 h-full">
+      {/* 2. ÁREA DE GRÁFICOS PRINCIPALES */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* IZQUIERDA: ACCESOS RÁPIDOS */}
-        <div className="w-full md:w-2/3 bg-slate-900 rounded-2xl p-8 text-white shadow-xl relative overflow-hidden">
-            {/* Decoración de fondo */}
-            <div className="absolute top-0 right-0 w-64 h-64 bg-blue-600 rounded-full blur-[80px] opacity-20 translate-x-1/2 -translate-y-1/2 pointer-events-none"></div>
-
-            <h3 className="text-xl font-bold mb-6 relative z-10">Accesos Rápidos</h3>
-            
-            <div className="grid grid-cols-2 gap-4 relative z-10">
-                <Link to="/ventas" className="bg-slate-800 hover:bg-blue-600 p-4 rounded-xl transition-all border border-slate-700 hover:border-blue-500 group flex flex-col gap-2">
-                    <ShoppingCart className="text-blue-400 group-hover:text-white" />
-                    <span className="font-semibold">Nueva Venta</span>
-                </Link>
-
-                <Link to="/movimientos" className="bg-slate-800 hover:bg-red-600 p-4 rounded-xl transition-all border border-slate-700 hover:border-red-500 group flex flex-col gap-2">
-                    <DollarSign className="text-red-400 group-hover:text-white" />
-                    <span className="font-semibold">Retirar Dinero</span>
-                </Link>
-
-                <Link to="/stock" className="bg-slate-800 hover:bg-indigo-600 p-4 rounded-xl transition-all border border-slate-700 hover:border-indigo-500 group flex flex-col gap-2">
-                    <Package className="text-indigo-400 group-hover:text-white" />
-                    <span className="font-semibold">Ver Stock</span>
-                </Link>
-                
-                <Link to="/cierre" className="bg-slate-800 hover:bg-yellow-600 p-4 rounded-xl transition-all border border-slate-700 hover:border-yellow-500 group flex flex-col gap-2">
-                    <ArrowRight className="text-yellow-400 group-hover:text-white" />
-                    <span className="font-semibold">Cerrar Caja</span>
-                </Link>
-            </div>
-        </div>
-
-        {/* DERECHA: ALERTA DE STOCK */}
-        <div className="w-full md:w-1/3 bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col overflow-hidden">
-            <div className="p-5 border-b border-slate-100 bg-red-50 flex items-center justify-between">
-                <h3 className="font-bold text-red-700 flex items-center gap-2">
-                    <AlertTriangle size={18} /> Stock Bajo
-                </h3>
-                <span className="text-xs bg-white text-red-600 px-2 py-1 rounded font-bold shadow-sm">Urgente</span>
-            </div>
-            
-            <div className="flex-1 overflow-y-auto p-0">
-                {datos.bajo_stock.length === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center text-slate-400 p-6 text-center">
-                        <Package size={40} className="mb-2 opacity-50" />
-                        <p className="text-sm">¡Todo perfecto! No hay productos urgentes.</p>
-                    </div>
+        {/* GRÁFICO DE BARRAS: VENTAS SEMANA */}
+        <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <h3 className="font-bold text-slate-700 mb-6 flex items-center gap-2"><TrendingUp className="text-blue-500"/> Evolución de Ventas (7 días)</h3>
+            <div className="h-64 w-full">
+                {ventasSemana.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={ventasSemana}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/>
+                            <XAxis dataKey="fecha" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} dy={10} />
+                            <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                            <Tooltip 
+                                contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} 
+                                cursor={{fill: '#f8fafc'}}
+                            />
+                            <Bar dataKey="total" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={40} />
+                        </BarChart>
+                    </ResponsiveContainer>
                 ) : (
-                    <table className="w-full text-left text-sm">
-                        <tbody className="divide-y divide-slate-50">
-                            {datos.bajo_stock.map((p, i) => (
-                                <tr key={i} className="hover:bg-slate-50">
-                                    <td className="p-4 font-semibold text-slate-700">{p.nombre}</td>
-                                    <td className="p-4 text-right">
-                                        <span className={`px-2 py-1 rounded text-xs font-bold ${p.stock === 0 ? "bg-red-100 text-red-700" : "bg-yellow-100 text-yellow-700"}`}>
-                                            {p.stock} un.
-                                        </span>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                    <div className="h-full flex items-center justify-center text-slate-400">Sin datos suficientes</div>
                 )}
             </div>
-            <div className="p-3 border-t border-slate-100 bg-slate-50 text-center">
-                <Link to="/stock" className="text-xs font-bold text-blue-600 hover:underline">
-                    Ver inventario completo
-                </Link>
+        </div>
+
+        {/* GRÁFICO DE TORTA: MÉTODOS DE PAGO */}
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col">
+            <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><PieIcon className="text-purple-500"/> Métodos de Pago</h3>
+            <div className="flex-1 min-h-[200px] relative">
+                 {metodosPago.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                            <Pie
+                                data={metodosPago}
+                                cx="50%"
+                                cy="50%"
+                                labelLine={false} // Quitamos la línea externa
+                                label={renderCustomizedLabel} // Usamos nuestra etiqueta interna
+                                innerRadius={40} // Más grueso para que entre el texto
+                                outerRadius={80}
+                                paddingAngle={5}
+                                dataKey="value"
+                            >
+                                {metodosPago.map((entry, index) => (
+                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                ))}
+                            </Pie>
+                            <Tooltip formatter={(value) => `$${value.toLocaleString()}`} />
+                            <Legend verticalAlign="bottom" height={36}/>
+                        </PieChart>
+                    </ResponsiveContainer>
+                 ) : (
+                    <div className="h-full flex items-center justify-center text-slate-400">Sin ventas aún</div>
+                 )}
+            </div>
+        </div>
+      </div>
+
+      {/* 3. LISTAS INFERIORES */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        
+        {/* TOP PRODUCTOS */}
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><Award className="text-yellow-500"/> Productos Más Vendidos</h3>
+            <div className="space-y-3">
+                {productosTop.map((prod, index) => (
+                    <div key={index} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                        <div className="flex items-center gap-3">
+                            <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                                index === 0 ? "bg-yellow-100 text-yellow-700" :
+                                index === 1 ? "bg-gray-200 text-gray-700" :
+                                index === 2 ? "bg-orange-100 text-orange-700" : "bg-white border text-slate-500"
+                            }`}>
+                                {index + 1}
+                            </span>
+                            <span className="font-medium text-slate-700">{prod.name}</span>
+                        </div>
+                        <span className="font-bold text-blue-600">{prod.value} un.</span>
+                    </div>
+                ))}
+                {productosTop.length === 0 && <p className="text-slate-400 text-center py-4">Sin datos aún.</p>}
             </div>
         </div>
 
+        {/* ALERTA DE STOCK BAJO */}
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><AlertTriangle className="text-red-500"/> Alerta de Reposición</h3>
+            <div className="space-y-2 overflow-y-auto max-h-64 custom-scrollbar pr-2">
+                {dashboard.bajo_stock?.length > 0 ? (
+                    dashboard.bajo_stock.map((item, index) => (
+                        <div key={index} className="flex justify-between items-center p-2 border-b border-slate-50 last:border-0 hover:bg-red-50 transition-colors rounded">
+                            <span className="text-slate-600 text-sm">{item.nombre}</span>
+                            <span className="text-red-600 font-bold text-xs bg-red-100 px-2 py-1 rounded-full">Quedan {item.stock}</span>
+                        </div>
+                    ))
+                ) : (
+                    <div className="flex flex-col items-center justify-center h-40 text-green-600 gap-2">
+                        <Award size={32}/>
+                        <p>¡Stock Saludable!</p>
+                    </div>
+                )}
+            </div>
+        </div>
       </div>
+
     </div>
   );
 }
 
-export default Inicio;  
+export default Inicio;

@@ -1,60 +1,42 @@
-import React, { createContext, useState, useEffect, useContext } from "react";
+import React, { createContext, useContext, useState, useEffect } from "react";
 
-export const AuthContext = createContext();
+const AuthContext = createContext();
 
-// --- ESTO ES LO QUE FALTABA ---
-// Este "hook" permite a los otros archivos usar las funciones de autenticación
 export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error("useAuth debe usarse dentro de un AuthProvider");
-  }
-  return context;
+  return useContext(AuthContext);
 };
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(() => {
-    return sessionStorage.getItem("usuario") || null;
-  });
+  const [usuario, setUsuario] = useState(null);
+  // AGREGAMOS ESTADO DE CARGA (IMPORTANTE)
+  const [cargando, setCargando] = useState(true);
 
   useEffect(() => {
-    localStorage.removeItem("usuario"); 
+    // Revisar si hay sesión guardada al iniciar
+    const usuarioGuardado = localStorage.getItem("usuario_kiosco");
+    if (usuarioGuardado) {
+      setUsuario(usuarioGuardado);
+    }
+    // Una vez revisado, terminamos la carga
+    setCargando(false);
   }, []);
 
-  const login = async (usuario, password) => {
-    try {
-      const response = await fetch("http://localhost:3001/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ usuario, password }),
-      });
-
-      if (!response.ok) throw new Error("Error del servidor");
-
-      const data = await response.json();
-
-      if (data.success) {
-        setUser(data.usuario);
-        sessionStorage.setItem("usuario", data.usuario);
-        return { success: true };
-      } else {
-        return { success: false, message: "Credenciales incorrectas" };
-      }
-    } catch (error) {
-      console.error("Error login:", error);
-      return { success: false, message: "No se pudo conectar con el servidor." };
-    }
+  const login = (user) => {
+    setUsuario(user);
+    localStorage.setItem("usuario_kiosco", user);
   };
 
   const logout = () => {
-    setUser(null);
-    sessionStorage.removeItem("usuario");
-    localStorage.removeItem("usuario");
+    setUsuario(null);
+    localStorage.removeItem("usuario_kiosco");
   };
 
-  return (
-    <AuthContext.Provider value={{ user, login, logout }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  const value = {
+    usuario,
+    login,
+    logout,
+    cargando // Exportamos el estado de carga
+  };
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

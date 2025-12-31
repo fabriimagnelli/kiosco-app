@@ -1,64 +1,111 @@
-import React from "react";
-import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from "react-router-dom";
-import { AuthProvider } from "./context/AuthContext";
-import Login, { RutaProtegida } from "./components/Login"; 
+import React, { useState, useEffect } from "react";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { AuthProvider, useAuth } from "./context/AuthContext";
 import Sidebar from "./components/Sidebar";
+import Login from "./components/Login";
+
+// --- IMPORTAMOS TODAS LAS PANTALLAS ---
+// Asegúrate de que estos archivos existan en tu carpeta src/components/
 import Inicio from "./components/Inicio";
 import Ventas from "./components/Ventas";
 import Productos from "./components/Productos";
-import Gastos from "./components/Gastos";
+import Cigarrillos from "./components/Cigarrillos"; // Faltaba importar
 import Stock from "./components/Stock";
-import Cierre from "./components/Cierre";
-import Reportes from "./components/Reportes";
-import Deudores from "./components/Deudores";
+import Clientes from "./components/Deudores";
 import Proveedores from "./components/Proveedores";
-import Balance from "./components/Balance";
-import Calculadora from "./components/Calculadora";
-import Apertura from "./components/Apertura";
-import Cigarrillos from "./components/Cigarrillos"; // RESTAURADO
-import "./App.css";
+import Gastos from "./components/Gastos";
+import Apertura from "./components/Apertura";       // Faltaba importar
+import Balance from "./components/Balance";         // Faltaba importar
+import Reportes from "./components/Reportes";       // Faltaba importar
+import CierreGeneral from "./components/CierreGeneral"; 
 
-const Layout = () => (
-  <div className="fixed inset-0 flex bg-slate-100 font-sans overflow-hidden">
-    <div className="flex-shrink-0 h-full">
-      <Sidebar />
+// --- PANTALLA DE CARGA ---
+const SplashScreen = () => (
+  <div className="fixed inset-0 bg-slate-900 flex flex-col items-center justify-center z-50">
+    <div className="relative animate-bounce-slow">
+      <div className="absolute inset-0 bg-blue-500 rounded-full blur-3xl opacity-20 animate-pulse"></div>
+      <img src="/SACWare-logo-sin-fondo-cambio.png" alt="SACWare Loading" className="w-48 md:w-64 relative z-10 drop-shadow-2xl"/>
     </div>
-    <div className="flex-1 flex flex-col h-full min-w-0 relative">
-      <main className="flex-1 overflow-x-hidden overflow-y-auto bg-slate-100 p-4">
-        <Outlet />
-      </main>
+    <div className="mt-8 flex flex-col items-center gap-2">
+      <div className="w-12 h-12 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin"></div>
+      <p className="text-slate-400 text-sm font-medium tracking-widest animate-pulse">CARGANDO...</p>
     </div>
   </div>
 );
 
+// Layout Principal
+const Layout = ({ children }) => {
+  return (
+    <div className="flex h-screen bg-slate-100 overflow-hidden font-sans text-slate-900">
+      <Sidebar />
+      <div className="flex-1 flex flex-col h-full overflow-hidden relative">
+        <main className="flex-1 overflow-hidden relative">
+          {children}
+        </main>
+      </div>
+    </div>
+  );
+};
+
+// Ruta Protegida
+const RutaProtegida = ({ children }) => {
+  const { usuario, cargando } = useAuth();
+  
+  if (cargando) return <SplashScreen />;
+  if (!usuario) return <Navigate to="/login" />;
+  
+  return <Layout>{children}</Layout>;
+};
+
+// Rutas de la Aplicación
+function RutasApp() {
+    const { usuario, cargando } = useAuth();
+    const [splashMinimo, setSplashMinimo] = useState(true);
+
+    useEffect(() => {
+        const timer = setTimeout(() => setSplashMinimo(false), 2000);
+        return () => clearTimeout(timer);
+    }, []);
+
+    if (cargando || splashMinimo) return <SplashScreen />;
+
+    return (
+        <Routes>
+            {/* LOGIN */}
+            <Route path="/login" element={!usuario ? <Login /> : <Navigate to="/" />} />
+            
+            {/* RUTAS PRINCIPALES */}
+            <Route path="/" element={<RutaProtegida><Inicio /></RutaProtegida>} />
+            <Route path="/apertura" element={<RutaProtegida><Apertura /></RutaProtegida>} />
+            <Route path="/ventas" element={<RutaProtegida><Ventas /></RutaProtegida>} />
+            <Route path="/cierre" element={<RutaProtegida><CierreGeneral /></RutaProtegida>} />
+            
+            {/* GESTIÓN */}
+            <Route path="/productos" element={<RutaProtegida><Productos /></RutaProtegida>} />
+            <Route path="/cigarrillos" element={<RutaProtegida><Cigarrillos /></RutaProtegida>} />
+            <Route path="/stock" element={<RutaProtegida><Stock /></RutaProtegida>} />
+            
+            {/* TERCEROS Y ADMIN */}
+            <Route path="/clientes" element={<RutaProtegida><Clientes /></RutaProtegida>} />
+            <Route path="/proveedores" element={<RutaProtegida><Proveedores /></RutaProtegida>} />
+            <Route path="/gastos" element={<RutaProtegida><Gastos /></RutaProtegida>} />
+            
+            {/* REPORTES Y BALANCE */}
+            <Route path="/balance" element={<RutaProtegida><Balance /></RutaProtegida>} />
+            <Route path="/reportes" element={<RutaProtegida><Reportes /></RutaProtegida>} />
+            
+            {/* CUALQUIER RUTA DESCONOCIDA VA AL INICIO */}
+            <Route path="*" element={<Navigate to="/" />} />
+        </Routes>
+    );
+}
+
 function App() {
   return (
     <AuthProvider>
-      <Router>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          
-          <Route element={<RutaProtegida />}>
-            <Route element={<Layout />}>
-               <Route path="/" element={<Inicio />} />
-               <Route path="ventas" element={<Ventas />} />
-               <Route path="inventario" element={<Productos />} />
-               <Route path="cigarrillos" element={<Cigarrillos />} /> {/* RUTA RESTAURADA */}
-               <Route path="movimientos" element={<Gastos />} />
-               <Route path="lista-proveedores" element={<Proveedores />} />
-               <Route path="stock" element={<Stock />} />
-               <Route path="cierre" element={<Cierre />} />
-               <Route path="reportes" element={<Reportes />} />
-               <Route path="deudores" element={<Deudores />} />
-               <Route path="balance" element={<Balance />} />
-               <Route path="calculadora" element={<Calculadora />} />
-               <Route path="apertura" element={<Apertura />} />
-            </Route>
-          </Route>
-          
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Router>
+      <BrowserRouter>
+        <RutasApp />
+      </BrowserRouter>
     </AuthProvider>
   );
 }
