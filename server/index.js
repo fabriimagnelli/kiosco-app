@@ -151,6 +151,15 @@ app.put("/cigarrillos/:id", (req, res) => {
 app.delete("/cigarrillos/:id", (req, res) => db.run("DELETE FROM cigarrillos WHERE id = ?", [req.params.id], () => res.json({success: true})));
 
 // --- VENTAS ---
+// AGREGAR ESTO:
+
+app.get("/ventas", (req, res) => {
+    db.all("SELECT * FROM ventas ORDER BY fecha DESC", (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+    });
+});
+
 app.post("/ventas", (req, res) => {
   const { productos, metodo_pago, desglose } = req.body;
   if (!productos || productos.length === 0) return res.status(400).json({ error: "Vacío" });
@@ -299,4 +308,4 @@ app.get("/balance_rango", (req, res) => {
 });
 
 app.get(/(.*)/, (req, res) => res.sendFile(path.join(__dirname, "../dist/index.html")));
-app.listen(port, () => console.log(`🚀 Servidor Kiosco completo corriendo en http://localhost:${port}`));
+app.listen(port, () => console.log(`🚀 SERVIDOR CORREGIDO AHORA - http://localhost:${port}`));
