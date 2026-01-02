@@ -29,7 +29,6 @@ function Login() {
   };
 
   return (
-
     <div className="absolute inset-0 flex items-center justify-center bg-slate-900 overflow-hidden z-50">
       
       {/* Contenedor del Formulario */}
@@ -37,6 +36,7 @@ function Login() {
         
         <div className="text-center mb-8">
             <div className="flex justify-center mb-4">
+                {/* Asegúrate de que logo.png esté en la carpeta public */}
                 <img src="/logo.png" alt="SACWare Logo" className="h-20 w-auto object-contain drop-shadow-md" />
             </div>
 
@@ -51,7 +51,7 @@ function Login() {
                     <User className="absolute left-3 top-3 text-slate-400" size={20} />
                     <input 
                         type="text" 
-                        className="w-full pl-10 p-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none transition-all"
+                        className="w-full pl-10 p-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none transition-all font-medium"
                         placeholder="admin"
                         value={usuario}
                         onChange={(e) => setUsuario(e.target.value)}
@@ -65,7 +65,7 @@ function Login() {
                     <Lock className="absolute left-3 top-3 text-slate-400" size={20} />
                     <input 
                         type="password" 
-                        className="w-full pl-10 p-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none transition-all"
+                        className="w-full pl-10 p-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none transition-all font-medium"
                         placeholder="••••"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}

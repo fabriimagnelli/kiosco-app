@@ -5,26 +5,27 @@ import Sidebar from "./components/Sidebar";
 import Login from "./components/Login";
 
 // --- IMPORTAMOS TODAS LAS PANTALLAS ---
-// Asegúrate de que estos archivos existan en tu carpeta src/components/
 import Inicio from "./components/Inicio";
 import Ventas from "./components/Ventas";
 import Productos from "./components/Productos";
-import Cigarrillos from "./components/Cigarrillos"; // Faltaba importar
+import Cigarrillos from "./components/Cigarrillos"; 
 import Stock from "./components/Stock";
 import Clientes from "./components/Deudores";
 import Proveedores from "./components/Proveedores";
 import Gastos from "./components/Gastos";
-import Apertura from "./components/Apertura";       // Faltaba importar
-import Balance from "./components/Balance";         // Faltaba importar
-import Reportes from "./components/Reportes";       // Faltaba importar
-import CierreGeneral from "./components/CierreGeneral"; 
+import Apertura from "./components/Apertura";       
+import Balance from "./components/Balance";         
+import Reportes from "./components/Reportes";   
+    
+// CAMBIO IMPORTANTE: Importamos el nuevo contenedor "Cierre" en lugar de "CierreGeneral"
+import Cierre from "./components/Cierre"; 
 
 // --- PANTALLA DE CARGA ---
 const SplashScreen = () => (
   <div className="fixed inset-0 bg-slate-900 flex flex-col items-center justify-center z-50">
     <div className="relative animate-bounce-slow">
       <div className="absolute inset-0 bg-blue-500 rounded-full blur-3xl opacity-20 animate-pulse"></div>
-      <img src="/SACWare-logo-sin-fondo-cambio.png" alt="SACWare Loading" className="w-48 md:w-64 relative z-10 drop-shadow-2xl"/>
+      <img src="/logo.png" alt="SACWare Loading" className="w-48 md:w-64 relative z-10 drop-shadow-2xl"/>
     </div>
     <div className="mt-8 flex flex-col items-center gap-2">
       <div className="w-12 h-12 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin"></div>
@@ -78,7 +79,9 @@ function RutasApp() {
             <Route path="/" element={<RutaProtegida><Inicio /></RutaProtegida>} />
             <Route path="/apertura" element={<RutaProtegida><Apertura /></RutaProtegida>} />
             <Route path="/ventas" element={<RutaProtegida><Ventas /></RutaProtegida>} />
-            <Route path="/cierre" element={<RutaProtegida><CierreGeneral /></RutaProtegida>} />
+            
+            {/* CAMBIO: La ruta de cierre ahora apunta al componente contenedor Cierre */}
+            <Route path="/cierre" element={<RutaProtegida><Cierre /></RutaProtegida>} />
             
             {/* GESTIÓN */}
             <Route path="/productos" element={<RutaProtegida><Productos /></RutaProtegida>} />

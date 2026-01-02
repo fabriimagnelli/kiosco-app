@@ -11,10 +11,10 @@ import {
   LogOut, 
   Archive, 
   PieChart,
-  Unlock,      // Para Apertura
-  FileText,    // Para Reportes
-  Scale,       // Para Balance
-  Cigarette    // Para Cigarrillos
+  Unlock,      
+  FileText,    
+  Scale,       
+  Cigarette    
 } from "lucide-react";
 
 function Sidebar() {
@@ -29,28 +29,36 @@ function Sidebar() {
 
   const isActive = (path) => location.pathname === path;
 
-  // Estilos originales: w-20 en móvil/cerrado, md:w-64 en escritorio
-  const btnBase = "flex items-center gap-3 w-full p-3 rounded-xl transition-all font-bold text-sm mb-1 justify-center md:justify-start";
+  // CAMBIO: font-medium en lugar de font-bold para un look más fino
+  const btnBase = "flex items-center gap-3 w-full p-3 rounded-xl transition-all font-medium text-sm mb-1 justify-center md:justify-start";
+  
   const btnActive = "bg-blue-600 text-white shadow-lg shadow-blue-500/30";
   const btnInactive = "text-slate-400 hover:bg-slate-800 hover:text-white";
 
   return (
     <div className="w-20 md:w-64 bg-slate-900 h-full flex flex-col justify-between transition-all duration-300 flex-shrink-0 relative z-20 border-r border-slate-800">
       
-      {/* LOGO */}
-      <div className="p-4 md:p-6 flex items-center justify-center md:justify-start gap-3 border-b border-slate-800 h-20">
-        <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center shadow-lg text-white font-bold text-xl flex-shrink-0">
-          S
+      {/* LOGO UNIFICADO */}
+      <div className="p-4 md:p-6 flex items-center justify-center md:justify-start gap-3 border-b border-slate-800 h-24">
+        <img 
+            src="/logo.png" 
+            alt="Logo" 
+            className="w-10 h-10 object-contain drop-shadow-md" 
+        />
+        <div className="hidden md:block">
+            <h1 className="text-white font-semibold text-lg tracking-wide leading-none">
+              SAC<span className="text-blue-500 font-bold">Ware</span>
+            </h1>
+            <p className="text-[10px] text-slate-500 tracking-wider mt-1 font-light">
+                GESTIÓN COMERCIAL
+            </p>
         </div>
-        <h1 className="text-white font-bold text-xl hidden md:block tracking-wide">
-          SAC<span className="text-blue-500">Ware</span>
-        </h1>
       </div>
 
       {/* MENÚ SCROLLABLE */}
       <nav className="flex-1 overflow-y-auto custom-scrollbar p-2 md:p-4 space-y-1">
         
-        {/* SECCIÓN CAJA (Operativa diaria) */}
+        {/* SECCIÓN CAJA */}
         <p className="text-[10px] font-bold text-slate-600 uppercase mb-2 text-center md:text-left hidden md:block">Caja</p>
         
         <Link to="/" className={`${btnBase} ${isActive("/") ? btnActive : btnInactive}`} title="Inicio">
@@ -71,7 +79,7 @@ function Sidebar() {
 
         <div className="my-2 border-t border-slate-800 w-10 md:w-full mx-auto"></div>
 
-        {/* SECCIÓN GESTIÓN (Productos y Stock) */}
+        {/* SECCIÓN INVENTARIO */}
         <p className="text-[10px] font-bold text-slate-600 uppercase mb-2 text-center md:text-left hidden md:block">Inventario</p>
 
         <Link to="/productos" className={`${btnBase} ${isActive("/productos") ? btnActive : btnInactive}`} title="Productos">
@@ -88,7 +96,7 @@ function Sidebar() {
 
         <div className="my-2 border-t border-slate-800 w-10 md:w-full mx-auto"></div>
 
-        {/* SECCIÓN ADMINISTRACIÓN (Finanzas y Personas) */}
+        {/* SECCIÓN ADMIN */}
         <p className="text-[10px] font-bold text-slate-600 uppercase mb-2 text-center md:text-left hidden md:block">Admin</p>
 
         <Link to="/clientes" className={`${btnBase} ${isActive("/clientes") ? btnActive : btnInactive}`} title="Clientes">
@@ -127,7 +135,7 @@ function Sidebar() {
         
         <button 
           onClick={handleLogout}
-          className="w-full flex items-center justify-center gap-2 p-3 rounded-xl bg-red-600/10 text-red-500 hover:bg-red-600 hover:text-white transition-all font-bold text-sm"
+          className="w-full flex items-center justify-center gap-2 p-3 rounded-xl bg-red-600/10 text-red-500 hover:bg-red-600 hover:text-white transition-all font-medium text-sm"
           title="Cerrar Sesión"
         >
           <LogOut size={18} /> <span className="hidden md:block">Salir</span>

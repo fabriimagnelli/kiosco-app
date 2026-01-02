@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -12,12 +10,21 @@ html, body, #root {
 }
 
 body {
-  font-family: 'Montserrat', sans-serif;
-  background-color: #f1f5f9; /* Un gris muy suave y profesional (Slate-100) */
-  color: #1e293b; /* Texto gris oscuro, no negro puro (Slate-800) */
+  /* Usamos Outfit como fuente principal */
+  font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  
+  /* Slate-50: Un fondo un poco más luminoso y limpio */
+  background-color: #f8fafc; 
+  
+  /* Slate-700: Texto gris suave para mejor lectura */
+  color: #334155; 
+  
+  /* Suavizado de fuente para que se vea más "fina" */
+  -webkit-font-smoothing: antialiased; 
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Scrollbar personalizada y elegante (oculta la fea por defecto) */
+/* Scrollbar personalizada */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;

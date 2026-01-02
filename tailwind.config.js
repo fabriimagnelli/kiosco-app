@@ -5,7 +5,12 @@ export default {
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
   theme: {
-    extend: {},
+    extend: {
+      fontFamily: {
+        // Define Outfit como la fuente 'sans' por defecto
+        sans: ['Outfit', 'sans-serif'],
+      },
+    },
   },
   plugins: [],
 }

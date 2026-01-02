@@ -1,153 +1,338 @@
 import React, { useState, useEffect } from "react";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
-import { Save, Banknote, AlertTriangle, CheckCircle } from "lucide-react";
+import { DollarSign, Save, Banknote, RefreshCw, Cigarette, AlertCircle, Edit2 } from "lucide-react";
 
-function CierreCigarrillos({ datos, onRecargar }) {
-  const [billetes, setBilletes] = useState({ 20000: "", 10000: "", 2000: "", 1000: "", 500: "", 200: "", 100: "", 50: "", 20: "", 10: "" });
+function CierreCigarrillos() {
+  const [datos, setDatos] = useState({ esperado: 0, ventas: 0, cantidad_tickets: 0 });
+  const [cargando, setCargando] = useState(true);
+  const [errorSistema, setErrorSistema] = useState(null); // Para mostrar errores en pantalla
+  const [editandoSistema, setEditandoSistema] = useState(false); // Para corrección manual
+
+  // --- Estado de Billetes ---
+  const [billetes, setBilletes] = useState({
+    20000: 0, 10000: 0, 2000: 0, 1000: 0, 
+    500: 0, 200: 0, 100: 0, 50: 0, 
+    "Monedas/Otros": 0
+  });
+
   const [totalFisico, setTotalFisico] = useState(0);
+  const [diferencia, setDiferencia] = useState(0);
+  const [procesando, setProcesando] = useState(false);
 
+  const ordenBilletes = ["20000", "10000", "2000", "1000", "500", "200", "100", "50", "Monedas/Otros"];
+
+  // --- SAFE GUARDS: Funciones que no fallan si el dato es null ---
+  const esMismaFecha = (fecha1, fecha2) => {
+    try {
+        if (!fecha1 || !fecha2) return false;
+        // Intentamos convertir a Date. Si fecha1 es un string raro, podría fallar.
+        const d1 = new Date(fecha1);
+        const d2 = new Date(fecha2);
+        if (isNaN(d1.getTime())) return false; // Fecha inválida
+        
+        return d1.getFullYear() === d2.getFullYear() &&
+               d1.getMonth() === d2.getMonth() &&
+               d1.getDate() === d2.getDate();
+    } catch (e) {
+        return false;
+    }
+  };
+
+  const esVentaCigarrillo = (venta) => {
+    try {
+        const palabrasClave = ["cigar", "tabaco", "atado", "box", "philip", "marlboro", "chester", "camel", "lucky"];
+        
+        // Convertimos a string seguro y minúsculas para comparar
+        const cat = String(venta.categoria || "").toLowerCase();
+        const desc = String(venta.descripcion || "").toLowerCase();
+
+        // 1. Revisar Categoría y Descripción
+        if (palabrasClave.some(p => cat.includes(p))) return true;
+        if (palabrasClave.some(p => desc.includes(p))) return true;
+
+        // 2. Revisar Productos (si existen)
+        if (venta.productos && Array.isArray(venta.productos)) {
+            return venta.productos.some(prod => {
+                const pCat = String(prod.categoria || "").toLowerCase();
+                const pNom = String(prod.nombre || "").toLowerCase();
+                return palabrasClave.some(p => pCat.includes(p) || pNom.includes(p));
+            });
+        }
+        return false;
+    } catch (e) {
+        console.warn("Error analizando venta:", venta, e);
+        return false;
+    }
+  };
+
+  // --- CARGAR DATOS ---
+  const cargarDatos = async () => {
+    setCargando(true);
+    setErrorSistema(null);
+    try {
+      console.log("Iniciando fetch a /ventas...");
+      const res = await fetch("http://localhost:3001/ventas"); 
+      
+      if (!res.ok) throw new Error(`Error del servidor: ${res.status}`);
+
+      const dataRaw = await res.json();
+      console.log("Datos recibidos (RAW):", dataRaw);
+
+      // Soportamos si el backend devuelve un array directo o un objeto { data: [...] }
+      const todasLasVentas = Array.isArray(dataRaw) ? dataRaw : (dataRaw.data || []);
+      
+      if (!Array.isArray(todasLasVentas)) {
+          throw new Error("El formato de respuesta del servidor no es una lista de ventas.");
+      }
+
+      const hoy = new Date();
+      
+      // Filtramos fecha (con protección)
+      const ventasHoy = todasLasVentas.filter(v => esMismaFecha(v.fecha || v.created_at || v.createdAt, hoy));
+      
+      // Filtramos cigarrillos (con protección)
+      const ventasCigarrillos = ventasHoy.filter(v => esVentaCigarrillo(v));
+
+      // Sumamos totales
+      const totalCalculado = ventasCigarrillos.reduce((acc, curr) => {
+          // Intentamos leer 'total', 'monto' o 'importe'
+          const monto = parseFloat(curr.total || curr.monto || curr.importe || 0);
+          return acc + monto;
+      }, 0);
+
+      setDatos({
+          esperado: totalCalculado,
+          ventas: totalCalculado,
+          cantidad_tickets: ventasCigarrillos.length
+      });
+
+    } catch (error) {
+      console.error("Error CRÍTICO cargando ventas:", error);
+      setErrorSistema(error.message);
+      setDatos({ esperado: 0, ventas: 0, cantidad_tickets: 0 });
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  useEffect(() => { cargarDatos(); }, []);
+
+  // --- CÁLCULOS EN TIEMPO REAL ---
   useEffect(() => {
-    let suma = 0;
-    Object.keys(billetes).forEach((valor) => (suma += (parseInt(billetes[valor]) || 0) * parseInt(valor)));
-    setTotalFisico(suma);
+    let total = 0;
+    Object.keys(billetes).forEach(denom => {
+      const valor = denom === "Monedas/Otros" ? 1 : parseInt(denom);
+      const cantidad = parseFloat(billetes[denom]) || 0;
+      total += valor * cantidad;
+    });
+    setTotalFisico(total);
   }, [billetes]);
 
-  const cambiarCantidad = (valor, cantidad) => setBilletes({ ...billetes, [valor]: cantidad });
+  useEffect(() => {
+    // Calculamos diferencia usando datos.esperado (que puede ser editado manualmente)
+    setDiferencia(totalFisico - (datos.esperado || 0));
+  }, [totalFisico, datos.esperado]);
 
-  // --- LÓGICA CIGARRILLOS (ESTÁNDAR) ---
-  // Físico - Esperado. 
-  // Negativo = Faltante. Positivo = Sobrante.
-  const diferencia = totalFisico - datos.esperado;
+  const handleBilleteChange = (denom, valor) => {
+    setBilletes({ ...billetes, [denom]: valor });
+  };
 
-  const esFaltante = diferencia < 0;
-  const esSobrante = diferencia > 0;
-  const esPerfecto = diferencia === 0;
+  // Función para editar manualmente el valor esperado si el sistema falla
+  const handleManualSystemChange = (nuevoValor) => {
+      const val = parseFloat(nuevoValor) || 0;
+      setDatos(prev => ({ ...prev, esperado: val }));
+  };
 
-  const guardarCierre = () => {
-    if (!confirm("¿Confirmar cierre de CIGARRILLOS?")) return;
+  const guardarCierre = async () => {
+    if (!window.confirm("¿Confirmar Cierre de CAJA CIGARRILLOS?")) return;
 
-    const body = {
+    setProcesando(true);
+    const cierreData = {
       tipo: "CIGARRILLOS",
-      total_ventas: datos.ventas,
-      total_gastos: 0,
       total_sistema: datos.esperado,
       total_fisico: totalFisico,
-      diferencia: diferencia
+      diferencia: diferencia,
+      fecha: new Date().toISOString(),
+      notas: errorSistema ? `Cierre forzado con error: ${errorSistema}` : "Cierre normal"
     };
 
-    fetch("http://localhost:3001/cierres", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }).then((res) => {
+    try {
+      const res = await fetch("http://localhost:3001/cierres", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cierreData),
+      });
+      
       if (res.ok) {
-        alert("✅ Caja Cigarrillos cerrada correctamente.");
-        setBilletes({ 20000: "", 10000: "", 2000: "", 1000: "", 500: "", 200: "", 100: "", 50: "", 20: "", 10: "" });
-        onRecargar();
-        generarPDF(body);
+        alert("✅ Caja de Cigarrillos cerrada correctamente.");
+        setBilletes({20000:0, 10000:0, 2000:0, 1000:0, 500:0, 200:0, 100:0, 50:0, "Monedas/Otros":0});
+        setDatos({ esperado: 0, ventas: 0, cantidad_tickets: 0 });
+        cargarDatos(); 
+      } else {
+        alert("❌ Error al guardar en base de datos.");
       }
-    });
+    } catch (error) {
+      console.error(error);
+      alert("Error de conexión al guardar.");
+    }
+    setProcesando(false);
   };
 
-  const generarPDF = (data) => {
-    const doc = new jsPDF();
-    const fecha = new Date().toLocaleDateString("es-AR");
-    doc.setFillColor(202, 138, 4); // Amarillo
-    doc.rect(0, 0, 210, 40, "F");
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(22);
-    doc.text("Cierre: CIGARRILLOS", 105, 20, null, null, "center");
-    doc.setFontSize(10);
-    doc.text(`Fecha: ${fecha}`, 105, 30, null, null, "center");
-
-    const rows = [
-      ["Ventas Cigarrillos", `$ ${data.total_ventas}`],
-      ["Esperado Sistema", `$ ${data.total_sistema}`],
-      ["Conteo Físico", `$ ${data.total_fisico}`],
-      ["DIFERENCIA", `$ ${data.diferencia}`],
-    ];
-
-    autoTable(doc, {
-      startY: 50,
-      head: [["Concepto", "Monto"]],
-      body: rows,
-      theme: "grid",
-      headStyles: { fillColor: [202, 138, 4] },
-    });
-    doc.save(`Cierre_Cigarrillos_${fecha.replace(/\//g, "-")}.pdf`);
-  };
+  if (cargando) return (
+    <div className="flex h-full items-center justify-center">
+        <div className="animate-pulse flex flex-col items-center text-slate-400">
+            <Cigarette className="mb-2 h-10 w-10 opacity-50"/>
+            <p className="text-sm font-medium">Analizando ventas...</p>
+        </div>
+    </div>
+  );
 
   return (
-    <div className="flex flex-col md:flex-row h-full gap-6">
-      <div className="w-full md:w-1/2 bg-white p-6 rounded-xl shadow-sm border border-slate-200 overflow-y-auto custom-scrollbar flex flex-col">
-        <div className="flex items-center gap-3 mb-6 border-b pb-4 text-yellow-700">
-          <div className="p-2 rounded-lg bg-yellow-100"><Banknote /></div>
-          <div>
-            <h2 className="text-xl font-bold text-slate-800">Billetes Cigarrillos</h2>
-            <p className="text-xs text-slate-500">Solo efectivo de esta caja</p>
-          </div>
+    <div className="flex flex-col lg:flex-row h-full overflow-hidden bg-slate-50">
+      
+      {/* --- COLUMNA IZQUIERDA --- */}
+      <div className="w-full lg:w-1/3 bg-white border-r border-slate-200 flex flex-col relative z-10 shadow-xl lg:shadow-none">
+        
+        {/* HEADER */}
+        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-white">
+            <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <Cigarette className="text-orange-600" size={20}/> Sistema
+            </h3>
+            <button onClick={cargarDatos} className="text-xs flex items-center gap-1 bg-slate-50 text-slate-500 px-3 py-1.5 rounded-full hover:bg-slate-100 transition border border-slate-200 font-medium">
+                <RefreshCw size={12}/>
+            </button>
         </div>
-        <div className="grid grid-cols-2 gap-x-6 gap-y-4 flex-1">
-          {[20000, 10000, 2000, 1000, 500, 200, 100, 50, 20, 10].map((valor) => (
-            <div key={valor} className="flex items-center justify-between">
-              <span className="font-semibold text-slate-600 w-16 text-right">${valor}</span>
-              <div className="flex items-center gap-2">
-                <span className="text-slate-400 text-xs">x</span>
-                <input
-                  type="number"
-                  className="border p-2 rounded-lg w-24 text-center font-bold text-slate-700 outline-none focus:ring-yellow-500 border-yellow-200"
-                  placeholder="0"
-                  value={billetes[valor]}
-                  onChange={(e) => cambiarCantidad(valor, e.target.value)}
-                />
-              </div>
+        
+        <div className="flex-1 overflow-y-auto p-6 space-y-5 custom-scrollbar">
+            
+            {/* Si hay error, lo mostramos aquí */}
+            {errorSistema && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-4">
+                    <p className="text-xs font-bold text-red-600 uppercase mb-1 flex items-center gap-2">
+                        <AlertCircle size={14}/> Error detectado
+                    </p>
+                    <p className="text-xs text-red-500">{errorSistema}</p>
+                    <p className="text-[10px] text-red-400 mt-2">Ingresa el monto del sistema manualmente abajo.</p>
+                </div>
+            )}
+
+            {/* TARJETA DE VENTAS (EDITABLE) */}
+            <div className="bg-orange-50 p-6 rounded-2xl border border-orange-100 text-center relative group">
+                <div className="w-12 h-12 rounded-full bg-orange-100 flex items-center justify-center text-orange-600 mx-auto mb-3 shadow-sm">
+                    <DollarSign size={24}/>
+                </div>
+                
+                <p className="text-xs text-orange-600/70 font-bold uppercase tracking-widest mb-1">
+                    Ventas Cigarrillos
+                </p>
+                
+                {/* Input Editable o Texto Fijo */}
+                {editandoSistema ? (
+                    <input 
+                        type="number" 
+                        autoFocus
+                        className="w-full text-center text-3xl font-black text-orange-700 bg-white border border-orange-300 rounded-lg py-1 outline-none"
+                        value={datos.esperado}
+                        onChange={(e) => handleManualSystemChange(e.target.value)}
+                        onBlur={() => setEditandoSistema(false)}
+                    />
+                ) : (
+                    <div className="relative inline-block">
+                        <p className="text-4xl font-black text-orange-700 tracking-tight cursor-pointer" 
+                           onClick={() => setEditandoSistema(true)}
+                           title="Clic para editar manualmente">
+                            $ {datos.esperado.toLocaleString()}
+                        </p>
+                        <Edit2 size={12} className="absolute -right-4 top-2 text-orange-300 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"/>
+                    </div>
+                )}
+
+                <div className="mt-4 inline-block bg-white/50 px-3 py-1 rounded-full text-xs font-bold text-orange-800 border border-orange-100">
+                    {datos.cantidad_tickets} Tickets detectados
+                </div>
             </div>
-          ))}
+
+            <div className="p-4 rounded-xl border border-slate-100 bg-slate-50 text-slate-500 text-xs text-center">
+                <p>Si el monto es $0 incorrectamente, puedes hacer clic en el número para corregirlo manualmente.</p>
+            </div>
         </div>
-        <div className="mt-6 bg-slate-50 p-4 rounded-xl border border-slate-200 text-center">
-          <p className="text-slate-500 text-xs font-bold uppercase">Total Contado</p>
-          <p className="text-4xl font-bold mt-1 text-yellow-700">${totalFisico.toLocaleString()}</p>
+
+        {/* FOOTER ESPERADO */}
+        <div className="p-6 bg-slate-50 border-t border-slate-200">
+            <p className="text-xs text-slate-500 text-center uppercase font-bold tracking-wider mb-2">Total Sistema</p>
+            <div className="bg-white border border-slate-200 text-slate-800 p-4 rounded-2xl text-center shadow-sm">
+                <span className="text-3xl font-black tracking-tight">$ {datos.esperado.toLocaleString()}</span>
+            </div>
         </div>
       </div>
 
-      <div className="w-full md:w-1/2 flex flex-col gap-4">
-        <div className="p-6 rounded-xl shadow-sm border-l-4 border-yellow-500 bg-white flex-1 relative">
-          <div className="flex justify-between items-start mb-4">
-            <div>
-              <h3 className="font-bold text-slate-700 text-lg">Detalle Cigarrillos</h3>
-              <p className="text-xs text-slate-400">Venta exclusiva de cigarrillos</p>
-            </div>
-            <div className="p-2 rounded-full bg-yellow-50 text-yellow-600"><AlertTriangle size={20} /></div>
-          </div>
-          <div className="space-y-3 text-sm text-slate-600">
-            <div className="flex justify-between px-2 py-4 text-lg"><span>Ventas</span> <span className="font-bold text-green-600">+ ${datos.ventas}</span></div>
-            <p className="text-xs text-slate-400 px-2">Recuerda: Los gastos se descuentan de la caja general.</p>
-          </div>
-          <div className="mt-8 pt-4 border-t border-slate-100 flex justify-between items-baseline">
-            <span className="text-xs font-bold text-slate-400 uppercase">Debes tener</span>
-            <span className="text-4xl font-bold text-slate-800">$ {datos.esperado}</span>
-          </div>
+      {/* --- COLUMNA DERECHA: BILLETES --- */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden bg-slate-50/50">
+        <div className="p-6 border-b border-slate-200 bg-white shadow-sm z-10">
+            <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <Banknote className="text-green-600" size={20}/> Arqueo de Efectivo
+            </h3>
         </div>
 
-        <div className={`p-6 rounded-xl shadow-sm border border-slate-200 text-center transition-colors ${esPerfecto ? "bg-green-50" : esFaltante ? "bg-red-50" : "bg-blue-50"}`}>
-            <p className="text-xs font-bold text-slate-500 uppercase mb-1">Resultado</p>
-            <div className="flex justify-center items-center gap-2 mb-2">
-                <span className={`text-4xl font-bold ${esPerfecto ? "text-green-600" : esFaltante ? "text-red-600" : "text-blue-600"}`}>
-                    {diferencia > 0 ? "+" : ""}${diferencia.toLocaleString()}
-                </span>
-            </div>
-            <div className="flex justify-center gap-2 text-sm font-medium">
-                {esPerfecto && <span className="text-green-700 flex items-center gap-1"><CheckCircle size={16}/> Perfecto</span>}
-                {!esPerfecto && <span className={`${esFaltante ? "text-red-700" : "text-blue-700"} flex items-center gap-1`}>
-                    <AlertTriangle size={16}/> {esFaltante ? "Faltante" : "Sobrante"}
-                </span>}
+        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                {ordenBilletes.map((denom) => {
+                    const cantidad = billetes[denom];
+                    const valorUnitario = denom === "Monedas/Otros" ? 1 : parseInt(denom);
+                    const subtotal = (parseFloat(cantidad) || 0) * valorUnitario;
+                    const isActive = cantidad > 0;
+
+                    return (
+                        <div key={denom} className={`relative p-4 rounded-xl border transition-all duration-200 ${isActive ? "bg-white border-blue-400 shadow-md ring-1 ring-blue-100" : "bg-white border-slate-200 hover:border-blue-300"}`}>
+                            <div className="flex justify-between items-start mb-2">
+                                <span className={`text-[11px] font-bold uppercase ${isActive ? "text-blue-600" : "text-slate-400"}`}>
+                                    {denom === "Monedas/Otros" ? "MONEDAS" : `$ ${parseInt(denom).toLocaleString()}`}
+                                </span>
+                                {isActive && <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">= $ {subtotal.toLocaleString()}</span>}
+                            </div>
+                            <div className="flex items-baseline gap-1">
+                                <span className="text-slate-300 text-sm font-light">x</span>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    className={`w-full bg-transparent outline-none font-sans font-bold text-2xl p-0 ${isActive ? "text-slate-800" : "text-slate-300"}`}
+                                    placeholder="0"
+                                    value={cantidad || ""}
+                                    onChange={(e) => handleBilleteChange(denom, e.target.value)}
+                                    onFocus={(e) => e.target.select()}
+                                />
+                            </div>
+                        </div>
+                    );
+                })}
             </div>
         </div>
 
-        <button onClick={guardarCierre} className="w-full text-white py-4 rounded-xl font-bold shadow-lg bg-yellow-600 hover:bg-yellow-700 shadow-yellow-600/30 flex justify-center items-center gap-2">
-            <Save size={20} /> CERRAR CAJA CIGARRILLOS
-        </button>
+        {/* FOOTER TOTALES */}
+        <div className="bg-white p-6 border-t border-slate-200 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] z-20">
+            <div className="flex flex-col sm:flex-row gap-6 items-center">
+                <div className="flex-1 w-full">
+                    <div className="flex justify-between items-center mb-1">
+                        <span className="text-xs text-slate-500 font-bold uppercase">Total Contado</span>
+                        <span className="text-2xl font-black text-slate-800">$ {totalFisico.toLocaleString()}</span>
+                    </div>
+                    <div className={`flex justify-between items-center px-3 py-2 rounded-lg border text-sm font-bold ${
+                        diferencia === 0 ? "bg-green-50 border-green-200 text-green-700" : 
+                        diferencia > 0 ? "bg-blue-50 border-blue-200 text-blue-700" : 
+                        "bg-red-50 border-red-200 text-red-700"
+                    }`}>
+                        <span>{diferencia === 0 ? "Balance Perfecto" : diferencia > 0 ? "Sobra Dinero" : "Falta Dinero"}</span>
+                        <span className="text-lg">{diferencia > 0 ? "+" : ""}{diferencia.toLocaleString()}</span>
+                    </div>
+                </div>
+                <button 
+                    onClick={guardarCierre}
+                    disabled={procesando}
+                    className="w-full sm:w-auto px-8 py-4 rounded-xl font-bold text-white shadow-lg bg-orange-600 hover:bg-orange-700 active:scale-95 flex items-center gap-2"
+                >
+                    <Save size={20}/> Cerrar Caja
+                </button>
+            </div>
+        </div>
       </div>
     </div>
   );
