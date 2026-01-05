@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { User, Search, Plus, ArrowUpRight, ArrowDownLeft, Send, History, DollarSign, Wallet } from "lucide-react";
+import { User, Search, Plus, ArrowUpRight, ArrowDownLeft, Send, History, DollarSign, Wallet, Trash2 } from "lucide-react";
 
 function Deudores() {
   const [clientes, setClientes] = useState([]);
@@ -35,6 +35,21 @@ function Deudores() {
     }).then(() => {
       setNuevoNombre("");
       cargarClientes();
+    });
+  };
+
+  const eliminarCliente = (clienteId) => {
+    if (!confirm("¿Estás seguro de que quieres eliminar este cliente y todos sus movimientos?")) return;
+    
+    fetch(`http://localhost:3001/clientes/${clienteId}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+    }).then((res) => {
+      if (res.ok) {
+        alert("✅ Cliente eliminado");
+        if (clienteActivo?.id === clienteId) setClienteActivo(null);
+        cargarClientes();
+      }
     });
   };
 
@@ -118,28 +133,38 @@ function Deudores() {
             {clientesFiltrados.map(c => (
                 <div 
                     key={c.id} 
-                    onClick={() => verCuenta(c)}
                     className={`p-4 rounded-xl cursor-pointer border transition-all flex justify-between items-center group ${
                         clienteActivo?.id === c.id 
                         ? "bg-blue-50 border-blue-500 shadow-sm" 
                         : "bg-white border-slate-100 hover:border-blue-300 hover:shadow-sm"
                     }`}
                 >
-                    <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${
-                            clienteActivo?.id === c.id ? "bg-blue-500 text-white" : "bg-slate-200 text-slate-500"
-                        }`}>
-                            {c.nombre.charAt(0).toUpperCase()}
+                    <div className="flex-1" onClick={() => verCuenta(c)}>
+                        <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${
+                                clienteActivo?.id === c.id ? "bg-blue-500 text-white" : "bg-slate-200 text-slate-500"
+                            }`}>
+                                {c.nombre.charAt(0).toUpperCase()}
+                            </div>
+                            <span className={`font-bold ${clienteActivo?.id === c.id ? "text-blue-900" : "text-slate-700"}`}>
+                                {c.nombre}
+                            </span>
                         </div>
-                        <span className={`font-bold ${clienteActivo?.id === c.id ? "text-blue-900" : "text-slate-700"}`}>
-                            {c.nombre}
-                        </span>
                     </div>
-                    <span className={`font-bold px-3 py-1 rounded-lg text-sm ${
-                        c.total_deuda > 0 ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"
-                    }`}>
-                        ${c.total_deuda || 0}
-                    </span>
+                    <div className="flex items-center gap-2">
+                        <span className={`font-bold px-3 py-1 rounded-lg text-sm ${
+                            c.total_deuda > 0 ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"
+                        }`}>
+                            ${c.total_deuda || 0}
+                        </span>
+                        <button 
+                            onClick={() => eliminarCliente(c.id)}
+                            className="opacity-0 group-hover:opacity-100 bg-red-50 hover:bg-red-100 text-red-600 p-2 rounded-lg transition-all"
+                            title="Eliminar cliente"
+                        >
+                            <Trash2 size={16}/>
+                        </button>
+                    </div>
                 </div>
             ))}
         </div>

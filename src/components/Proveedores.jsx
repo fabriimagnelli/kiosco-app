@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Truck, Search, Plus, FileText, CheckCircle, Send, History, Wallet, Package } from "lucide-react";
+import { Truck, Search, Plus, FileText, CheckCircle, Send, History, Wallet, Package, Trash2 } from "lucide-react";
 
 function Proveedores() {
   const [proveedores, setProveedores] = useState([]);
@@ -37,6 +37,21 @@ function Proveedores() {
       setNuevoNombre("");
       setNuevoTelefono("");
       cargarProveedores();
+    });
+  };
+
+  const eliminarProveedor = (proveedorId) => {
+    if (!confirm("¿Estás seguro de que quieres eliminar este proveedor y todos sus movimientos?")) return;
+    
+    fetch(`http://localhost:3001/proveedores/${proveedorId}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+    }).then((res) => {
+      if (res.ok) {
+        alert("✅ Proveedor eliminado");
+        if (provActivo?.id === proveedorId) setProvActivo(null);
+        cargarProveedores();
+      }
     });
   };
 
@@ -136,30 +151,40 @@ function Proveedores() {
             {filtrados.map(p => (
                 <div 
                     key={p.id} 
-                    onClick={() => verCuenta(p)}
                     className={`p-4 rounded-xl cursor-pointer border transition-all flex justify-between items-center group ${
                         provActivo?.id === p.id 
                         ? "bg-purple-50 border-purple-500 shadow-sm" 
                         : "bg-white border-slate-100 hover:border-purple-300 hover:shadow-sm"
                     }`}
                 >
-                    <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${
-                            provActivo?.id === p.id ? "bg-purple-500 text-white" : "bg-slate-200 text-slate-500"
-                        }`}>
-                            {p.nombre.charAt(0).toUpperCase()}
-                        </div>
-                        <div>
-                            <p className={`font-bold leading-tight ${provActivo?.id === p.id ? "text-purple-900" : "text-slate-700"}`}>{p.nombre}</p>
-                            {p.telefono && <p className="text-[10px] text-slate-400">{p.telefono}</p>}
+                    <div className="flex-1" onClick={() => verCuenta(p)}>
+                        <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${
+                                provActivo?.id === p.id ? "bg-purple-500 text-white" : "bg-slate-200 text-slate-500"
+                            }`}>
+                                {p.nombre.charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                                <p className={`font-bold leading-tight ${provActivo?.id === p.id ? "text-purple-900" : "text-slate-700"}`}>{p.nombre}</p>
+                                {p.telefono && <p className="text-[10px] text-slate-400">{p.telefono}</p>}
+                            </div>
                         </div>
                     </div>
-                    {/* Deuda Proveedor: Si es > 0 significa que LE DEBO PLATA. Rojo es alerta de deuda mia. */}
-                    <span className={`font-bold px-3 py-1 rounded-lg text-sm ${
-                        p.total_deuda > 0 ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"
-                    }`}>
-                        ${p.total_deuda || 0}
-                    </span>
+                    <div className="flex items-center gap-2">
+                        {/* Deuda Proveedor: Si es > 0 significa que LE DEBO PLATA. Rojo es alerta de deuda mia. */}
+                        <span className={`font-bold px-3 py-1 rounded-lg text-sm ${
+                            p.total_deuda > 0 ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"
+                        }`}>
+                            ${p.total_deuda || 0}
+                        </span>
+                        <button 
+                            onClick={() => eliminarProveedor(p.id)}
+                            className="opacity-0 group-hover:opacity-100 bg-red-50 hover:bg-red-100 text-red-600 p-2 rounded-lg transition-all"
+                            title="Eliminar proveedor"
+                        >
+                            <Trash2 size={16}/>
+                        </button>
+                    </div>
                 </div>
             ))}
         </div>

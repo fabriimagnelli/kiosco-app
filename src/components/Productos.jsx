@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Package, Trash2, Edit, Save, Plus, Tag, ScanBarcode, TrendingUp, X } from "lucide-react";
+import { Package, Trash2, Edit, Save, Plus, Tag, TrendingUp, X } from "lucide-react";
 
 function Productos() {
   const [productos, setProductos] = useState([]);
@@ -23,6 +23,50 @@ function Productos() {
   };
   
   useEffect(() => { cargar(); }, []);
+
+  // Buscar producto por código de barras y rellenar nombre automáticamente
+  const buscarProductoPorCodigoDeBarras = async (codigoBarras) => {
+    if (!codigoBarras.trim()) {
+      return;
+    }
+    
+    console.log("🔍 Buscando código en API:", codigoBarras);
+    
+    try {
+      // Buscar en la API todos los productos
+      const response = await fetch("http://localhost:3001/productos");
+      const todosProductos = await response.json();
+      
+      console.log("📦 Total de productos en BD:", todosProductos.length);
+      
+      // Buscar el producto con el código de barras
+      const productoExistente = todosProductos.find(p => p.codigo_barras === codigoBarras);
+      
+      if (productoExistente) {
+        console.log("✅ Producto encontrado:", productoExistente.nombre);
+        // Solo cargar el nombre, no el stock (porque estamos creando un nuevo registro)
+        setForm({
+          nombre: productoExistente.nombre,
+          precio: productoExistente.precio || "",
+          stock: "", // Stock vacío porque es nuevo registro
+          categoria: productoExistente.categoria || "",
+          codigo_barras: codigoBarras
+        });
+      } else {
+        console.log("⚠️ Código no encontrado, puedes crear un producto nuevo");
+        // Si no existe, solo dejar el código de barras
+        setForm({
+          nombre: "",
+          precio: "",
+          stock: "",
+          categoria: "",
+          codigo_barras: codigoBarras
+        });
+      }
+    } catch (error) {
+      console.error("❌ Error al buscar:", error);
+    }
+  };
 
   // Guardar Producto (Individual)
   const guardar = (e) => {
@@ -109,7 +153,13 @@ function Productos() {
                 placeholder="Escanea aquí..." 
                 className="w-full border p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-yellow-50 text-slate-700 font-bold" 
                 value={form.codigo_barras || ""} 
-                onChange={e => setForm({...form, codigo_barras: e.target.value})} 
+                onChange={e => setForm({...form, codigo_barras: e.target.value})}
+                onKeyDown={e => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    buscarProductoPorCodigoDeBarras(e.target.value);
+                  }
+                }}
             />
           </div>
 

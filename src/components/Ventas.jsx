@@ -11,6 +11,10 @@ function Ventas() {
   const [metodoPago, setMetodoPago] = useState("Efectivo");
   const [montoEfectivoMixto, setMontoEfectivoMixto] = useState("");
 
+  // ESTADOS PARA MODAL DE CONFIRMACIÓN
+  const [mostrarConfirmacion, setMostrarConfirmacion] = useState(false);
+  const [datosConfirmacion, setDatosConfirmacion] = useState(null);
+
   // ESTADOS NUEVOS: VENTAS EN ESPERA
   const [ventasPausadas, setVentasPausadas] = useState([]);
   const [mostrarPausadas, setMostrarPausadas] = useState(false);
@@ -40,12 +44,12 @@ function Ventas() {
     };
     cargarDatos();
 
-    // Cargar ventas pausadas guardadas en localStorage (por si cierra la pestaña)
+    // Cargar ventas pausadas guardadas en localStorage
     const guardadas = JSON.parse(localStorage.getItem("ventasPausadas") || "[]");
     setVentasPausadas(guardadas);
   }, []);
 
-  // 2. LISTENERS DE TECLADO (ATAJOS)
+  // 2. LISTENERS DE TECLADO
   useEffect(() => {
     const handleGlobalKeys = (e) => {
         if (e.key === "F5") {
@@ -64,16 +68,13 @@ function Ventas() {
     };
     window.addEventListener("keydown", handleGlobalKeys);
     return () => window.removeEventListener("keydown", handleGlobalKeys);
-  }, [carrito, metodoPago, montoEfectivoMixto]); // Dependencias para que las funciones lean el estado actual
+  }, [carrito, metodoPago, montoEfectivoMixto]); 
 
-  // Actualizar localStorage cuando cambian las pausadas
   useEffect(() => {
     localStorage.setItem("ventasPausadas", JSON.stringify(ventasPausadas));
   }, [ventasPausadas]);
 
-  // Enfocar buscador al inicio
   useEffect(() => { if (inputBusquedaRef.current) inputBusquedaRef.current.focus(); }, []);
-  // Enfocar mixto
   useEffect(() => { if (metodoPago === "Mixto" && inputMixtoRef.current) inputMixtoRef.current.focus(); }, [metodoPago]);
 
   // --- LÓGICA DE PRECIOS ---
@@ -121,14 +122,13 @@ function Ventas() {
 
   const eliminarDelCarrito = (id) => setCarrito(carrito.filter((item) => item.id !== id));
 
-  // --- NUEVAS FUNCIONES: PAUSAR Y RECUPERAR ---
   const pausarVenta = () => {
     if (carrito.length === 0) return;
     const nuevaPausada = {
         id: Date.now(),
         hora: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
         items: carrito,
-        total: calcularTotal(carrito) // Guardamos el total calculado al momento
+        total: calcularTotal(carrito)
     };
     setVentasPausadas([nuevaPausada, ...ventasPausadas]);
     setCarrito([]);
@@ -140,7 +140,7 @@ function Ventas() {
 
   const recuperarVenta = (venta) => {
     if (carrito.length > 0) {
-        if (!confirm("⚠️ Tienes una venta actual en curso. ¿Deseas reemplazarla por la pausada? (Se perderá la actual)")) return;
+        if (!confirm("⚠️ Tienes una venta actual en curso. ¿Deseas reemplazarla por la pausada?")) return;
     }
     setCarrito(venta.items);
     setVentasPausadas(ventasPausadas.filter(v => v.id !== venta.id));
@@ -153,7 +153,7 @@ function Ventas() {
     }
   };
 
-  // --- CONFIRMAR VENTA ---
+  // --- CONFIRMAR VENTA (CORREGIDO) ---
   const confirmarVenta = () => {
     if (carrito.length === 0) return alert("El carrito está vacío");
 
@@ -170,17 +170,53 @@ function Ventas() {
 
     const productosFinales = carrito.map(item => ({ ...item, precio: obtenerPrecio(item) }));
 
-    fetch("http://localhost:3001/ventas", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ productos: productosFinales, metodo_pago: metodoPago, desglose: { efectivo: pagoEfectivo, digital: pagoDigital, total: totalVenta } }),
-    })
-    .then((res) => res.json())
-    .then((data) => {
-        if (data.success) {
-          alert(`✅ Venta registrada (F5).\nEfectivo: $${pagoEfectivo}\nDigital: $${pagoDigital}`);
-          window.location.reload(); 
-        } else alert("❌ Error al registrar");
+    // Guardar datos en el modal y mostrarlo
+    setDatosConfirmacion({
+      productosFinales,
+      pagoEfectivo,
+      pagoDigital,
+      totalVenta,
+      metodoPago
     });
+    setMostrarConfirmacion(true);
+  };
+
+  const procesarVenta = async () => {
+    if (!datosConfirmacion) return;
+    
+    try {
+      const res = await fetch("http://localhost:3001/ventas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productos: datosConfirmacion.productosFinales,
+          metodo_pago: datosConfirmacion.metodoPago,
+          desglose: {
+            efectivo: datosConfirmacion.pagoEfectivo,
+            digital: datosConfirmacion.pagoDigital,
+            total: datosConfirmacion.totalVenta
+          }
+        })
+      });
+
+      const text = await res.text();
+      const data = JSON.parse(text);
+
+      if (data.success) {
+        alert(`✅ Venta registrada (F5).\nEfectivo: $${datosConfirmacion.pagoEfectivo}\nDigital: $${datosConfirmacion.pagoDigital}`);
+        setCarrito([]);
+        setMetodoPago("Efectivo");
+        setBusqueda("");
+        setMostrarConfirmacion(false);
+        setDatosConfirmacion(null);
+        inputBusquedaRef.current?.focus();
+      } else {
+        alert("❌ Error reportado por el servidor: " + (data.error || "Desconocido"));
+      }
+    } catch (err) {
+      console.error("Error al vender:", err);
+      alert("❌ Error de conexión:\n" + err.message);
+    }
   };
 
   const productosFiltrados = productos.filter((p) => p.nombre.toLowerCase().includes(busqueda.toLowerCase()));
@@ -403,6 +439,59 @@ function Ventas() {
                             </div>
                         ))
                     )}
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* --- MODAL DE CONFIRMACIÓN DE VENTA --- */}
+      {mostrarConfirmacion && datosConfirmacion && (
+        <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-w-md w-full">
+                <div className="bg-green-500 p-4 text-white font-bold text-lg flex items-center gap-2">
+                    <ShoppingCart /> Confirmar Venta
+                </div>
+                <div className="p-6 flex-1">
+                    <div className="space-y-3 mb-6">
+                        <div className="flex justify-between items-center pb-3 border-b">
+                            <span className="text-slate-600">Productos:</span>
+                            <span className="font-bold">{datosConfirmacion.productosFinales.length} item(s)</span>
+                        </div>
+                        <div className="flex justify-between items-center pb-3 border-b">
+                            <span className="text-slate-600">Método de pago:</span>
+                            <span className="font-bold text-blue-600">{datosConfirmacion.metodoPago}</span>
+                        </div>
+                        {datosConfirmacion.pagoEfectivo > 0 && (
+                            <div className="flex justify-between items-center pb-3 border-b">
+                                <span className="text-slate-600">Efectivo:</span>
+                                <span className="font-bold text-green-600">${datosConfirmacion.pagoEfectivo.toLocaleString()}</span>
+                            </div>
+                        )}
+                        {datosConfirmacion.pagoDigital > 0 && (
+                            <div className="flex justify-between items-center pb-3 border-b">
+                                <span className="text-slate-600">Digital:</span>
+                                <span className="font-bold text-purple-600">${datosConfirmacion.pagoDigital.toLocaleString()}</span>
+                            </div>
+                        )}
+                        <div className="flex justify-between items-center pt-3 bg-green-50 p-3 rounded-lg">
+                            <span className="text-slate-800 font-bold">TOTAL:</span>
+                            <span className="font-black text-2xl text-green-600">${datosConfirmacion.totalVenta.toLocaleString()}</span>
+                        </div>
+                    </div>
+                </div>
+                <div className="p-4 bg-slate-100 flex gap-3">
+                    <button
+                        onClick={() => {setMostrarConfirmacion(false); setDatosConfirmacion(null);}}
+                        className="flex-1 py-3 rounded-xl font-bold bg-slate-400 hover:bg-slate-500 text-white active:scale-95 transition-all"
+                    >
+                        Cancelar
+                    </button>
+                    <button
+                        onClick={procesarVenta}
+                        className="flex-1 py-3 rounded-xl font-bold bg-green-600 hover:bg-green-700 text-white active:scale-95 transition-all shadow-lg shadow-green-500/30"
+                    >
+                        Confirmar Venta
+                    </button>
                 </div>
             </div>
         </div>

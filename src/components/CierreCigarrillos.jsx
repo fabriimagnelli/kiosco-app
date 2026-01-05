@@ -25,80 +25,22 @@ function CierreCigarrillos() {
   const cargarDatos = async () => {
     setCargando(true);
     try {
-      const res = await fetch("http://localhost:3001/ventas"); 
+      const res = await fetch("http://localhost:3001/resumen_dia_independiente"); 
       if (!res.ok) throw new Error("Error conectando al servidor");
 
-      const raw = await res.json();
-      const todasLasVentas = Array.isArray(raw) ? raw : (raw.data || []);
-
-      // 1. Detectar todas las categorías únicas del día
-      const hoy = new Date();
-      const ventasHoy = todasLasVentas.filter(v => {
-        const d = new Date(v.fecha || v.created_at);
-        return d.getDate() === hoy.getDate() && 
-               d.getMonth() === hoy.getMonth() && 
-               d.getFullYear() === hoy.getFullYear();
+      const data = await res.json();
+      setDatos({
+          esperado: data.cigarrillos.esperado || 0,
+          ventas: data.cigarrillos.ventas || 0,
+          cantidad_tickets: 0  // No tenemos este dato directamente, lo calculamos del total de ventas con categoria cigarrillo
       });
-
-      const categoriasUnicas = new Set();
-      ventasHoy.forEach(v => {
-          if (v.categoria) categoriasUnicas.add(v.categoria);
-          if (v.productos && Array.isArray(v.productos)) {
-              v.productos.forEach(p => p.categoria && categoriasUnicas.add(p.categoria));
-          }
-      });
-      setCategoriasDetectadas(Array.from(categoriasUnicas));
-
-      // 2. Si no hay categoría seleccionada, intentamos adivinar
-      let catFinal = categoriaSeleccionada;
-      if (!catFinal) {
-          const sugerencia = Array.from(categoriasUnicas).find(c => 
-              c.toLowerCase().includes("cigar") || c.toLowerCase().includes("tabaco")
-          );
-          if (sugerencia) {
-              catFinal = sugerencia;
-              setCategoriaSeleccionada(sugerencia);
-          }
-      }
-
-      // 3. Filtrar usando la categoría elegida
-      calcularTotal(ventasHoy, catFinal);
 
     } catch (error) {
       console.error(error);
-      alert("No se pudieron cargar las ventas. Revisa que el servidor (pantalla negra) esté abierto.");
+      alert("No se pudieron cargar las ventas. Revisa que el servidor esté abierto.");
     } finally {
       setCargando(false);
     }
-  };
-
-  const calcularTotal = (ventas, categoriaFiltro) => {
-      if (!categoriaFiltro) {
-          setDatos({ esperado: 0, ventas: 0, cantidad_tickets: 0 });
-          return;
-      }
-
-      const ventasFiltradas = ventas.filter(v => {
-          // Coincidencia exacta o parcial en categoría
-          const catVenta = (v.categoria || "").toLowerCase();
-          const filtro = categoriaFiltro.toLowerCase();
-          
-          if (catVenta.includes(filtro)) return true;
-
-          // También buscar dentro de los productos del ticket
-          if (v.productos && Array.isArray(v.productos)) {
-              return v.productos.some(p => (p.categoria || "").toLowerCase().includes(filtro));
-          }
-          return false;
-      });
-
-      const total = ventasFiltradas.reduce((acc, curr) => acc + parseFloat(curr.total || 0), 0);
-      
-      setDatos({
-          esperado: total,
-          ventas: total,
-          cantidad_tickets: ventasFiltradas.length
-      });
   };
 
   useEffect(() => { cargarDatos(); }, []);
@@ -159,32 +101,6 @@ function CierreCigarrillos() {
       {/* IZQUIERDA: CONFIGURACIÓN Y TOTALES */}
       <div className="w-full lg:w-1/3 bg-white border-r border-slate-200 flex flex-col z-10 shadow-lg">
         
-        {/* Selector de Categoría */}
-        <div className="p-6 bg-slate-100 border-b border-slate-200">
-            <div className="flex justify-between items-center mb-2">
-                <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1">
-                    <Filter size={12}/> Filtrar Categoría
-                </label>
-                <button onClick={() => setMostrarConfig(!mostrarConfig)} className="text-slate-400 hover:text-blue-500">
-                    <Settings size={14}/>
-                </button>
-            </div>
-            
-            <select 
-                value={categoriaSeleccionada}
-                onChange={(e) => handleCategoriaChange(e.target.value)}
-                className="w-full p-2 rounded-lg border border-slate-300 bg-white font-medium text-slate-700 focus:ring-2 focus:ring-orange-500 outline-none"
-            >
-                <option value="">-- Selecciona Categoría --</option>
-                {categoriasDetectadas.map(cat => (
-                    <option key={cat} value={cat}>{cat}</option>
-                ))}
-            </select>
-            <p className="text-[10px] text-slate-400 mt-1">
-                Selecciona la categoría que usas para los cigarrillos.
-            </p>
-        </div>
-
         {/* Tarjeta de Total */}
         <div className="flex-1 p-6 flex flex-col items-center justify-center">
             <div className="bg-orange-50 w-full p-8 rounded-3xl border border-orange-100 text-center relative overflow-hidden shadow-sm">
@@ -192,12 +108,7 @@ function CierreCigarrillos() {
                     <Cigarette size={32}/>
                 </div>
                 <p className="text-sm text-orange-600/70 font-bold uppercase tracking-widest mb-2">Ventas del Día</p>
-                <p className="text-5xl font-black text-orange-600 tracking-tight">$ {datos.esperado.toLocaleString()}</p>
-                
-                <div className="mt-6 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/60 border border-orange-100 text-xs font-bold text-orange-800">
-                    <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-                    {datos.cantidad_tickets} Tickets de "{categoriaSeleccionada || '...'}"
-                </div>
+                <p className="text-5xl font-black text-orange-600 tracking-tight">$ {Math.round(datos.esperado).toLocaleString()}</p>
             </div>
         </div>
 
@@ -220,7 +131,7 @@ function CierreCigarrillos() {
                         <div key={denom} className={`p-3 rounded-xl border transition-all ${active ? "bg-white border-blue-400 ring-1 ring-blue-100" : "bg-white border-slate-200"}`}>
                             <div className="flex justify-between mb-1">
                                 <span className="text-[10px] font-bold text-slate-500 uppercase">{denom}</span>
-                                {active && <span className="text-[10px] font-bold text-blue-600">$ {subtotal.toLocaleString()}</span>}
+                                {active && <span className="text-[10px] font-bold text-blue-600">$ {Math.round(subtotal).toLocaleString()}</span>}
                             </div>
                             <input
                                 type="number"
@@ -242,7 +153,7 @@ function CierreCigarrillos() {
             <div className="flex-1 w-full">
                 <div className="flex justify-between items-center mb-1">
                     <span className="text-xs font-bold text-slate-400 uppercase">Total Contado</span>
-                    <span className="text-xl font-black text-slate-800">$ {totalFisico.toLocaleString()}</span>
+                    <span className="text-xl font-black text-slate-800">$ {Math.round(totalFisico).toLocaleString()}</span>
                 </div>
                 <div className={`flex justify-between items-center px-3 py-2 rounded-lg border text-sm font-bold ${
                     diferencia === 0 ? "bg-green-100 text-green-700 border-green-200" : 
@@ -250,7 +161,7 @@ function CierreCigarrillos() {
                     "bg-red-100 text-red-700 border-red-200"
                 }`}>
                     <span>{diferencia === 0 ? "OK" : diferencia > 0 ? "SOBRA" : "FALTA"}</span>
-                    <span className="text-lg">{diferencia > 0 ? "+" : ""}{diferencia.toLocaleString()}</span>
+                    <span className="text-lg">{diferencia > 0 ? "+" : ""}{Math.round(diferencia).toLocaleString()}</span>
                 </div>
             </div>
             <button 
