@@ -6,9 +6,19 @@ function Reportes() {
 
   // Cargar historial al iniciar
   useEffect(() => {
-    fetch("http://localhost:3001/historial")
+    // CORRECCIÓN: Agregado "/api" a la ruta
+    fetch("http://localhost:3001/api/historial")
       .then((res) => res.json())
-      .then((data) => setVentas(data));
+      .then((data) => {
+        // Validación de seguridad: Si no es una lista, no romper la app
+        if (Array.isArray(data)) {
+            setVentas(data);
+        } else {
+            console.error("Error: El servidor no devolvió una lista de ventas", data);
+            setVentas([]);
+        }
+      })
+      .catch((error) => console.error("Error de conexión:", error));
   }, []);
 
   // --- LÓGICA DE AGRUPACIÓN ---

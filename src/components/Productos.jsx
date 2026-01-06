@@ -84,20 +84,23 @@ function Productos() {
   const filtrados = productos.filter(p => p.nombre.toLowerCase().includes(busqueda.toLowerCase()));
 
   return (
-    <div className="flex flex-col md:flex-row h-full bg-slate-100 p-6 gap-6 relative">
-      <div className="w-full md:w-1/3 bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-fit">
-        <h2 className="text-xl font-bold text-slate-800 mb-4">{idEditando ? "Editar" : "Nuevo"} Producto</h2>
-        <form onSubmit={guardar} className="flex flex-col gap-4">
+    <div className="flex flex-col md:flex-row h-[calc(100vh-100px)] gap-6 p-6">
+      <div className="w-full md:w-1/3 bg-white p-6 rounded-lg shadow-md h-fit border border-grey-200">
+        <h2 className="text-xl font-bold mb-4 text--700">{idEditando ? "Editar" : "Nuevo"} Producto</h2>
+        <form onSubmit={guardar} className="flex flex-col gap-3">
+          {/* CAMBIO: Input de Código de Barras */}
           <div>
-            <label className="text-xs font-bold text-slate-500 uppercase">Código Barras</label>
-            <input 
-                type="text" 
-                placeholder="Escanea aquí..." 
-                className="w-full border p-3 rounded-lg bg-yellow-50" 
-                value={form.codigo_barras || ""} 
-                onChange={e => setForm({...form, codigo_barras: e.target.value})}
-                onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); buscarProductoPorCodigoDeBarras(e.target.value); } }}
-            />
+            <label className="text-xs text-gray-500 font-bold">Código de Barras</label>
+            <div className="flex items-center border rounded bg-gray-50">
+                <span className="pl-2 text-gray-400">|||</span>
+                <input 
+                    type="text" 
+                    placeholder="Escanear o escribir..." 
+                    className="p-2 w-full bg-transparent outline-none" 
+                    value={form.codigo_barras} 
+                    onChange={e => setForm({...form, codigo_barras: e.target.value})} 
+                />
+            </div>
           </div>
           <div>
             <label className="text-xs font-bold text-slate-500 uppercase">Nombre</label>
@@ -133,7 +136,7 @@ function Productos() {
 
       <div className="w-full md:w-2/3 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col overflow-hidden">
         <div className="p-4 border-b bg-slate-50">
-            <input type="text" placeholder="🔍 Buscar producto..." className="w-full border p-3 rounded-lg" value={busqueda} onChange={e => setBusqueda(e.target.value)} />
+            <input type="text" placeholder="Buscar producto..." className="w-full border p-3 rounded-lg" value={busqueda} onChange={e => setBusqueda(e.target.value)} />
         </div>
         <div className="overflow-y-auto flex-1 p-4">
             <table className="w-full text-left text-sm">

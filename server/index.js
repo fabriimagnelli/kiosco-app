@@ -52,7 +52,11 @@ db.serialize(() => {
   db.run("ALTER TABLE productos ADD COLUMN codigo_barras TEXT", () => {}); 
 
   db.run(`CREATE TABLE IF NOT EXISTS categorias_productos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT)`);
-  db.run(`CREATE TABLE IF NOT EXISTS cigarrillos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, precio REAL, precio_qr REAL, stock INTEGER)`);
+  
+  // CAMBIO: Agregado codigo_barras a la creación
+  db.run(`CREATE TABLE IF NOT EXISTS cigarrillos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, precio REAL, precio_qr REAL, stock INTEGER, codigo_barras TEXT)`);
+  // CAMBIO: Alter table para bases de datos existentes
+  db.run("ALTER TABLE cigarrillos ADD COLUMN codigo_barras TEXT", () => {});
   
   db.run(`CREATE TABLE IF NOT EXISTS ventas (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id TEXT, producto TEXT, cantidad INTEGER, 
@@ -102,7 +106,8 @@ app.post("/api/login", (req, res) => {
 app.get("/api/dashboard", (req, res) => {
   const sqlUltimoCierre = "(SELECT IFNULL(MAX(fecha), '1900-01-01') FROM cierres WHERE tipo = 'GENERAL')";
   const sqlVentas = `SELECT SUM(precio_total) as total, COUNT(*) as tickets FROM ventas WHERE fecha > ${sqlUltimoCierre}`;
-  const sqlGastos = `SELECT SUM(monto) as total FROM gastos WHERE fecha > ${sqlUltimoCierre}`;
+  // MODIFICADO: Excluir gastos no efectivos
+  const sqlGastos = `SELECT SUM(monto) as total FROM gastos WHERE fecha > ${sqlUltimoCierre} AND descripcion NOT LIKE '%[Mercado Pago]%' AND descripcion NOT LIKE '%[Transferencia]%' AND descripcion NOT LIKE '%[Débito]%' AND descripcion NOT LIKE '%[Crédito]%'`;
   const sqlStockBajo = `SELECT nombre, stock FROM productos WHERE stock <= 5 UNION SELECT nombre, stock FROM cigarrillos WHERE stock <= 5`;
 
   db.get(sqlVentas, [], (err, v) => {
@@ -187,12 +192,14 @@ app.delete("/api/productos/:id", (req, res) => db.run("DELETE FROM productos WHE
 // --- CIGARRILLOS ---
 app.get("/api/cigarrillos", (req, res) => db.all("SELECT * FROM cigarrillos", (err, r) => res.json(r)));
 app.post("/api/cigarrillos", (req, res) => {
-    const { nombre, precio, precio_qr, stock } = req.body;
-    db.run("INSERT INTO cigarrillos (nombre, precio, precio_qr, stock) VALUES (?,?,?,?)", [nombre, precio, precio_qr, stock], () => res.json({success: true}));
+    // CAMBIO: Recibir codigo_barras
+    const { nombre, precio, precio_qr, stock, codigo_barras } = req.body;
+    db.run("INSERT INTO cigarrillos (nombre, precio, precio_qr, stock, codigo_barras) VALUES (?,?,?,?,?)", [nombre, precio, precio_qr, stock, codigo_barras], () => res.json({success: true}));
 });
 app.put("/api/cigarrillos/:id", (req, res) => {
-    const { nombre, precio, precio_qr, stock } = req.body;
-    db.run("UPDATE cigarrillos SET nombre=?, precio=?, precio_qr=?, stock=? WHERE id=?", [nombre, precio, precio_qr, stock, req.params.id], () => res.json({success: true}));
+    // CAMBIO: Recibir codigo_barras
+    const { nombre, precio, precio_qr, stock, codigo_barras } = req.body;
+    db.run("UPDATE cigarrillos SET nombre=?, precio=?, precio_qr=?, stock=?, codigo_barras=? WHERE id=?", [nombre, precio, precio_qr, stock, codigo_barras, req.params.id], () => res.json({success: true}));
 });
 app.delete("/api/cigarrillos/:id", (req, res) => db.run("DELETE FROM cigarrillos WHERE id = ?", [req.params.id], () => res.json({success: true})));
 
@@ -206,7 +213,8 @@ app.put("/api/categorias_productos/:id", (req, res) => db.run("UPDATE categorias
 app.delete("/api/categorias_productos/:id", (req, res) => db.run("DELETE FROM categorias_productos WHERE id = ?", [req.params.id], () => res.json({success: true})));
 
 // --- GASTOS ---
-app.get("/api/gastos", (req, res) => db.all("SELECT * FROM gastos ORDER BY fecha DESC LIMIT 50", (err, r) => res.json(r)));
+// CAMBIO: Se quitó el LIMIT 50
+app.get("/api/gastos", (req, res) => db.all("SELECT * FROM gastos ORDER BY fecha DESC", (err, r) => res.json(r)));
 app.post("/api/gastos", (req, res) => db.run("INSERT INTO gastos (monto, descripcion, categoria, fecha) VALUES (?, ?, ?, datetime('now', 'localtime'))", [req.body.monto, req.body.descripcion, req.body.categoria], () => res.json({success: true})));
 app.delete("/api/gastos/:id", (req, res) => db.run("DELETE FROM gastos WHERE id=?", [req.params.id], () => res.json({success: true})));
 app.get("/api/categorias_gastos", (req, res) => db.all("SELECT * FROM categorias_gastos", (err, r) => res.json(r)));
@@ -246,7 +254,7 @@ app.get("/api/resumen_dia_independiente", (req, res) => {
     const sqlVentasGral = `SELECT IFNULL(SUM(pago_efectivo), 0) as total FROM ventas WHERE categoria = 'general' AND fecha > ${sqlFechaGeneral}`;
     const sqlVentasCig = `SELECT IFNULL(SUM(pago_efectivo), 0) as total FROM ventas WHERE categoria = 'cigarrillo' AND fecha > ${sqlFechaCig}`; 
     const sqlDigital = `SELECT IFNULL(SUM(pago_digital), 0) as total FROM ventas WHERE fecha > ${sqlFechaGeneral}`;
-    const sqlGastos = `SELECT IFNULL(SUM(monto), 0) as total FROM gastos WHERE fecha > ${sqlFechaGeneral}`;
+    const sqlGastos = `SELECT IFNULL(SUM(monto), 0) as total FROM gastos WHERE fecha > ${sqlFechaGeneral} AND descripcion NOT LIKE '%[Mercado Pago]%' AND descripcion NOT LIKE '%[Transferencia]%' AND descripcion NOT LIKE '%[Débito]%' AND descripcion NOT LIKE '%[Crédito]%'`;
     const sqlPagosProv = `SELECT IFNULL(SUM(monto), 0) as total FROM movimientos_proveedores WHERE fecha > ${sqlFechaGeneral}`;
     const sqlCobros = `SELECT IFNULL(SUM(ABS(monto)), 0) as total FROM fiados WHERE monto < 0 AND fecha > ${sqlFechaGeneral}`; 
 
@@ -283,15 +291,13 @@ app.post("/api/cierres", (req, res) => {
         (err) => err ? res.status(500).json({ error: err.message }) : res.json({ success: true }));
 });
 
-app.get("/api/reportes/ventas_semana", (req, res) => res.json([])); // Placeholders
+app.get("/api/reportes/ventas_semana", (req, res) => res.json([])); 
 app.get("/api/reportes/productos_top", (req, res) => res.json([]));
 app.get("/api/reportes/metodos_pago", (req, res) => res.json([]));
 
-// *** FALLBACK SPA (IMPORTANTE) ***
 app.use((req, res, next) => {
     if (req.method !== 'GET') return next();
     const accept = req.headers.accept || '';
-    // Si pide HTML (navegador), devuelve index.html
     if (accept.includes('text/html')) {
         return res.sendFile(path.join(__dirname, '../dist/index.html'));
     }
