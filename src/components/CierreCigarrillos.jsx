@@ -25,7 +25,8 @@ function CierreCigarrillos() {
   const cargarDatos = async () => {
     setCargando(true);
     try {
-      const res = await fetch("http://localhost:3001/resumen_dia_independiente"); 
+      // CORRECCIÓN AQUÍ: Se agregó /api/ antes de resumen_dia_independiente
+      const res = await fetch("http://localhost:3001/api/resumen_dia_independiente"); 
       if (!res.ok) throw new Error("Error conectando al servidor");
 
       const data = await res.json();
@@ -75,7 +76,8 @@ function CierreCigarrillos() {
     if (!window.confirm("¿Cerrar Caja Cigarrillos?")) return;
     setProcesando(true);
     try {
-        await fetch("http://localhost:3001/cierres", {
+        // CORRECCIÓN AQUÍ: Se agregó /api/ antes de cierres
+        await fetch("http://localhost:3001/api/cierres", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
