@@ -5,23 +5,18 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 // Colores para el gráfico de torta
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
 
-// --- FUNCIÓN PARA DIBUJAR EL PORCENTAJE ---
 const RADIAN = Math.PI / 180;
 const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }) => {
   const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
   const x = cx + radius * Math.cos(-midAngle * RADIAN);
   const y = cy + radius * Math.sin(-midAngle * RADIAN);
-
-  // Si el porcentaje es muy chico (menor al 5%), no lo mostramos para que no se encime
   if (percent < 0.05) return null;
-
   return (
     <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight="bold">
       {`${(percent * 100).toFixed(0)}%`}
     </text>
   );
 };
-// ------------------------------------------
 
 function Inicio() {
   const [dashboard, setDashboard] = useState(null);
@@ -30,29 +25,26 @@ function Inicio() {
   const [metodosPago, setMetodosPago] = useState([]);
 
   useEffect(() => {
-    // 1. Datos Resumen
-    fetch("http://localhost:3001/dashboard")
+    // CAMBIO IMPORTANTE: Agregamos /api a todas las peticiones
+    fetch("http://localhost:3001/api/dashboard")
       .then((res) => res.json())
       .then(setDashboard)
-      .catch((err) => console.error(err));
+      .catch((err) => console.error("Error Dashboard:", err));
 
-    // 2. Gráfico Ventas Semana
-    fetch("http://localhost:3001/reportes/ventas_semana")
+    fetch("http://localhost:3001/api/reportes/ventas_semana")
       .then((res) => res.json())
       .then(setVentasSemana)
-      .catch((err) => console.error(err));
+      .catch((err) => console.error("Error Ventas Semana:", err));
     
-    // 3. Top Productos
-    fetch("http://localhost:3001/reportes/productos_top")
+    fetch("http://localhost:3001/api/reportes/productos_top")
       .then((res) => res.json())
       .then(setProductosTop)
-      .catch((err) => console.error(err));
+      .catch((err) => console.error("Error Top Productos:", err));
 
-    // 4. Métodos de Pago
-    fetch("http://localhost:3001/reportes/metodos_pago")
+    fetch("http://localhost:3001/api/reportes/metodos_pago")
       .then((res) => res.json())
       .then(setMetodosPago)
-      .catch((err) => console.error(err));
+      .catch((err) => console.error("Error Metodos Pago:", err));
 
   }, []);
 
@@ -99,7 +91,7 @@ function Inicio() {
       {/* 2. ÁREA DE GRÁFICOS PRINCIPALES */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* GRÁFICO DE BARRAS: VENTAS SEMANA */}
+        {/* GRÁFICO DE BARRAS */}
         <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
             <h3 className="font-bold text-slate-700 mb-6 flex items-center gap-2"><TrendingUp className="text-blue-500"/> Evolución de Ventas (7 días)</h3>
             <div className="h-64 w-full">
@@ -109,10 +101,7 @@ function Inicio() {
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/>
                             <XAxis dataKey="fecha" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} dy={10} />
                             <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
-                            <Tooltip 
-                                contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} 
-                                cursor={{fill: '#f8fafc'}}
-                            />
+                            <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} cursor={{fill: '#f8fafc'}}/>
                             <Bar dataKey="total" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={40} />
                         </BarChart>
                     </ResponsiveContainer>
@@ -122,7 +111,7 @@ function Inicio() {
             </div>
         </div>
 
-        {/* GRÁFICO DE TORTA: MÉTODOS DE PAGO */}
+        {/* GRÁFICO DE TORTA */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col">
             <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><PieIcon className="text-purple-500"/> Métodos de Pago</h3>
             <div className="flex-1 min-h-[200px] relative">
@@ -133,9 +122,9 @@ function Inicio() {
                                 data={metodosPago}
                                 cx="50%"
                                 cy="50%"
-                                labelLine={false} // Quitamos la línea externa
-                                label={renderCustomizedLabel} // Usamos nuestra etiqueta interna
-                                innerRadius={40} // Más grueso para que entre el texto
+                                labelLine={false}
+                                label={renderCustomizedLabel}
+                                innerRadius={40}
                                 outerRadius={80}
                                 paddingAngle={5}
                                 dataKey="value"
@@ -157,7 +146,6 @@ function Inicio() {
 
       {/* 3. LISTAS INFERIORES */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        
         {/* TOP PRODUCTOS */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
             <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><Award className="text-yellow-500"/> Productos Más Vendidos</h3>
@@ -201,7 +189,6 @@ function Inicio() {
             </div>
         </div>
       </div>
-
     </div>
   );
 }

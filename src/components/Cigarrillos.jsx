@@ -6,13 +6,15 @@ function Cigarrillos() {
   const [form, setForm] = useState({ nombre: "", precio: "", precio_qr: "", stock: "" });
   const [idEditando, setIdEditando] = useState(null);
 
-  const cargar = () => fetch("http://localhost:3001/cigarrillos").then(r => r.json()).then(setCigarrillos);
+  // CAMBIO: Rutas con /api
+  const cargar = () => fetch("http://localhost:3001/api/cigarrillos").then(r => r.json()).then(setCigarrillos);
   useEffect(() => { cargar(); }, []);
 
   const guardar = (e) => {
     e.preventDefault();
     const metodo = idEditando ? "PUT" : "POST";
-    const url = idEditando ? `http://localhost:3001/cigarrillos/${idEditando}` : "http://localhost:3001/cigarrillos";
+    // CAMBIO: Rutas con /api
+    const url = idEditando ? `http://localhost:3001/api/cigarrillos/${idEditando}` : "http://localhost:3001/api/cigarrillos";
     
     fetch(url, {
       method: metodo,
@@ -22,7 +24,8 @@ function Cigarrillos() {
   };
 
   const editar = (c) => { setForm(c); setIdEditando(c.id); };
-  const borrar = (id) => { if(confirm("¿Borrar?")) fetch(`http://localhost:3001/cigarrillos/${id}`, { method: "DELETE" }).then(cargar); };
+  // CAMBIO: Rutas con /api
+  const borrar = (id) => { if(confirm("¿Borrar?")) fetch(`http://localhost:3001/api/cigarrillos/${id}`, { method: "DELETE" }).then(cargar); };
 
   const filtrados = cigarrillos.filter(c => c.nombre.toLowerCase().includes(busqueda.toLowerCase()));
 
