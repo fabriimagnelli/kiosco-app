@@ -304,6 +304,45 @@ app.use((req, res, next) => {
     next();
 });
 
+// --- BALANCE POR RANGO DE FECHAS ---
+app.get("/api/balance_rango", async (req, res) => {
+    const { desde, hasta } = req.query;
+    const fDesde = `${desde} 00:00:00`;
+    const fHasta = `${hasta} 23:59:59`;
+
+    try {
+        const getVal = async (sql) => {
+            const row = await dbGet(sql, [fDesde, fHasta]);
+            return row ? row.total || 0 : 0;
+        };
+
+        // 1. Ingresos
+        const kioscoEfvo = await getVal("SELECT SUM(pago_efectivo) as total FROM ventas WHERE categoria != 'cigarrillo' AND fecha BETWEEN ? AND ?");
+        const cigarrosEfvo = await getVal("SELECT SUM(pago_efectivo) as total FROM ventas WHERE categoria = 'cigarrillo' AND fecha BETWEEN ? AND ?");
+        const digital = await getVal("SELECT SUM(pago_digital) as total FROM ventas WHERE fecha BETWEEN ? AND ?");
+        const cobrosDeuda = await getVal("SELECT SUM(ABS(monto)) as total FROM fiados WHERE monto < 0 AND fecha BETWEEN ? AND ?");
+
+        // 2. Egresos
+        // Excluimos movimientos digitales internos de los gastos para no duplicar si ya se descontaron de caja
+        const gastos = await getVal("SELECT SUM(monto) as total FROM gastos WHERE fecha BETWEEN ? AND ?");
+        const pagosProv = await getVal("SELECT SUM(monto) as total FROM movimientos_proveedores WHERE fecha BETWEEN ? AND ?");
+
+        const totalIngresos = kioscoEfvo + cigarrosEfvo + digital + cobrosDeuda;
+        const totalEgresos = gastos + pagosProv;
+
+        res.json({
+            ingresos: { kiosco_efvo: kioscoEfvo, cigarros_efvo: cigarrosEfvo, digital: digital, cobros_deuda: cobrosDeuda },
+            egresos: { gastos_varios: gastos, pagos_proveedores: pagosProv },
+            total_ingresos: totalIngresos,
+            total_egresos: totalEgresos,
+            balance_neto: totalIngresos - totalEgresos
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.use((req, res) => res.status(404).json({ error: 'Ruta no encontrada' }));
 
 app.listen(port, () => console.log(`🚀 SERVIDOR OK - http://localhost:${port}`));

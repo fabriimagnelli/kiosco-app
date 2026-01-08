@@ -14,12 +14,22 @@ function Balance() {
 
   const calcularBalance = () => {
     setCargando(true);
-    fetch(`http://localhost:3001/balance_rango?desde=${desde}&hasta=${hasta}`)
-      .then(res => res.json())
+    setDatos(null); // Limpiar datos previos para evitar errores visuales
+
+    // CORRECCIÓN: Agregado /api/ a la URL
+    fetch(`http://localhost:3001/api/balance_rango?desde=${desde}&hasta=${hasta}`)
+      .then(res => {
+        if (!res.ok) throw new Error("Error en el servidor");
+        return res.json();
+      })
       .then(data => {
         setDatos(data);
-        setCargando(false);
-      });
+      })
+      .catch(err => {
+        console.error(err);
+        alert("Error al calcular el balance. Asegúrate de haber actualizado el archivo server/index.js");
+      })
+      .finally(() => setCargando(false));
   };
 
   const generarPDF = () => {
@@ -44,18 +54,18 @@ function Balance() {
         startY: 50,
         head: [['Concepto', 'Monto']],
         body: [
-            ['Ventas Kiosco (Efectivo)', `$ ${datos.ingresos.kiosco_efvo}`],
-            ['Ventas Cigarrillos (Efectivo)', `$ ${datos.ingresos.cigarros_efvo}`],
-            ['Ventas Digitales (MercadoPago/Tarj)', `$ ${datos.ingresos.digital}`],
-            ['Cobros a Deudores', `$ ${datos.ingresos.cobros_deuda}`],
-            ['TOTAL INGRESOS', `$ ${datos.total_ingresos}`]
+            ['Ventas Kiosco (Efectivo)', `$ ${datos.ingresos.kiosco_efvo?.toLocaleString() || 0}`],
+            ['Ventas Cigarrillos (Efectivo)', `$ ${datos.ingresos.cigarros_efvo?.toLocaleString() || 0}`],
+            ['Ventas Digitales (MercadoPago/Tarj)', `$ ${datos.ingresos.digital?.toLocaleString() || 0}`],
+            ['Cobros a Deudores', `$ ${datos.ingresos.cobros_deuda?.toLocaleString() || 0}`],
+            ['TOTAL INGRESOS', `$ ${datos.total_ingresos?.toLocaleString() || 0}`]
         ],
         theme: 'striped',
         headStyles: { fillColor: [46, 204, 113] }
     });
 
     // TABLA DE EGRESOS
-    const finalY = doc.lastAutoTable.finalY + 15; // Donde terminó la tabla anterior
+    const finalY = doc.lastAutoTable.finalY + 15; 
     doc.setTextColor(200, 0, 0); // Rojo
     doc.text("EGRESOS (Salidas)", 14, finalY);
 
@@ -63,9 +73,9 @@ function Balance() {
         startY: finalY + 5,
         head: [['Concepto', 'Monto']],
         body: [
-            ['Gastos Operativos', `$ ${datos.egresos.gastos_varios}`],
-            ['Pagos a Proveedores', `$ ${datos.egresos.pagos_proveedores}`],
-            ['TOTAL EGRESOS', `$ ${datos.total_egresos}`]
+            ['Gastos Operativos', `$ ${datos.egresos.gastos_varios?.toLocaleString() || 0}`],
+            ['Pagos a Proveedores', `$ ${datos.egresos.pagos_proveedores?.toLocaleString() || 0}`],
+            ['TOTAL EGRESOS', `$ ${datos.total_egresos?.toLocaleString() || 0}`]
         ],
         theme: 'striped',
         headStyles: { fillColor: [231, 76, 60] }
@@ -77,7 +87,7 @@ function Balance() {
     doc.setTextColor(0, 0, 0);
     
     const textoResultado = datos.balance_neto >= 0 ? "GANANCIA DEL PERÍODO:" : "PÉRDIDA DEL PERÍODO:";
-    doc.text(`${textoResultado} $ ${datos.balance_neto}`, 105, finalY2, null, null, "center");
+    doc.text(`${textoResultado} $ ${datos.balance_neto?.toLocaleString()}`, 105, finalY2, null, null, "center");
 
     doc.save(`Balance_${desde}_al_${hasta}.pdf`);
   };
@@ -98,14 +108,14 @@ function Balance() {
         </div>
         <button 
             onClick={calcularBalance}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded font-bold shadow transition-transform active:scale-95"
+            disabled={cargando}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded font-bold shadow transition-transform active:scale-95 disabled:bg-gray-400"
         >
-            🔍 Calcular Balance
+            {cargando ? "Calculando..." : "🔍 Calcular Balance"}
         </button>
       </div>
 
       {/* RESULTADOS */}
-      {cargando && <p className="text-center text-gray-500">Calculando números...</p>}
       
       {datos && (
         <div className="animate-fade-in">
@@ -115,12 +125,12 @@ function Balance() {
                 <div className="w-1/3 bg-green-50 border-l-4 border-green-500 p-4 rounded shadow-sm">
                     <h3 className="text-green-800 font-bold text-lg mb-3">Ingresos</h3>
                     <div className="space-y-2 text-sm">
-                        <div className="flex justify-between"><span>Ventas Kiosco</span> <span className="font-bold">$ {datos.ingresos.kiosco_efvo}</span></div>
-                        <div className="flex justify-between"><span>Ventas Cigarros</span> <span className="font-bold">$ {datos.ingresos.cigarros_efvo}</span></div>
-                        <div className="flex justify-between"><span>Digitales (MP)</span> <span className="font-bold">$ {datos.ingresos.digital}</span></div>
-                        <div className="flex justify-between"><span>Cobro Deudas</span> <span className="font-bold">$ {datos.ingresos.cobros_deuda}</span></div>
+                        <div className="flex justify-between"><span>Ventas Kiosco</span> <span className="font-bold">$ {datos.ingresos.kiosco_efvo?.toLocaleString()}</span></div>
+                        <div className="flex justify-between"><span>Ventas Cigarros</span> <span className="font-bold">$ {datos.ingresos.cigarros_efvo?.toLocaleString()}</span></div>
+                        <div className="flex justify-between"><span>Digitales (MP)</span> <span className="font-bold">$ {datos.ingresos.digital?.toLocaleString()}</span></div>
+                        <div className="flex justify-between"><span>Cobro Deudas</span> <span className="font-bold">$ {datos.ingresos.cobros_deuda?.toLocaleString()}</span></div>
                         <hr className="border-green-200"/>
-                        <div className="flex justify-between text-lg font-bold text-green-700"><span>TOTAL</span> <span>$ {datos.total_ingresos}</span></div>
+                        <div className="flex justify-between text-lg font-bold text-green-700"><span>TOTAL</span> <span>$ {datos.total_ingresos?.toLocaleString()}</span></div>
                     </div>
                 </div>
 
@@ -128,10 +138,10 @@ function Balance() {
                 <div className="w-1/3 bg-red-50 border-l-4 border-red-500 p-4 rounded shadow-sm">
                     <h3 className="text-red-800 font-bold text-lg mb-3">Egresos</h3>
                     <div className="space-y-2 text-sm">
-                        <div className="flex justify-between"><span>Gastos Operativos</span> <span className="font-bold">$ {datos.egresos.gastos_varios}</span></div>
-                        <div className="flex justify-between"><span>Pagos Proveedores</span> <span className="font-bold">$ {datos.egresos.pagos_proveedores}</span></div>
+                        <div className="flex justify-between"><span>Gastos Operativos</span> <span className="font-bold">$ {datos.egresos.gastos_varios?.toLocaleString()}</span></div>
+                        <div className="flex justify-between"><span>Pagos Proveedores</span> <span className="font-bold">$ {datos.egresos.pagos_proveedores?.toLocaleString()}</span></div>
                         <hr className="border-red-200"/>
-                        <div className="flex justify-between text-lg font-bold text-red-700"><span>TOTAL</span> <span>$ {datos.total_egresos}</span></div>
+                        <div className="flex justify-between text-lg font-bold text-red-700"><span>TOTAL</span> <span>$ {datos.total_egresos?.toLocaleString()}</span></div>
                     </div>
                 </div>
 
@@ -139,7 +149,7 @@ function Balance() {
                 <div className="w-1/3 bg-white border border-gray-200 p-4 rounded shadow-sm flex flex-col justify-center items-center text-center">
                     <h3 className="text-gray-500 font-bold uppercase text-sm mb-2">Resultado Neto</h3>
                     <p className={`text-4xl font-bold ${datos.balance_neto >= 0 ? "text-blue-600" : "text-red-600"}`}>
-                        $ {datos.balance_neto}
+                        $ {datos.balance_neto?.toLocaleString()}
                     </p>
                     <p className="text-xs text-gray-400 mt-2">{datos.balance_neto >= 0 ? "Ganancia" : "Pérdida"}</p>
                 </div>
