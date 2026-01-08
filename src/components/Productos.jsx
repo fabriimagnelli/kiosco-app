@@ -1,164 +1,277 @@
 import React, { useState, useEffect } from "react";
-import { Package, Trash2, Edit, Save, Plus, Tag, TrendingUp, X, ScanBarcode } from "lucide-react";
+import { Search, Plus, Edit, Trash2, X, Save, Package, AlertCircle } from "lucide-react";
 
 function Productos() {
   const [productos, setProductos] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [busqueda, setBusqueda] = useState("");
-  const [form, setForm] = useState({ nombre: "", precio: "", stock: "", categoria: "", codigo_barras: "" });
-  const [idEditando, setIdEditando] = useState(null);
-  const [nuevaCat, setNuevaCat] = useState(""); 
-  const [mostrarModalAumento, setMostrarModalAumento] = useState(false);
-  const [aumentoPorcentaje, setAumentoPorcentaje] = useState("");
-  const [aumentoCategoria, setAumentoCategoria] = useState("Todas");
-
-  // CAMBIO: Rutas con /api
-  const cargar = () => {
-    fetch("http://localhost:3001/api/productos").then(r => r.json()).then(setProductos);
-    fetch("http://localhost:3001/api/categorias_productos").then(r => r.json()).then(setCategorias);
-  };
+  const [filtroCategoria, setFiltroCategoria] = useState("Todas");
   
-  useEffect(() => { cargar(); }, []);
+  // Estado del Modal
+  const [mostrarModal, setMostrarModal] = useState(false);
+  const [editando, setEditando] = useState(false);
+  const [productoForm, setProductoForm] = useState({
+    id: null,
+    nombre: "",
+    precio: "",
+    stock: "",
+    categoria: "Varios",
+    codigo_barras: ""
+  });
 
-  const buscarProductoPorCodigoDeBarras = async (codigoBarras) => {
-    if (!codigoBarras.trim()) return;
+  // Cargar datos al inicio
+  useEffect(() => {
+    cargarProductos();
+    cargarCategorias();
+  }, []);
+
+  const cargarProductos = async () => {
     try {
-      const response = await fetch("http://localhost:3001/api/productos");
-      const todosProductos = await response.json();
-      const productoExistente = todosProductos.find(p => p.codigo_barras === codigoBarras);
-      
-      if (productoExistente) {
-        setForm({
-          nombre: productoExistente.nombre,
-          precio: productoExistente.precio || "",
-          stock: "",
-          categoria: productoExistente.categoria || "",
-          codigo_barras: codigoBarras
-        });
+      const res = await fetch("http://localhost:3001/api/productos");
+      if (res.ok) {
+        const data = await res.json();
+        // PROTECCIÓN: Aseguramos que data sea un array siempre
+        setProductos(Array.isArray(data) ? data : []);
       } else {
-        setForm({
-          nombre: "",
-          precio: "",
-          stock: "",
-          categoria: "",
-          codigo_barras: codigoBarras
-        });
+        console.error("Error al cargar productos del servidor");
+        setProductos([]); 
       }
-    } catch (error) { console.error("Error buscar:", error); }
+    } catch (error) { 
+        console.error("Error de conexión:", error);
+        setProductos([]);
+    }
   };
 
-  const guardar = (e) => {
+  const cargarCategorias = async () => {
+    try {
+      const res = await fetch("http://localhost:3001/api/categorias_productos");
+      if (res.ok) {
+        const data = await res.json();
+        setCategorias(Array.isArray(data) ? data : []);
+      }
+    } catch (error) { console.error(error); }
+  };
+
+  const abrirModal = (producto = null) => {
+    if (producto) {
+      setEditando(true);
+      setProductoForm(producto);
+    } else {
+      setEditando(false);
+      setProductoForm({
+        id: null,
+        nombre: "",
+        precio: "",
+        stock: "",
+        categoria: "Varios",
+        codigo_barras: ""
+      });
+    }
+    setMostrarModal(true);
+  };
+
+  const guardarProducto = async (e) => {
     e.preventDefault();
-    const productoAGuardar = { ...form, categoria: form.categoria || "General" };
-    const metodo = idEditando ? "PUT" : "POST";
-    // CAMBIO: Rutas con /api
-    const url = idEditando ? `http://localhost:3001/api/productos/${idEditando}` : "http://localhost:3001/api/productos";
     
-    fetch(url, {
-      method: metodo,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(productoAGuardar)
-    }).then(() => {
-      alert("✅ Producto guardado");
-      setForm({ nombre: "", precio: "", stock: "", categoria: "", codigo_barras: "" });
-      setIdEditando(null);
-      cargar();
-    });
-  };
+    if (!productoForm.nombre || !productoForm.precio) {
+      alert("El nombre y el precio son obligatorios.");
+      return;
+    }
 
-  const crearCategoria = () => {
-    if(!nuevaCat) return;
-    fetch("http://localhost:3001/api/categorias_productos", {
-        method: "POST",
+    // Convertimos datos para evitar errores de tipo
+    const datosAEnviar = {
+        ...productoForm,
+        precio: parseFloat(productoForm.precio) || 0,
+        stock: parseInt(productoForm.stock) || 0, // Si está vacío mandamos 0
+        codigo_barras: productoForm.codigo_barras || ""
+    };
+
+    const metodo = editando ? "PUT" : "POST";
+    const url = editando 
+      ? `http://localhost:3001/api/productos/${productoForm.id}` 
+      : "http://localhost:3001/api/productos";
+
+    try {
+      const res = await fetch(url, {
+        method: metodo,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nombre: nuevaCat })
-    }).then(() => {
-        setNuevaCat("");
-        fetch("http://localhost:3001/api/categorias_productos").then(r => r.json()).then(setCategorias);
-    });
+        body: JSON.stringify(datosAEnviar)
+      });
+
+      if (res.ok) {
+        cargarProductos();
+        setMostrarModal(false);
+        setProductoForm({ id: null, nombre: "", precio: "", stock: "", categoria: "Varios", codigo_barras: "" });
+      } else {
+        alert("Error al guardar. Revisa la consola.");
+      }
+    } catch (error) {
+      console.error("Error guardando:", error);
+    }
   };
 
-  const editar = (p) => { setForm(p); setIdEditando(p.id); };
-  const borrar = (id) => { if(confirm("¿Borrar?")) fetch(`http://localhost:3001/api/productos/${id}`, { method: "DELETE" }).then(cargar); };
+  const eliminarProducto = async (id) => {
+    if (confirm("¿Estás seguro de eliminar este producto?")) {
+      try {
+        await fetch(`http://localhost:3001/api/productos/${id}`, { method: "DELETE" });
+        cargarProductos();
+      } catch (error) { console.error(error); }
+    }
+  };
 
-  const filtrados = productos.filter(p => p.nombre.toLowerCase().includes(busqueda.toLowerCase()));
+  // Filtrado Seguro
+  const productosFiltrados = productos.filter(p => {
+    if (!p) return false; // Ignorar nulos
+    const nombre = p.nombre || ""; // Evitar error si nombre es null
+    const codigo = p.codigo_barras || "";
+
+    const coincideNombre = nombre.toLowerCase().includes(busqueda.toLowerCase());
+    const coincideCodigo = codigo.includes(busqueda);
+    const coincideCategoria = filtroCategoria === "Todas" || p.categoria === filtroCategoria;
+    return (coincideNombre || coincideCodigo) && coincideCategoria;
+  });
 
   return (
-    <div className="flex flex-col md:flex-row h-[calc(100vh-100px)] gap-6 p-6">
-      <div className="w-full md:w-1/3 bg-white p-6 rounded-lg shadow-md h-fit border border-grey-200">
-        <h2 className="text-xl font-bold mb-4 text--700">{idEditando ? "Editar" : "Nuevo"} Producto</h2>
-        <form onSubmit={guardar} className="flex flex-col gap-3">
-          {/* CAMBIO: Input de Código de Barras */}
-          <div>
-            <label className="text-xs text-gray-500 font-bold">Código de Barras</label>
-            <div className="flex items-center border rounded bg-gray-50">
-                <span className="pl-2 text-gray-400">|||</span>
+    <div className="flex flex-col h-full bg-slate-100 p-6 gap-6">
+      
+      {/* Header y Herramientas */}
+      <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+            <Package className="text-blue-600"/> Inventario de Productos
+          </h1>
+          <p className="text-slate-500 text-sm">Gestiona precios, stock y códigos.</p>
+        </div>
+        
+        <div className="flex gap-2 w-full md:w-auto">
+             <div className="relative flex-1 md:w-64">
+                <Search className="absolute left-3 top-2.5 text-slate-400" size={18}/>
                 <input 
                     type="text" 
-                    placeholder="Escanear o escribir..." 
-                    className="p-2 w-full bg-transparent outline-none" 
-                    value={form.codigo_barras} 
-                    onChange={e => setForm({...form, codigo_barras: e.target.value})} 
+                    placeholder="Buscar por nombre o código..." 
+                    className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-lg outline-none focus:border-blue-500"
+                    value={busqueda}
+                    onChange={e => setBusqueda(e.target.value)}
                 />
             </div>
-          </div>
-          <div>
-            <label className="text-xs font-bold text-slate-500 uppercase">Nombre</label>
-            <input type="text" className="w-full border p-3 rounded-lg" value={form.nombre} onChange={e => setForm({...form, nombre: e.target.value})} required />
-          </div>
-          <div className="flex gap-3">
-            <div className="flex-1">
-                <label className="text-xs font-bold text-slate-500 uppercase">Precio</label>
-                <input type="number" className="w-full border p-3 rounded-lg" value={form.precio} onChange={e => setForm({...form, precio: e.target.value})} required />
-            </div>
-            <div className="flex-1">
-                <label className="text-xs font-bold text-slate-500 uppercase">Stock</label>
-                <input type="number" className="w-full border p-3 rounded-lg" value={form.stock} onChange={e => setForm({...form, stock: e.target.value})} required />
-            </div>
-          </div>
-          <div>
-            <label className="text-xs font-bold text-slate-500 uppercase">Categoría</label>
-            <div className="flex gap-2">
-                <select className="flex-1 border p-3 rounded-lg" value={form.categoria} onChange={e => setForm({...form, categoria: e.target.value})}>
-                    <option value="">Seleccionar...</option>
-                    {categorias.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
-                </select>
-            </div>
-            <div className="mt-2 flex gap-2">
-                <input type="text" placeholder="Nueva categoría..." className="flex-1 border p-2 rounded text-sm" value={nuevaCat} onChange={e => setNuevaCat(e.target.value)}/>
-                <button type="button" onClick={crearCategoria} className="bg-slate-200 p-2 rounded"><Plus size={16}/></button>
-            </div>
-          </div>
-          <button className="bg-blue-600 text-white py-3 rounded-xl font-bold">Guardar Producto</button>
-          {idEditando && <button type="button" onClick={() => {setIdEditando(null); setForm({nombre:"", precio:"", stock:"", categoria:"", codigo_barras: ""})}} className="text-slate-500 text-sm">Cancelar</button>}
-        </form>
+            <button 
+                onClick={() => abrirModal()}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-blue-700 shadow-lg shadow-blue-200"
+            >
+                <Plus size={20}/> Nuevo
+            </button>
+        </div>
       </div>
 
-      <div className="w-full md:w-2/3 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col overflow-hidden">
-        <div className="p-4 border-b bg-slate-50">
-            <input type="text" placeholder="Buscar producto..." className="w-full border p-3 rounded-lg" value={busqueda} onChange={e => setBusqueda(e.target.value)} />
-        </div>
-        <div className="overflow-y-auto flex-1 p-4">
-            <table className="w-full text-left text-sm">
-                <thead><tr><th className="p-2">Nombre</th><th className="p-2">Cat</th><th className="p-2">Precio</th><th className="p-2">Stock</th><th className="p-2">Acciones</th></tr></thead>
-                <tbody>
-                    {filtrados.map(p => (
-                        <tr key={p.id} className="border-b">
-                            <td className="p-2 font-bold">{p.nombre}</td>
-                            <td className="p-2">{p.categoria}</td>
-                            <td className="p-2 text-green-600 font-bold">${p.precio}</td>
-                            <td className="p-2">{p.stock}</td>
-                            <td className="p-2 flex gap-2">
-                                <button onClick={() => editar(p)} className="text-blue-500"><Edit size={16}/></button>
-                                <button onClick={() => borrar(p.id)} className="text-red-500"><Trash2 size={16}/></button>
-                            </td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
+      {/* Tabla */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex-1 flex flex-col">
+        <div className="overflow-y-auto custom-scrollbar flex-1">
+          <table className="w-full text-left border-collapse">
+            <thead className="bg-slate-50 text-slate-500 text-xs uppercase font-bold sticky top-0 z-10 shadow-sm">
+              <tr>
+                <th className="p-4">Producto</th>
+                <th className="p-4">Categoría</th>
+                <th className="p-4">Cód. Barras</th>
+                <th className="p-4">Precio</th>
+                <th className="p-4 text-center">Stock</th>
+                <th className="p-4 text-right">Acciones</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-sm">
+              {productosFiltrados.length === 0 ? (
+                <tr>
+                    <td colSpan="6" className="p-8 text-center text-slate-400 flex flex-col items-center gap-2">
+                        <AlertCircle size={32} className="opacity-50"/>
+                        <span>No se encontraron productos. Intenta cargar uno nuevo.</span>
+                    </td>
+                </tr>
+              ) : (
+                productosFiltrados.map((prod) => (
+                  <tr key={prod.id || Math.random()} className="hover:bg-slate-50 transition-colors">
+                    <td className="p-4 font-bold text-slate-700">{prod.nombre || "Sin nombre"}</td>
+                    <td className="p-4 text-slate-500"><span className="bg-slate-100 px-2 py-1 rounded text-xs border">{prod.categoria || "Varios"}</span></td>
+                    <td className="p-4 text-slate-400 font-mono text-xs">{prod.codigo_barras || "-"}</td>
+                    <td className="p-4 font-bold text-green-600">$ {prod.precio}</td>
+                    <td className="p-4 text-center">
+                        <span className={`px-2 py-1 rounded font-bold text-xs ${prod.stock <= 5 ? "bg-red-100 text-red-600" : "bg-blue-50 text-blue-600"}`}>
+                            {prod.stock || 0}
+                        </span>
+                    </td>
+                    <td className="p-4 text-right">
+                        <div className="flex justify-end gap-2">
+                            <button onClick={() => abrirModal(prod)} className="p-2 hover:bg-blue-50 text-blue-600 rounded"><Edit size={16}/></button>
+                            <button onClick={() => eliminarProducto(prod.id)} className="p-2 hover:bg-red-50 text-red-600 rounded"><Trash2 size={16}/></button>
+                        </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
+
+      {/* MODAL */}
+      {mostrarModal && (
+        <div className="absolute inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95">
+                <div className="bg-slate-800 p-4 flex justify-between items-center text-white">
+                    <h3 className="font-bold text-lg">{editando ? "Editar Producto" : "Nuevo Producto"}</h3>
+                    <button onClick={() => setMostrarModal(false)} className="hover:bg-slate-700 p-1 rounded"><X/></button>
+                </div>
+                <form onSubmit={guardarProducto} className="p-6 space-y-4">
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nombre del Producto</label>
+                        <input type="text" required className="w-full p-3 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:border-blue-500 outline-none font-bold text-slate-700"
+                            value={productoForm.nombre} onChange={e => setProductoForm({...productoForm, nombre: e.target.value})} autoFocus/>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Precio ($)</label>
+                            <input type="number" required className="w-full p-3 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:border-green-500 outline-none font-bold text-green-700"
+                                value={productoForm.precio} onChange={e => setProductoForm({...productoForm, precio: e.target.value})}/>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Stock Actual</label>
+                            <input type="number" className="w-full p-3 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:border-blue-500 outline-none"
+                                value={productoForm.stock} onChange={e => setProductoForm({...productoForm, stock: e.target.value})}/>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Código de Barras (Opcional)</label>
+                        <div className="relative">
+                            <input type="text" className="w-full pl-10 pr-3 py-3 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:border-purple-500 outline-none font-mono"
+                                placeholder="Escanear o escribir..."
+                                value={productoForm.codigo_barras} onChange={e => setProductoForm({...productoForm, codigo_barras: e.target.value})}/>
+                            <div className="absolute left-3 top-3.5 text-slate-400"><Package size={18}/></div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Categoría</label>
+                        <select className="w-full p-3 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white outline-none"
+                            value={productoForm.categoria} onChange={e => setProductoForm({...productoForm, categoria: e.target.value})}>
+                            <option value="Varios">Varios</option>
+                            <option value="Bebidas">Bebidas</option>
+                            <option value="Almacén">Almacén</option>
+                            <option value="Golosinas">Golosinas</option>
+                            <option value="Limpieza">Limpieza</option>
+                            {categorias.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
+                        </select>
+                    </div>
+
+                    <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold shadow-lg shadow-blue-200 mt-2 flex justify-center items-center gap-2">
+                        <Save size={20}/> Guardar Producto
+                    </button>
+                </form>
+            </div>
+        </div>
+      )}
+
     </div>
   );
 }
+
 export default Productos;

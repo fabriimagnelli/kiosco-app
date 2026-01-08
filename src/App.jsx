@@ -5,7 +5,6 @@ import { AuthProvider, useAuth } from "./context/AuthContext";
 import Sidebar from "./components/Sidebar";
 import Login from "./components/Login";
 
-// ... (MANTENER TUS IMPORTACIONES DE PANTALLAS IGUAL QUE ANTES) ...
 import Inicio from "./components/Inicio";
 import Ventas from "./components/Ventas";
 import Productos from "./components/Productos";
@@ -18,10 +17,9 @@ import Apertura from "./components/Apertura";
 import Balance from "./components/Balance";         
 import Reportes from "./components/Reportes";   
 import Cierre from "./components/Cierre"; 
+import Promos from "./components/Promos"; // <--- NUEVO IMPORT
 
-// ... (MANTENER SPLASHSCREEN IGUAL) ...
 const SplashScreen = () => (
-  // ... tu código de splashscreen ...
   <div className="fixed inset-0 bg-slate-900 flex flex-col items-center justify-center z-50">
     <div className="relative animate-bounce-slow">
        <div className="absolute inset-0 bg-blue-500 rounded-full blur-3xl opacity-20 animate-pulse"></div>
@@ -34,25 +32,19 @@ const SplashScreen = () => (
   </div>
 );
 
-// --- CAMBIO PRINCIPAL AQUÍ ---
 const Layout = ({ children }) => {
-  // Leemos del localStorage o iniciamos en true (abierto)
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     const saved = localStorage.getItem("sidebarOpen");
     return saved !== null ? JSON.parse(saved) : true;
   });
 
-  // Guardamos en localStorage cada vez que cambia
   useEffect(() => {
     localStorage.setItem("sidebarOpen", JSON.stringify(sidebarOpen));
   }, [sidebarOpen]);
 
   return (
     <div className="flex h-screen bg-slate-100 overflow-hidden font-sans text-slate-900">
-      {/* Pasamos el estado y la función toggle al Sidebar */}
       <Sidebar isOpen={sidebarOpen} toggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
-      
-      {/* El flex-1 hará que este div ocupe todo el espacio restante automáticamente */}
       <div className="flex-1 flex flex-col h-full overflow-hidden relative transition-all duration-300">
         <main className="flex-1 overflow-hidden relative">
           {children}
@@ -62,7 +54,6 @@ const Layout = ({ children }) => {
   );
 };
 
-// ... (EL RESTO DEL ARCHIVO RutaProtegida, RutasApp y App SE MANTIENE IGUAL) ...
 const RutaProtegida = ({ children }) => {
   const { usuario, cargando } = useAuth();
   if (cargando) return <SplashScreen />;
@@ -71,7 +62,6 @@ const RutaProtegida = ({ children }) => {
 };
 
 function RutasApp() {
-    // ... tu código de rutas existente ...
     const { usuario, cargando } = useAuth();
     const [splashMinimo, setSplashMinimo] = useState(true);
 
@@ -92,6 +82,10 @@ function RutasApp() {
             <Route path="/productos" element={<RutaProtegida><Productos /></RutaProtegida>} />
             <Route path="/cigarrillos" element={<RutaProtegida><Cigarrillos /></RutaProtegida>} />
             <Route path="/stock" element={<RutaProtegida><Stock /></RutaProtegida>} />
+            
+            {/* NUEVA RUTA PROMOS */}
+            <Route path="/promos" element={<RutaProtegida><Promos /></RutaProtegida>} />
+            
             <Route path="/clientes" element={<RutaProtegida><Clientes /></RutaProtegida>} />
             <Route path="/proveedores" element={<RutaProtegida><Proveedores /></RutaProtegida>} />
             <Route path="/gastos" element={<RutaProtegida><Gastos /></RutaProtegida>} />

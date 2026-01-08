@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Search, Trash2, ShoppingCart, Plus, QrCode, Cigarette, Package, Banknote, Calculator, PauseCircle, PlayCircle, X, Clock } from "lucide-react";
+import { Search, Trash2, ShoppingCart, Plus, QrCode, Cigarette, Package, Banknote, Calculator, PauseCircle, PlayCircle, X, Clock, ShoppingBag } from "lucide-react";
 
 function Ventas() {
   const [productos, setProductos] = useState([]);
   const [cigarrillos, setCigarrillos] = useState([]);
+  const [promos, setPromos] = useState([]); // Nuevo estado para promos
   const [busqueda, setBusqueda] = useState("");
   const [carrito, setCarrito] = useState([]);
   const [metodoPago, setMetodoPago] = useState("Efectivo");
@@ -19,18 +20,21 @@ function Ventas() {
   const [manualPrecio, setManualPrecio] = useState("");
   const [manualCantidad, setManualCantidad] = useState(1);
 
-  // CAMBIO: Rutas con /api
   useEffect(() => {
     const cargarDatos = async () => {
       try {
-        const [resProd, resCig] = await Promise.all([
+        const [resProd, resCig, resPromos] = await Promise.all([
             fetch("http://localhost:3001/api/productos"),
-            fetch("http://localhost:3001/api/cigarrillos")
+            fetch("http://localhost:3001/api/cigarrillos"),
+            fetch("http://localhost:3001/api/promos")
         ]);
         const dataProd = await resProd.json();
         const dataCig = await resCig.json();
+        const dataPromos = await resPromos.json();
+
         setProductos(dataProd.map(p => ({ ...p, tipo: "general" })));
         setCigarrillos(dataCig.map(c => ({ ...c, tipo: "cigarrillo" })));
+        setPromos(dataPromos.map(pr => ({ ...pr, tipo: "Promo", stock: 999 }))); // Stock infinito visual para promos
       } catch (error) { console.error("Error datos:", error); }
     };
     cargarDatos();
@@ -61,7 +65,9 @@ function Ventas() {
   const calcularTotal = (items = carrito) => items.reduce((total, item) => total + obtenerPrecio(item) * item.cantidad, 0);
 
   const agregarAlCarrito = (item) => {
-    if (item.stock <= 0 && !item.es_manual) return alert("⚠️ No hay stock suficiente");
+    // Si es promo no chequeamos stock visualmente
+    if (item.tipo !== "Promo" && item.stock <= 0 && !item.es_manual) return alert("⚠️ No hay stock suficiente");
+    
     const existe = carrito.find((i) => i.id === item.id && i.tipo === item.tipo);
     if (existe) {
       setCarrito(carrito.map((i) => i.id === item.id && i.tipo === item.tipo ? { ...i, cantidad: i.cantidad + 1 } : i));
@@ -72,9 +78,12 @@ function Ventas() {
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter') {
-        const productoEscaneado = productos.find(p => p.codigo_barras === busqueda);
-        if (productoEscaneado) {
-            agregarAlCarrito(productoEscaneado);
+        // Buscar en productos, cigarrillos Y PROMOS
+        const todosLosItems = [...productos, ...cigarrillos, ...promos];
+        const itemEscaneado = todosLosItems.find(p => p.codigo_barras === busqueda);
+        
+        if (itemEscaneado) {
+            agregarAlCarrito(itemEscaneado);
             setBusqueda("");
             e.preventDefault();
         }
@@ -140,7 +149,6 @@ function Ventas() {
   const procesarVenta = async () => {
     if (!datosConfirmacion) return;
     try {
-      // CAMBIO: Ruta con /api
       const res = await fetch("http://localhost:3001/api/ventas", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -165,8 +173,9 @@ function Ventas() {
 
   const productosFiltrados = productos.filter((p) => p.nombre.toLowerCase().includes(busqueda.toLowerCase()));
   const cigarrillosFiltrados = cigarrillos.filter((c) => c.nombre.toLowerCase().includes(busqueda.toLowerCase()));
+  const promosFiltradas = promos.filter((pr) => pr.nombre.toLowerCase().includes(busqueda.toLowerCase()));
+
   const totalCalculado = calcularTotal();
-  const restanteDigital = metodoPago === "Mixto" ? Math.max(0, totalCalculado - (parseFloat(montoEfectivoMixto) || 0)) : 0;
 
   return (
     <div className="flex flex-col md:flex-row h-full gap-4 relative">
@@ -186,7 +195,27 @@ function Ventas() {
                 <button type="submit" className="bg-blue-600 text-white p-2 rounded-lg"><Plus size={20} /></button>
             </form>
         </div>
+        
         <div className="flex-1 overflow-y-auto custom-scrollbar space-y-6 pr-2">
+            
+            {/* SECCIÓN PROMOS */}
+            {(promosFiltradas.length > 0) && (
+                <div>
+                    <h3 className="font-bold text-slate-700 mb-2 px-1 flex items-center gap-2"><ShoppingBag size={18} className="text-purple-600"/> Promos y Combos</h3>
+                    <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                        {promosFiltradas.map((promo) => (
+                            <div key={promo.id} onClick={() => agregarAlCarrito(promo)} className="p-3 rounded-xl border cursor-pointer hover:border-purple-400 bg-white border-purple-100 shadow-sm relative overflow-hidden group">
+                                <div className="absolute top-0 right-0 bg-purple-100 p-1 rounded-bl-lg">
+                                    <ShoppingBag size={12} className="text-purple-600"/>
+                                </div>
+                                <p className="font-bold text-slate-800 truncate pr-6">{promo.nombre}</p>
+                                <p className="font-bold text-purple-600 text-right mt-2 text-lg">$ {promo.precio}</p>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
             {(cigarrillosFiltrados.length > 0) && (
                 <div>
                     <h3 className="font-bold text-slate-700 mb-2 px-1">Cigarrillos</h3>
@@ -224,7 +253,12 @@ function Ventas() {
         <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 relative z-10 mb-2 pr-1">
             {carrito.map((item, index) => (
                 <div key={index} className="flex justify-between items-center bg-slate-800 p-3 rounded-xl border border-slate-700 text-sm">
-                    <div><p className="font-medium text-slate-200">{item.nombre}</p><p className="text-xs text-slate-400">{item.cantidad} x ${obtenerPrecio(item)}</p></div>
+                    <div>
+                        <p className="font-medium text-slate-200">
+                            {item.nombre} {item.tipo === "Promo" && <span className="text-[10px] bg-purple-500 px-1 rounded text-white ml-1">PROMO</span>}
+                        </p>
+                        <p className="text-xs text-slate-400">{item.cantidad} x ${obtenerPrecio(item)}</p>
+                    </div>
                     <div className="flex gap-3"><p className="font-bold text-base">$ {obtenerPrecio(item) * item.cantidad}</p><button onClick={() => eliminarDelCarrito(item.id)} className="text-red-400"><Trash2 size={16} /></button></div>
                 </div>
             ))}

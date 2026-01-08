@@ -14,10 +14,16 @@ function Stock() {
   useEffect(() => {
     const cargarDatos = async () => {
       try {
+        // CORRECCIÓN: Se agregó '/api' a las rutas para coincidir con el servidor
         const [resProd, resCig] = await Promise.all([
-            fetch("http://localhost:3001/productos"),
-            fetch("http://localhost:3001/cigarrillos")
+            fetch("http://localhost:3001/api/productos"),
+            fetch("http://localhost:3001/api/cigarrillos")
         ]);
+
+        if (!resProd.ok || !resCig.ok) {
+            throw new Error("Error en la respuesta del servidor");
+        }
+
         const dataProd = await resProd.json();
         const dataCig = await resCig.json();
         
@@ -25,8 +31,10 @@ function Stock() {
         setCigarrillos(dataCig);
 
         // Unificamos para la tabla general
-        const listaProd = dataProd.map(p => ({ ...p, tipo: "General", icono: <Package size={16}/> }));
-        const listaCig = dataCig.map(c => ({ ...c, tipo: "Cigarrillo", icono: <Cigarette size={16}/> }));
+        // Aseguramos que dataProd y dataCig sean arrays antes de mapear (por seguridad)
+        const listaProd = Array.isArray(dataProd) ? dataProd.map(p => ({ ...p, tipo: "General", icono: <Package size={16}/> })) : [];
+        const listaCig = Array.isArray(dataCig) ? dataCig.map(c => ({ ...c, tipo: "Cigarrillo", icono: <Cigarette size={16}/> })) : [];
+        
         setItemsUnificados([...listaProd, ...listaCig]);
 
       } catch (error) { console.error("Error cargando stock:", error); }
