@@ -69,6 +69,23 @@ db.serialize(() => {
   ensureColumn("ventas", "pago_efectivo", "REAL DEFAULT 0");
   ensureColumn("ventas", "pago_digital", "REAL DEFAULT 0");
   ensureColumn("ventas", "categoria", "TEXT");
+  ensureColumn("ventas", "categoria", "TEXT");
+  // === INICIO DEL BLOQUE DE REPARACIÓN (Copiar y Pegar esto) ===
+  
+  // 1. Aseguramos que existan las columnas que usa el sistema nuevo
+  ensureColumn("productos", "precio", "REAL");
+  ensureColumn("productos", "categoria", "TEXT");
+
+  // 2. Migramos los datos viejos (si existen) a las columnas nuevas
+  // Copia precio_venta -> precio (si el precio nuevo está vacío)
+  db.run("UPDATE productos SET precio = precio_venta WHERE (precio IS NULL OR precio = 0) AND precio_venta IS NOT NULL", (err) => {
+      if (!err) console.log("♻️ Precios migrados correctamente.");
+  });
+
+  // Copia la categoría por defecto si está vacía
+  db.run("UPDATE productos SET categoria = 'Varios' WHERE categoria IS NULL OR categoria = ''");
+  
+  // === FIN DEL BLOQUE DE REPARACIÓN ===
   
   // Semilla
   db.get("SELECT count(*) as count FROM usuarios", (err, row) => {
@@ -279,6 +296,42 @@ app.get("/api/resumen_dia_independiente", async (req, res) => {
             digital: totDig
         });
     } catch (e) { res.status(500).json({error: e.message}); }
+});
+
+// ================= REPORTES FALTANTES =================
+
+// 1. Top 5 Productos
+app.get("/api/reportes/productos_top", (req, res) => {
+    const sql = "SELECT producto as name, SUM(cantidad) as value FROM ventas GROUP BY producto ORDER BY value DESC LIMIT 5";
+    db.all(sql, [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+    });
+});
+
+// 2. Ventas de la semana
+app.get("/api/reportes/ventas_semana", (req, res) => {
+    const sql = "SELECT strftime('%Y-%m-%d', fecha) as fecha, SUM(precio_total) as total FROM ventas WHERE fecha >= date('now', '-6 days') GROUP BY strftime('%Y-%m-%d', fecha) ORDER BY fecha ASC";
+    db.all(sql, [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        // Rellenar días vacíos
+        const resultado = [];
+        for(let i=6; i>=0; i--) {
+            const d = new Date(); d.setDate(d.getDate() - i);
+            const fechaStr = d.toISOString().split('T')[0];
+            const dato = rows.find(r => r.fecha === fechaStr);
+            resultado.push({ name: new Date(fechaStr).toLocaleDateString('es-AR', {weekday: 'short'}), total: dato ? dato.total : 0 });
+        }
+        res.json(resultado);
+    });
+});
+
+// 3. Métodos de Pago
+app.get("/api/reportes/metodos_pago", (req, res) => {
+    db.all("SELECT metodo_pago as name, COUNT(*) as value FROM ventas GROUP BY metodo_pago", [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+    });
 });
 
 app.listen(port, () => console.log(`🚀 SERVIDOR OK - http://localhost:${port}`));
