@@ -105,9 +105,10 @@ app.get("/api/productos", (req, res) => {
 app.post("/api/productos", (req, res) => {
     const { nombre, precio, stock, categoria, codigo_barras } = req.body;
     // Nos aseguramos que codigo_barras sea string, aunque venga null
-    const code = codigo_barras || ""; 
+const code = codigo_barras && codigo_barras.trim() !== "" ? codigo_barras : null; 
+
     db.run("INSERT INTO productos (nombre, precio, stock, categoria, codigo_barras) VALUES (?,?,?,?,?)", 
-        [nombre, precio, stock, categoria, code], 
+        [nombre, precio, stock, categoria, code], // <--- Aquí usamos la variable 'code' corregida
         function(err) {
             if(err) return res.status(500).json({error: err.message});
             res.json({id: this.lastID});
@@ -191,23 +192,72 @@ app.delete("/api/promos/:id", async (req, res) => {
 
 // VENTAS
 app.get("/api/ventas", (req, res) => db.all("SELECT * FROM ventas ORDER BY fecha DESC", (err, r) => res.json(r || [])));
+app.get("/api/historial", (req, res) => {
+    db.all("SELECT * FROM ventas ORDER BY fecha DESC", (err, rows) => {
+        if (err) { console.error(err); return res.json([]); }
+        res.json(rows || []);
+    });
+});
+// REEMPLAZAR BLOQUE app.post("/api/ventas" ... COMPLETO
 app.post("/api/ventas", async (req, res) => {
-    const { productos, metodo_pago, desglose } = req.body;
+    // Recibimos nuevos parámetros: pago_anticipado y metodo_anticipo
+    const { productos, metodo_pago, desglose, cliente_id, pago_anticipado, metodo_anticipo } = req.body;
+    
     if (!productos || productos.length === 0) return res.status(400).json({ error: "Carrito vacío" });
     const ticket_id = Date.now().toString(); 
+    
     try {
         await dbRun("BEGIN TRANSACTION");
-        let rEfvo = 1, rDig = 0;
-        if (desglose && desglose.total > 0) { rEfvo = desglose.efectivo / desglose.total; rDig = desglose.digital / desglose.total; }
-        else { if (metodo_pago !== 'Efectivo') { rEfvo = 0; rDig = 1; } }
+        
+        const totalVenta = productos.reduce((sum, item) => sum + (item.precio * item.cantidad), 0);
+        
+        // 1. Lógica de Ratios (Cuánto fue efectivo y cuánto digital para la estadística)
+        let rEfvo = 0, rDig = 0;
+        let pagoEfvoTotal = 0, pagoDigTotal = 0;
 
+        if (cliente_id) {
+            // --- CASO FIADO (TOTAL O PARCIAL) ---
+            const entrega = parseFloat(pago_anticipado) || 0;
+            
+            // Si hubo entrega, calculamos ratios sobre el TOTAL de la venta
+            // Ejemplo: Venta $1000, Entrega $400 (Efvo).
+            // rEfvo = 0.4 (40% de la venta fue pagada en efectivo hoy)
+            // rDig = 0
+            // El 60% restante es deuda y no suma a caja diaria.
+            if (entrega > 0) {
+                if (metodo_anticipo === 'Efectivo') {
+                    rEfvo = entrega / totalVenta;
+                    pagoEfvoTotal = entrega;
+                } else {
+                    rDig = entrega / totalVenta;
+                    pagoDigTotal = entrega;
+                }
+            }
+            // Si entrega es 0, rEfvo y rDig quedan en 0 (Todo deuda)
+            
+        } else {
+            // --- CASO VENTA NORMAL ---
+            if (desglose && desglose.total > 0) { 
+                rEfvo = desglose.efectivo / desglose.total; 
+                rDig = desglose.digital / desglose.total;
+            } else { 
+                if (metodo_pago === 'Efectivo') { rEfvo = 1; rDig = 0; }
+                else { rEfvo = 0; rDig = 1; }
+            }
+        }
+
+        // 2. Registrar items
         for (const item of productos) {
             const total = item.precio * item.cantidad;
-            const pEfvo = total * rEfvo, pDig = total * rDig;
+            // Calculamos la parte proporcional que SÍ se pagó
+            const pEfvo = total * rEfvo; 
+            const pDig = total * rDig;
             const tipo = item.tipo || 'General';
+            
             await dbRun(`INSERT INTO ventas (ticket_id, producto, cantidad, precio_total, metodo_pago, categoria, fecha, pago_efectivo, pago_digital) VALUES (?,?,?,?,?,?, datetime('now', 'localtime'), ?, ?)`, 
                 [ticket_id, item.nombre, item.cantidad, total, metodo_pago, tipo, pEfvo, pDig]);
             
+            // 3. Stock
             if (!item.es_manual && item.id) {
                 if (item.tipo === "Promo") {
                     const ings = await dbAll("SELECT * FROM detalle_promos WHERE promo_id = ?", [item.id]);
@@ -221,6 +271,22 @@ app.post("/api/ventas", async (req, res) => {
                 }
             }
         }
+
+        // 4. Registrar Deuda (Solo lo que falta pagar)
+        if (cliente_id) {
+            const entrega = parseFloat(pago_anticipado) || 0;
+            const deuda = totalVenta - entrega;
+            
+            if (deuda > 0) { // Solo si queda algo por pagar
+                // Formateamos descripción: "Compra... (Entrega: $X)"
+                let desc = `Compra (Ticket ${ticket_id.slice(-4)})`;
+                if (entrega > 0) desc += ` - Entrega $${entrega} (${metodo_anticipo})`;
+                
+                await dbRun("INSERT INTO fiados (cliente_id, monto, descripcion, fecha) VALUES (?,?,?, datetime('now', 'localtime'))", 
+                    [cliente_id, deuda, desc]);
+            }
+        }
+
         await dbRun("COMMIT");
         res.json({ success: true });
     } catch (error) { await dbRun("ROLLBACK"); res.status(500).json({ error: error.message }); }
@@ -271,16 +337,28 @@ app.post("/api/cierres", (req, res) => {
         () => res.json({ success: true }));
 });
 
+// REEMPLAZAR BLOQUE app.get("/api/resumen_dia_independiente" ... COMPLETO
 app.get("/api/resumen_dia_independiente", async (req, res) => {
     try {
+        // Fechas de últimos cierres
         const sqlFechaGral = "(SELECT IFNULL(MAX(fecha), '1900-01-01') FROM cierres WHERE tipo = 'GENERAL')";
         const sqlFechaCig = "(SELECT IFNULL(MAX(fecha), '1900-01-01') FROM cierres WHERE tipo = 'CIGARRILLOS')";
         
+        // 1. Apertura de Caja
         const apertura = await dbGet(`SELECT IFNULL(monto, 0) as m FROM aperturas WHERE fecha > ${sqlFechaGral} ORDER BY id DESC LIMIT 1`);
-        const vGral = await dbGet(`SELECT IFNULL(SUM(pago_efectivo), 0) as t FROM ventas WHERE categoria = 'General' AND fecha > ${sqlFechaGral}`);
-        const vCig = await dbGet(`SELECT IFNULL(SUM(pago_efectivo), 0) as t FROM ventas WHERE categoria = 'cigarrillo' AND fecha > ${sqlFechaCig}`);
+        
+        // 2. Ventas (Corregido: Usamos LOWER para ignorar mayúsculas/minúsculas)
+        // Todo lo que NO sea cigarrillo se considera General
+        const vGral = await dbGet(`SELECT IFNULL(SUM(pago_efectivo), 0) as t FROM ventas WHERE LOWER(categoria) != 'cigarrillo' AND fecha > ${sqlFechaGral}`);
+        const vCig = await dbGet(`SELECT IFNULL(SUM(pago_efectivo), 0) as t FROM ventas WHERE LOWER(categoria) = 'cigarrillo' AND fecha > ${sqlFechaCig}`);
         const vDig = await dbGet(`SELECT IFNULL(SUM(pago_digital), 0) as t FROM ventas WHERE fecha > ${sqlFechaGral}`);
+        
+        // 3. Gastos y Pagos (Salidas de caja)
         const gastos = await dbGet(`SELECT IFNULL(SUM(monto), 0) as t FROM gastos WHERE fecha > ${sqlFechaGral}`);
+        const pagosProv = await dbGet(`SELECT IFNULL(SUM(monto), 0) as t FROM movimientos_proveedores WHERE fecha > ${sqlFechaGral}`);
+        
+        // 4. Cobros de Fiados (Entradas de caja)
+        // Nota: Asumimos que los cobros de fiado (monto negativo en tabla fiados) son ingresos de efectivo
         const cobros = await dbGet(`SELECT IFNULL(SUM(ABS(monto)), 0) as t FROM fiados WHERE monto < 0 AND fecha > ${sqlFechaGral}`);
         
         const saldoIni = apertura ? apertura.m : 0;
@@ -288,11 +366,27 @@ app.get("/api/resumen_dia_independiente", async (req, res) => {
         const totCig = vCig ? vCig.t : 0;
         const totDig = vDig ? vDig.t : 0;
         const totGastos = gastos ? gastos.t : 0;
+        const totProv = pagosProv ? pagosProv.t : 0;
         const totCobros = cobros ? cobros.t : 0;
         
+        // Cálculo del dinero que debería haber en el cajón (Físico Esperado)
+        // Apertura + Ventas Efectivo + Cobros Fiado - Gastos - Pagos Proveedores
+        const esperadoCaja = saldoIni + totGral + totCobros - totGastos - totProv;
+
         res.json({
-            general: { saldo_inicial: saldoIni, ventas: totGral, cobros: totCobros, gastos: totGastos, digital: totDig, esperado: saldoIni + totGral + totCobros - totGastos },
-            cigarrillos: { ventas: totCig, esperado: totCig },
+            general: { 
+                saldo_inicial: saldoIni, 
+                ventas: totGral, 
+                cobros: totCobros, 
+                gastos: totGastos, 
+                proveedores: totProv, // Enviamos este dato nuevo
+                digital: totDig, 
+                esperado: esperadoCaja 
+            },
+            cigarrillos: { 
+                ventas: totCig, 
+                esperado: totCig 
+            },
             digital: totDig
         });
     } catch (e) { res.status(500).json({error: e.message}); }
