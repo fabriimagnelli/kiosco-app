@@ -270,6 +270,33 @@ app.delete("/api/categorias_productos/:id", (req, res) => db.run("DELETE FROM ca
 app.get("/api/gastos", (req, res) => db.all("SELECT * FROM gastos ORDER BY fecha DESC", (e, r) => res.json(r || [])));
 app.post("/api/gastos", (req, res) => db.run("INSERT INTO gastos (monto, descripcion, categoria, fecha) VALUES (?, ?, ?, datetime('now', 'localtime'))", [req.body.monto, req.body.descripcion, req.body.categoria], () => res.json({success: true})));
 app.delete("/api/gastos/:id", (req, res) => db.run("DELETE FROM gastos WHERE id=?", [req.params.id], () => res.json({success: true})));
+app.get("/api/categorias_gastos", (req, res) => {
+    db.all("SELECT * FROM categorias_gastos", (err, rows) => {
+        if (err) {
+            console.error("Error al obtener categorías:", err.message);
+            return res.json([]); // O podrías devolver un 500
+        }
+        res.json(rows || []);
+    });
+});
+app.post("/api/categorias_gastos", (req, res) => {
+    const { nombre } = req.body;
+    if (!nombre) return res.status(400).json({ error: "Nombre es requerido" });
+
+    db.run("INSERT INTO categorias_gastos (nombre) VALUES (?)", [nombre], function(err) {
+        if (err) {
+            console.error("Error al crear categoría de gasto:", err.message);
+            return res.status(500).json({ error: err.message });
+        }
+        res.json({ id: this.lastID });
+    });
+});
+app.delete("/api/categorias_gastos/:id", (req, res) => {
+    db.run("DELETE FROM categorias_gastos WHERE id = ?", [req.params.id], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
 
 app.get("/api/clientes", (req, res) => db.all("SELECT c.*, SUM(f.monto) as total_deuda FROM clientes c LEFT JOIN fiados f ON c.id = f.cliente_id GROUP BY c.id", (e, r) => res.json(r || [])));
 app.post("/api/clientes", (req, res) => db.run("INSERT INTO clientes (nombre, telefono) VALUES (?,?)", [req.body.nombre, req.body.telefono], () => res.json({success: true})));

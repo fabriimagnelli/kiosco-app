@@ -74,6 +74,24 @@ function Gastos() {
     });
   };
 
+  const eliminarCategoria = () => {
+    const catActual = categorias.find(c => c.nombre === categoriaSel);
+    if (!catActual) return;
+
+    if (!confirm(`¿Seguro que quieres eliminar la categoría "${catActual.nombre}"?`)) return;
+
+    fetch(`http://localhost:3001/api/categorias_gastos/${catActual.id}`, { method: "DELETE" })
+      .then(res => {
+        if(res.ok) {
+            cargarCategorias(); // Recargar la lista para que desaparezca
+            // Opcional: limpiar selección
+            setCategoriaSel("");
+        } else {
+            alert("Error al eliminar");
+        }
+      });
+  };
+
   const eliminarGasto = (id) => {
     if (!confirm("¿Eliminar este gasto?")) return;
     fetch(`http://localhost:3001/api/gastos/${id}`, { method: "DELETE" })
@@ -129,6 +147,15 @@ function Gastos() {
                             <select className="bg-slate-50 border p-2 rounded-lg text-sm font-bold text-slate-700 outline-none" value={categoriaSel} onChange={e => setCategoriaSel(e.target.value)}>
                                 {categorias.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
                             </select>
+                            {/* Botón Eliminar Categoría */}
+                            <button 
+                                type="button" 
+                                onClick={eliminarCategoria} 
+                                className="text-slate-400 hover:text-red-500 transition-colors"
+                                title="Eliminar esta categoría"
+                            >
+                                <Trash2 size={16} />
+                            </button>
                             <button type="button" onClick={() => setModoNuevaCat(true)} className="text-xs text-blue-600 font-bold hover:underline">+ Crear</button>
                         </div>
                     )}
