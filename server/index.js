@@ -72,6 +72,14 @@ db.serialize(() => {
   ensureColumn("ventas", "categoria", "TEXT");
   ensureColumn("productos", "precio", "REAL");
   ensureColumn("productos", "categoria", "TEXT");
+  ensureColumn("proveedores", "tributario", "TEXT");
+  ensureColumn("proveedores", "email", "TEXT");
+  ensureColumn("proveedores", "calle", "TEXT");
+  ensureColumn("proveedores", "numero", "TEXT");
+  ensureColumn("proveedores", "piso", "TEXT");
+  ensureColumn("proveedores", "ciudad", "TEXT");
+  ensureColumn("proveedores", "activo", "INTEGER DEFAULT 1"); // 1 = Activo, 0 = Inactivo
+  ensureColumn("proveedores", "comentario", "TEXT");
 
   // Migrar datos viejos
   db.run("UPDATE productos SET precio = precio_venta WHERE (precio IS NULL OR precio = 0) AND precio_venta IS NOT NULL", (err) => {
@@ -304,7 +312,58 @@ app.get("/api/fiados/:id", (req, res) => db.all("SELECT * FROM fiados WHERE clie
 app.post("/api/fiados", (req, res) => db.run("INSERT INTO fiados (cliente_id, monto, descripcion, fecha) VALUES (?,?,?, datetime('now', 'localtime'))", [req.body.cliente_id, req.body.monto, req.body.descripcion], () => res.json({success: true})));
 
 app.get("/api/proveedores", (req, res) => db.all("SELECT p.*, SUM(m.monto) as total_deuda FROM proveedores p LEFT JOIN movimientos_proveedores m ON p.id = m.proveedor_id GROUP BY p.id", (e, r) => res.json(r || [])));
-app.post("/api/proveedores", (req, res) => db.run("INSERT INTO proveedores (nombre, telefono) VALUES (?,?)", [req.body.nombre, req.body.telefono], () => res.json({success: true})));
+app.post("/api/proveedores", (req, res) => {
+    const { nombre, tributario, email, telefono, calle, numero, piso, ciudad, activo, comentario } = req.body;
+    const sql = `INSERT INTO proveedores (nombre, tributario, email, telefono, calle, numero, piso, ciudad, activo, comentario) VALUES (?,?,?,?,?,?,?,?,?,?)`;
+    const params = [nombre, tributario, email, telefono, calle, numero, piso, ciudad, activo ? 1 : 0, comentario];
+    
+    db.run(sql, params, function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true, id: this.lastID });
+    });
+});
+app.put("/api/proveedores/:id", (req, res) => {
+    const { nombre, tributario, email, telefono, calle, numero, piso, ciudad, activo, comentario } = req.body;
+    const sql = `UPDATE proveedores SET nombre=?, tributario=?, email=?, telefono=?, calle=?, numero=?, piso=?, ciudad=?, activo=?, comentario=? WHERE id=?`;
+    const params = [nombre, tributario, email, telefono, calle, numero, piso, ciudad, activo ? 1 : 0, comentario, req.params.id];
+    
+    db.run(sql, params, (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
+app.delete("/api/proveedores/:id", (req, res) => {
+    db.run("DELETE FROM proveedores WHERE id = ?", [req.params.id], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
+app.get("/api/movimientos_proveedores/:id", (req, res) => {
+    db.all("SELECT * FROM movimientos_proveedores WHERE proveedor_id = ? ORDER BY fecha DESC", [req.params.id], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+    });
+});
+// OBTENER TODOS LOS MOVIMIENTOS (PARA LA LISTA GENERAL)
+app.get("/api/movimientos_todos", (req, res) => {
+    const sql = `
+        SELECT m.*, p.nombre as proveedor_nombre, p.tributario 
+        FROM movimientos_proveedores m 
+        LEFT JOIN proveedores p ON m.proveedor_id = p.id 
+        ORDER BY m.fecha DESC
+    `;
+    db.all(sql, [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+    });
+});
+// ELIMINAR UN MOVIMIENTO ESPECÍFICO
+app.delete("/api/movimientos_proveedores/:id", (req, res) => {
+    db.run("DELETE FROM movimientos_proveedores WHERE id = ?", [req.params.id], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
 app.post("/api/movimientos_proveedores", (req, res) => db.run("INSERT INTO movimientos_proveedores (proveedor_id, monto, descripcion, fecha) VALUES (?,?,?, datetime('now', 'localtime'))", [req.body.proveedor_id, req.body.monto, req.body.descripcion], () => res.json({success: true})));
 
 app.post("/api/apertura", (req, res) => db.run("INSERT INTO aperturas (monto, observacion, fecha) VALUES (?, ?, datetime('now', 'localtime'))", [req.body.monto, req.body.observacion], () => res.json({success: true})));
