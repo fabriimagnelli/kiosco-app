@@ -435,7 +435,7 @@ function Ventas() {
 
       {/* MODAL CONFIRMACIÓN */}
       {mostrarConfirmacion && (
-          <div className="absolute inset-0 z-50 bg-slate-900/80 flex items-center justify-center p-4">
+          <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-white rounded-xl p-6 w-full max-w-sm">
                   <h3 className="font-bold text-lg mb-4">Confirmar Venta</h3>
                   {datosConfirmacion.clienteId && (

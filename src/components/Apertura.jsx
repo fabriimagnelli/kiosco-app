@@ -1,23 +1,37 @@
 import React, { useState } from "react";
 import { LockOpen, DollarSign, Save } from "lucide-react";
+import { useNavigate } from "react-router-dom"; // <--- 1. Importamos useNavigate
 
 function Apertura() {
   const [monto, setMonto] = useState("");
   const [observacion, setObservacion] = useState("");
+  const navigate = useNavigate(); // <--- 2. Activamos la navegación interna
 
   const abrirCaja = (e) => {
     e.preventDefault();
     if (!monto) return alert("Ingresa un monto válido");
 
-    fetch("http://localhost:3001/apertura", {
+    // <--- 3. CORREGIDO: Agregamos "/api" a la URL para coincidir con el servidor
+    fetch("http://localhost:3001/api/apertura", { 
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ monto, observacion }),
-    }).then(() => {
+    })
+    .then((res) => {
+        if (!res.ok) throw new Error("Error al abrir caja");
+        return res.json();
+    })
+    .then(() => {
       alert("✅ Caja abierta con éxito. ¡Buen día!");
       setMonto("");
       setObservacion("");
-      window.location.href = "/ventas"; // Nos lleva directo a vender
+      
+      // <--- 4. CORREGIDO: Usamos navigate para ir a ventas sin recargar (evita el error Cannot GET)
+      navigate("/ventas"); 
+    })
+    .catch((err) => {
+        console.error(err);
+        alert("Hubo un error al conectar con el servidor. Revisa que la terminal no tenga errores.");
     });
   };
 

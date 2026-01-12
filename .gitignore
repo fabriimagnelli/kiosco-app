@@ -5,6 +5,9 @@ node_modules/
 dist/
 build/
 
+# Ignora la base de datos
+server/kiosco.db
+
 # Base de datos (Binarios)
 *.db
 *.sqlite
