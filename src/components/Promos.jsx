@@ -157,8 +157,8 @@ function Promos() {
       </div>
 
       {/* Lista de Promos Existentes */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {promos.length === 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 overflow-y-auto pr-2 custom-scrollbar">
+            {promos.length === 0 ? (
           <div className="col-span-full text-center py-10 text-slate-400">
             No hay promociones creadas.
           </div>
