@@ -1,4 +1,3 @@
-// src/App.jsx
 import React, { useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
@@ -13,11 +12,11 @@ import Stock from "./components/Stock";
 import Clientes from "./components/Deudores";
 import Proveedores from "./components/Proveedores";
 import Gastos from "./components/Gastos";
-import Apertura from "./components/Apertura";       
 import Balance from "./components/Balance";         
 import Reportes from "./components/Reportes";   
 import Cierre from "./components/Cierre"; 
 import Promos from "./components/Promos"; 
+import Retiros from "./components/Retiros"; // NUEVO COMPONENTE
 
 const SplashScreen = () => (
   <div className="fixed inset-0 bg-slate-900 flex flex-col items-center justify-center z-50">
@@ -66,7 +65,6 @@ function RutasApp() {
     const [splashMinimo, setSplashMinimo] = useState(true);
 
     useEffect(() => {
-        // CAMBIO: Reducido a 500ms (0.5 segundos) para inicio rápido
         const timer = setTimeout(() => setSplashMinimo(false), 500);
         return () => clearTimeout(timer);
     }, []);
@@ -77,7 +75,7 @@ function RutasApp() {
         <Routes>
             <Route path="/login" element={!usuario ? <Login /> : <Navigate to="/" />} />
             <Route path="/" element={<RutaProtegida><Inicio /></RutaProtegida>} />
-            <Route path="/apertura" element={<RutaProtegida><Apertura /></RutaProtegida>} />
+            {/* RUTA DE APERTURA ELIMINADA */}
             <Route path="/ventas" element={<RutaProtegida><Ventas /></RutaProtegida>} />
             <Route path="/cierre" element={<RutaProtegida><Cierre /></RutaProtegida>} />
             <Route path="/productos" element={<RutaProtegida><Productos /></RutaProtegida>} />
@@ -89,6 +87,7 @@ function RutasApp() {
             <Route path="/gastos" element={<RutaProtegida><Gastos /></RutaProtegida>} />
             <Route path="/balance" element={<RutaProtegida><Balance /></RutaProtegida>} />
             <Route path="/reportes" element={<RutaProtegida><Reportes /></RutaProtegida>} />
+            <Route path="/retiros" element={<RutaProtegida><Retiros /></RutaProtegida>} /> {/* NUEVA RUTA */}
             <Route path="*" element={<Navigate to="/" />} />
         </Routes>
     );

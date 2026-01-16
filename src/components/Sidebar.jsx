@@ -1,10 +1,9 @@
-// src/components/Sidebar.jsx
 import React from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { 
   Home, ShoppingCart, Package, Users, Truck, DollarSign, LogOut, Archive, PieChart,
-  Unlock, FileText, Scale, Cigarette, ShoppingBag, // Importamos ShoppingBag
+  FileText, Scale, Cigarette, ShoppingBag, TrendingUp,
   ChevronLeft, ChevronRight 
 } from "lucide-react";
 
@@ -58,10 +57,7 @@ function Sidebar({ isOpen, toggleSidebar }) {
           <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Inicio</span>
         </Link>
 
-        <Link to="/apertura" className={`${btnBase} ${isActive("/apertura") ? btnActive : btnInactive}`} title="Apertura">
-          <Unlock size={20} className="flex-shrink-0" />
-          <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Apertura</span>
-        </Link>
+        {/* APERTURA ELIMINADA, AHORA ES RETIROS */}
 
         <Link to="/ventas" className={`${btnBase} ${isActive("/ventas") ? btnActive : btnInactive}`} title="Ventas">
           <ShoppingCart size={20} className="flex-shrink-0" />
@@ -75,7 +71,12 @@ function Sidebar({ isOpen, toggleSidebar }) {
 
         <div className={`my-2 border-t border-slate-800 mx-auto ${isOpen ? "w-full" : "w-10"}`}></div>
 
-        {isOpen && <p className="text-[10px] font-bold text-slate-600 uppercase mb-2 px-2 fade-in">Inventario</p>}
+        {isOpen && <p className="text-[10px] font-bold text-slate-600 uppercase mb-2 px-2 fade-in">Gestión</p>}
+
+        <Link to="/retiros" className={`${btnBase} ${isActive("/retiros") ? btnActive : btnInactive}`} title="Retiros">
+          <TrendingUp size={20} className="flex-shrink-0" />
+          <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Retiros</span>
+        </Link>
 
         <Link to="/stock" className={`${btnBase} ${isActive("/stock") ? btnActive : btnInactive}`} title="Stock">
           <PieChart size={20} className="flex-shrink-0" />

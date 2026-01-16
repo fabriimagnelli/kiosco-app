@@ -51,7 +51,8 @@ function Gastos() {
       body: JSON.stringify({ 
         monto: parseFloat(monto), 
         descripcion: descripcionFinal,
-        categoria: categoriaSel 
+        categoria: categoriaSel,
+        metodo_pago: metodo
       }),
     }).then(() => {
       setMonto("");
@@ -182,11 +183,12 @@ function Gastos() {
                             value={metodo}
                             onChange={e => setMetodo(e.target.value)}
                         >
-                            <option value="Efectivo">Efectivo (Caja)</option>
+                            <option value="Efectivo">Efectivo Caja</option>
+                            <option value="Retiros">Retiros</option>
                             <option value="Mercado Pago">Mercado Pago</option>
+                            <option value="Transferencia">Transferencia</option>
                             <option value="Débito">Tarjeta Débito</option>
                             <option value="Crédito">Tarjeta Crédito</option>
-                            <option value="Transferencia">Transferencia</option>
                         </select>
                     </div>
                 </div>

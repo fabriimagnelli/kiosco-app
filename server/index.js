@@ -32,28 +32,17 @@ const dbAll = (sql, params = []) => new Promise((resolve, reject) => {
 // --- FUNCIÓN PARA OBTENER EL SIGUIENTE NÚMERO DE TICKET ---
 const obtenerSiguienteTicket = async () => {
     try {
-        // Buscamos la última venta insertada por ID (la más reciente)
         const ultima = await dbGet("SELECT ticket_id FROM ventas ORDER BY id DESC LIMIT 1");
-        
-        // Si no hay ventas previas, arrancamos con el 0001
         if (!ultima || !ultima.ticket_id) return "0001";
-
         const ultimoTicket = ultima.ticket_id;
-
-        // Si el ticket anterior tiene más de 6 dígitos, asumimos que es del sistema viejo (timestamp)
-        // y reiniciamos el contador a 0001.
         if (ultimoTicket.length > 6) return "0001";
-
-        // Si es un número válido, lo parseamos, sumamos 1 y rellenamos con ceros
         const numero = parseInt(ultimoTicket, 10);
-        if (isNaN(numero)) return "0001"; // Por seguridad
-
+        if (isNaN(numero)) return "0001";
         const siguiente = numero + 1;
         return siguiente.toString().padStart(4, "0");
-
     } catch (error) {
         console.error("Error generando ticket:", error);
-        return "0001"; // Fallback en caso de error
+        return "0001";
     }
 };
 
@@ -91,6 +80,9 @@ db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS movimientos_proveedores (id INTEGER PRIMARY KEY AUTOINCREMENT, proveedor_id INTEGER, monto REAL, descripcion TEXT, fecha DATETIME DEFAULT CURRENT_TIMESTAMP)`);
   db.run(`CREATE TABLE IF NOT EXISTS aperturas (id INTEGER PRIMARY KEY AUTOINCREMENT, monto REAL, observacion TEXT, fecha DATETIME DEFAULT CURRENT_TIMESTAMP)`);
   db.run(`CREATE TABLE IF NOT EXISTS cierres (id INTEGER PRIMARY KEY AUTOINCREMENT, tipo TEXT, total_ventas REAL, total_gastos REAL, total_sistema REAL, total_fisico REAL, diferencia REAL, fecha DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+  
+  // NUEVA TABLA RETIROS
+  db.run(`CREATE TABLE IF NOT EXISTS retiros (id INTEGER PRIMARY KEY AUTOINCREMENT, monto REAL, descripcion TEXT, tipo TEXT, fecha DATETIME DEFAULT CURRENT_TIMESTAMP, cierre_id INTEGER)`);
 
   // --- MIGRACIONES ---
   ensureColumn("productos", "codigo_barras", "TEXT");
@@ -108,8 +100,6 @@ db.serialize(() => {
   ensureColumn("proveedores", "ciudad", "TEXT");
   ensureColumn("proveedores", "activo", "INTEGER DEFAULT 1"); 
   ensureColumn("proveedores", "comentario", "TEXT");
-  
-  // NUEVO: Columna para saber si el pago al proveedor fue Efectivo o Digital
   ensureColumn("movimientos_proveedores", "metodo_pago", "TEXT DEFAULT 'Efectivo'");
 
   // Migrar datos viejos
@@ -228,30 +218,25 @@ app.get("/api/historial", (req, res) => {
     });
 });
 
-// --- RUTA VENTAS MODIFICADA PARA TICKETS CONSECUTIVOS ---
 app.post("/api/ventas", async (req, res) => {
     const { productos, metodo_pago, desglose, cliente_id, pago_anticipado, metodo_anticipo } = req.body;
     
     if (!productos || productos.length === 0) return res.status(400).json({ error: "Carrito vacío" });
 
     try {
-        // Obtenemos el nuevo ID consecutivo (0001, 0002, etc.)
         const ticket_id = await obtenerSiguienteTicket();
-
         await dbRun("BEGIN TRANSACTION");
 
         const totalVenta = productos.reduce((sum, item) => sum + (item.precio * item.cantidad), 0);
         let rEfvo = 0, rDig = 0;
 
         if (cliente_id) {
-            // Lógica de Fiado / Cuenta Corriente
             const entrega = parseFloat(pago_anticipado) || 0;
             if (entrega > 0) {
                 if (metodo_anticipo === 'Efectivo') { rEfvo = entrega / totalVenta; } 
                 else { rDig = entrega / totalVenta; }
             }
         } else {
-            // Venta Directa
             if (desglose && desglose.total > 0) { 
                 rEfvo = desglose.efectivo / desglose.total; 
                 rDig = desglose.digital / desglose.total;
@@ -270,7 +255,6 @@ app.post("/api/ventas", async (req, res) => {
             await dbRun(`INSERT INTO ventas (ticket_id, producto, cantidad, precio_total, metodo_pago, categoria, fecha, pago_efectivo, pago_digital) VALUES (?,?,?,?,?,?, datetime('now', 'localtime'), ?, ?)`, 
                 [ticket_id, item.nombre, item.cantidad, total, metodo_pago, tipo, pEfvo, pDig]);
 
-            // Descontar Stock
             if (!item.es_manual && item.id) {
                 if (item.tipo === "Promo") {
                     const ings = await dbAll("SELECT * FROM detalle_promos WHERE promo_id = ?", [item.id]);
@@ -285,19 +269,18 @@ app.post("/api/ventas", async (req, res) => {
             }
         }
 
-        // Registrar Deuda si aplica
         if (cliente_id) {
             const entrega = parseFloat(pago_anticipado) || 0;
             const deuda = totalVenta - entrega;
             if (deuda > 0) { 
-                let desc = `Compra (Ticket ${ticket_id})`; // Ticket más corto y legible
+                let desc = `Compra (Ticket ${ticket_id})`;
                 if (entrega > 0) desc += ` - Entrega $${entrega} (${metodo_anticipo})`;
                 await dbRun("INSERT INTO fiados (cliente_id, monto, descripcion, fecha) VALUES (?,?,?, datetime('now', 'localtime'))", [cliente_id, deuda, desc]);
             }
         }
 
         await dbRun("COMMIT");
-        res.json({ success: true, ticket_id }); // Devolvemos el ticket ID para imprimir si se quiere
+        res.json({ success: true, ticket_id });
     } catch (error) { 
         await dbRun("ROLLBACK"); 
         res.status(500).json({ error: error.message }); 
@@ -321,42 +304,53 @@ app.get("/api/dashboard", (req, res) => {
     });
 });
 
-// OTROS ENDPOINTS
-app.get("/api/categorias_productos", (req, res) => db.all("SELECT * FROM categorias_productos", (e, r) => res.json(r || [])));
-app.post("/api/categorias_productos", (req, res) => db.run("INSERT INTO categorias_productos (nombre) VALUES (?)", [req.body.nombre], function() { res.json({id: this.lastID}) }));
-app.delete("/api/categorias_productos/:id", (req, res) => db.run("DELETE FROM categorias_productos WHERE id = ?", [req.params.id], () => res.json({success: true})));
+// RETIROS (MODIFICADO: JOIN CON CIERRES PARA PDF DETALLADO)
+app.get("/api/retiros", async (req, res) => {
+    try {
+        const sql = `
+            SELECT r.*, 
+                   c.total_ventas, 
+                   c.total_gastos, 
+                   c.total_fisico, 
+                   c.diferencia 
+            FROM retiros r 
+            LEFT JOIN cierres c ON r.cierre_id = c.id 
+            ORDER BY r.fecha DESC
+        `;
+        const retiros = await dbAll(sql);
+        const total = retiros.reduce((acc, curr) => acc + curr.monto, 0);
+        res.json({ total, historial: retiros });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
+// GASTOS (MODIFICADO PARA RETIROS)
 app.get("/api/gastos", (req, res) => db.all("SELECT * FROM gastos ORDER BY fecha DESC", (e, r) => res.json(r || [])));
-app.post("/api/gastos", (req, res) => db.run("INSERT INTO gastos (monto, descripcion, categoria, fecha) VALUES (?, ?, ?, datetime('now', 'localtime'))", [req.body.monto, req.body.descripcion, req.body.categoria], () => res.json({success: true})));
-app.delete("/api/gastos/:id", (req, res) => db.run("DELETE FROM gastos WHERE id=?", [req.params.id], () => res.json({success: true})));
-app.get("/api/categorias_gastos", (req, res) => {
-    db.all("SELECT * FROM categorias_gastos", (err, rows) => {
-        if (err) {
-            console.error("Error al obtener categorías:", err.message);
-            return res.json([]); 
-        }
-        res.json(rows || []);
-    });
-});
-app.post("/api/categorias_gastos", (req, res) => {
-    const { nombre } = req.body;
-    if (!nombre) return res.status(400).json({ error: "Nombre es requerido" });
+app.post("/api/gastos", async (req, res) => {
+    const { monto, descripcion, categoria, metodo_pago } = req.body;
+    try {
+        await dbRun("BEGIN TRANSACTION");
+        const descFinal = metodo_pago ? `${descripcion} [${metodo_pago}]` : descripcion;
+        await dbRun("INSERT INTO gastos (monto, descripcion, categoria, fecha) VALUES (?, ?, ?, datetime('now', 'localtime'))", 
+            [monto, descFinal, categoria]);
 
-    db.run("INSERT INTO categorias_gastos (nombre) VALUES (?)", [nombre], function(err) {
-        if (err) {
-            console.error("Error al crear categoría de gasto:", err.message);
-            return res.status(500).json({ error: err.message });
+        if (metodo_pago === "Retiros") {
+            await dbRun("INSERT INTO retiros (monto, descripcion, tipo, fecha) VALUES (?, ?, 'GASTO', datetime('now', 'localtime'))",
+                [-Math.abs(monto), `Pago Gasto: ${descripcion}`, 'GASTO']);
         }
-        res.json({ id: this.lastID });
-    });
-});
-app.delete("/api/categorias_gastos/:id", (req, res) => {
-    db.run("DELETE FROM categorias_gastos WHERE id = ?", [req.params.id], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
+        await dbRun("COMMIT");
         res.json({ success: true });
-    });
+    } catch (e) {
+        await dbRun("ROLLBACK");
+        res.status(500).json({ error: e.message });
+    }
 });
+app.delete("/api/gastos/:id", (req, res) => db.run("DELETE FROM gastos WHERE id=?", [req.params.id], () => res.json({success: true})));
 
+app.get("/api/categorias_gastos", (req, res) => db.all("SELECT * FROM categorias_gastos", (e, r) => res.json(r || [])));
+app.post("/api/categorias_gastos", (req, res) => db.run("INSERT INTO categorias_gastos (nombre) VALUES (?)", [req.body.nombre], function() { res.json({id: this.lastID}) }));
+app.delete("/api/categorias_gastos/:id", (req, res) => db.run("DELETE FROM categorias_gastos WHERE id=?", [req.params.id], () => res.json({success: true})));
+
+// CLIENTES & PROVEEDORES
 app.get("/api/clientes", (req, res) => db.all("SELECT c.*, SUM(f.monto) as total_deuda FROM clientes c LEFT JOIN fiados f ON c.id = f.cliente_id GROUP BY c.id", (e, r) => res.json(r || [])));
 app.post("/api/clientes", (req, res) => db.run("INSERT INTO clientes (nombre, telefono) VALUES (?,?)", [req.body.nombre, req.body.telefono], () => res.json({success: true})));
 app.get("/api/fiados/:id", (req, res) => db.all("SELECT * FROM fiados WHERE cliente_id = ? ORDER BY fecha DESC", [req.params.id], (e, r) => res.json(r || [])));
@@ -365,75 +359,56 @@ app.post("/api/fiados", (req, res) => db.run("INSERT INTO fiados (cliente_id, mo
 app.get("/api/proveedores", (req, res) => db.all("SELECT p.*, SUM(m.monto) as total_deuda FROM proveedores p LEFT JOIN movimientos_proveedores m ON p.id = m.proveedor_id GROUP BY p.id", (e, r) => res.json(r || [])));
 app.post("/api/proveedores", (req, res) => {
     const { nombre, tributario, email, telefono, calle, numero, piso, ciudad, activo, comentario } = req.body;
-    const sql = `INSERT INTO proveedores (nombre, tributario, email, telefono, calle, numero, piso, ciudad, activo, comentario) VALUES (?,?,?,?,?,?,?,?,?,?)`;
-    const params = [nombre, tributario, email, telefono, calle, numero, piso, ciudad, activo ? 1 : 0, comentario];
-    
-    db.run(sql, params, function(err) {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ success: true, id: this.lastID });
-    });
+    db.run(`INSERT INTO proveedores (nombre, tributario, email, telefono, calle, numero, piso, ciudad, activo, comentario) VALUES (?,?,?,?,?,?,?,?,?,?)`, 
+    [nombre, tributario, email, telefono, calle, numero, piso, ciudad, activo ? 1 : 0, comentario], 
+    function(err) { if (err) return res.status(500).json({ error: err.message }); res.json({ success: true, id: this.lastID }); });
 });
 app.put("/api/proveedores/:id", (req, res) => {
     const { nombre, tributario, email, telefono, calle, numero, piso, ciudad, activo, comentario } = req.body;
-    const sql = `UPDATE proveedores SET nombre=?, tributario=?, email=?, telefono=?, calle=?, numero=?, piso=?, ciudad=?, activo=?, comentario=? WHERE id=?`;
-    const params = [nombre, tributario, email, telefono, calle, numero, piso, ciudad, activo ? 1 : 0, comentario, req.params.id];
-    
-    db.run(sql, params, (err) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ success: true });
-    });
+    db.run(`UPDATE proveedores SET nombre=?, tributario=?, email=?, telefono=?, calle=?, numero=?, piso=?, ciudad=?, activo=?, comentario=? WHERE id=?`, 
+    [nombre, tributario, email, telefono, calle, numero, piso, ciudad, activo ? 1 : 0, comentario, req.params.id], 
+    (err) => { if (err) return res.status(500).json({ error: err.message }); res.json({ success: true }); });
 });
-app.delete("/api/proveedores/:id", (req, res) => {
-    db.run("DELETE FROM proveedores WHERE id = ?", [req.params.id], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ success: true });
-    });
-});
-app.get("/api/movimientos_proveedores/:id", (req, res) => {
-    db.all("SELECT * FROM movimientos_proveedores WHERE proveedor_id = ? ORDER BY fecha DESC", [req.params.id], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(rows || []);
-    });
-});
-// OBTENER TODOS LOS MOVIMIENTOS (PARA LA LISTA GENERAL)
-app.get("/api/movimientos_todos", (req, res) => {
-    const sql = `
-        SELECT m.*, p.nombre as proveedor_nombre, p.tributario 
-        FROM movimientos_proveedores m 
-        LEFT JOIN proveedores p ON m.proveedor_id = p.id 
-        ORDER BY m.fecha DESC
-    `;
-    db.all(sql, [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(rows || []);
-    });
-});
-// ELIMINAR UN MOVIMIENTO ESPECÍFICO
-app.delete("/api/movimientos_proveedores/:id", (req, res) => {
-    db.run("DELETE FROM movimientos_proveedores WHERE id = ?", [req.params.id], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ success: true });
-    });
-});
-
-// --- RUTA MODIFICADA: GUARDAR MOVIMIENTO PROVEEDOR (con metodo_pago) ---
+app.delete("/api/proveedores/:id", (req, res) => db.run("DELETE FROM proveedores WHERE id = ?", [req.params.id], (err) => res.json({ success: true })));
+app.get("/api/movimientos_proveedores/:id", (req, res) => db.all("SELECT * FROM movimientos_proveedores WHERE proveedor_id = ? ORDER BY fecha DESC", [req.params.id], (e, r) => res.json(r || [])));
 app.post("/api/movimientos_proveedores", (req, res) => {
     const { proveedor_id, monto, descripcion, metodo_pago } = req.body;
     db.run("INSERT INTO movimientos_proveedores (proveedor_id, monto, descripcion, metodo_pago, fecha) VALUES (?,?,?,?, datetime('now', 'localtime'))", 
     [proveedor_id, monto, descripcion, metodo_pago || 'Efectivo'], 
     () => res.json({success: true}));
 });
+app.delete("/api/movimientos_proveedores/:id", (req, res) => db.run("DELETE FROM movimientos_proveedores WHERE id = ?", [req.params.id], () => res.json({ success: true })));
 
-
+// APERTURA Y CIERRE (MODIFICADO)
+// Nota: La ruta /api/apertura se mantiene por si se usa manualmente.
 app.post("/api/apertura", (req, res) => db.run("INSERT INTO aperturas (monto, observacion, fecha) VALUES (?, ?, datetime('now', 'localtime'))", [req.body.monto, req.body.observacion], () => res.json({success: true})));
-app.post("/api/cierres", (req, res) => {
-    const { tipo, total_ventas, total_gastos, total_sistema, total_fisico, diferencia } = req.body;
-    db.run("INSERT INTO cierres (tipo, total_ventas, total_gastos, total_sistema, total_fisico, diferencia, fecha) VALUES (?,?,?,?,?,?, datetime('now', 'localtime'))",
-        [tipo, total_ventas, total_gastos, total_sistema, total_fisico, diferencia],
-        () => res.json({ success: true }));
+
+app.post("/api/cierres_unificado", async (req, res) => {
+    const { total_ventas, total_gastos, total_efectivo_real, monto_retiro, observacion } = req.body;
+    try {
+        await dbRun("BEGIN TRANSACTION");
+        const base_proximo_turno = total_efectivo_real - monto_retiro;
+        
+        // Guardar cierre
+        await dbRun(`INSERT INTO cierres (tipo, total_ventas, total_gastos, total_fisico, diferencia, fecha) VALUES ('GENERAL', ?, ?, ?, ?, datetime('now', 'localtime'))`, 
+            [total_ventas, total_gastos, total_efectivo_real, 0]);
+        const cierreID = await dbGet("SELECT last_insert_rowid() as id");
+
+        // Guardar retiro
+        if (monto_retiro > 0) {
+            await dbRun("INSERT INTO retiros (monto, descripcion, tipo, fecha, cierre_id) VALUES (?, ?, 'CIERRE', datetime('now', 'localtime'), ?)",
+                [monto_retiro, `Retiro por Cierre #${cierreID.id}`, cierreID.id]);
+        }
+
+        // Crear apertura automática CON +1 SEGUNDO DE DIFERENCIA para que el sistema la detecte como "turno siguiente"
+        await dbRun("INSERT INTO aperturas (monto, observacion, fecha) VALUES (?, ?, datetime('now', '+1 second', 'localtime'))",
+            [base_proximo_turno, `Inicio automático post-cierre (Obs: ${observacion || '-'})`]);
+
+        await dbRun("COMMIT");
+        res.json({ success: true });
+    } catch (error) { await dbRun("ROLLBACK"); res.status(500).json({ error: error.message }); }
 });
 
-// --- REPORTE DEL DÍA (INDEPENDIENTE) MODIFICADO ---
 app.get("/api/resumen_dia_independiente", async (req, res) => {
     try {
         const sqlFechaGral = "(SELECT IFNULL(MAX(fecha), '1900-01-01') FROM cierres WHERE tipo = 'GENERAL')";
@@ -444,15 +419,9 @@ app.get("/api/resumen_dia_independiente", async (req, res) => {
         const vCig = await dbGet(`SELECT IFNULL(SUM(pago_efectivo), 0) as t FROM ventas WHERE LOWER(categoria) = 'cigarrillo' AND fecha > ${sqlFechaCig}`);
         const vDig = await dbGet(`SELECT IFNULL(SUM(pago_digital), 0) as t FROM ventas WHERE fecha > ${sqlFechaGral}`);
         const gastos = await dbGet(`SELECT IFNULL(SUM(monto), 0) as t FROM gastos WHERE fecha > ${sqlFechaGral}`);
-        
-        // CORREGIDO: Solo sumar pagos a proveedores hechos en EFECTIVO para el cierre de caja
         const pagosProv = await dbGet(`SELECT IFNULL(SUM(ABS(monto)), 0) as t FROM movimientos_proveedores WHERE monto < 0 AND metodo_pago = 'Efectivo' AND fecha > ${sqlFechaGral}`);
-        
         const cobros = await dbGet(`SELECT IFNULL(SUM(ABS(monto)), 0) as t FROM fiados WHERE monto < 0 AND fecha > ${sqlFechaGral}`);
         
-        // Deuda total acumulada (Informativa, para mostrar aparte si se quiere)
-        const deudaTotal = await dbGet("SELECT IFNULL(SUM(monto), 0) as t FROM movimientos_proveedores");
-
         const saldoIni = apertura ? apertura.m : 0;
         const totGral = vGral ? vGral.t : 0;
         const totCig = vCig ? vCig.t : 0;
@@ -469,25 +438,18 @@ app.get("/api/resumen_dia_independiente", async (req, res) => {
                 ventas: totGral, 
                 cobros: totCobros, 
                 gastos: totGastos, 
-                proveedores: totProv, // Solo efectivo
-                deuda_total: deudaTotal.t,
+                proveedores: totProv,
                 digital: totDig, 
                 esperado: esperadoCaja 
             },
-            cigarrillos: { ventas: totCig, esperado: totCig },
-            digital: totDig
+            cigarrillos: { ventas: totCig, esperado: totCig }
         });
     } catch (e) { res.status(500).json({error: e.message}); }
 });
 
 // REPORTES
-app.get("/api/reportes/productos_top", (req, res) => {
-    const sql = "SELECT producto as name, SUM(cantidad) as value FROM ventas GROUP BY producto ORDER BY value DESC LIMIT 5";
-    db.all(sql, [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(rows || []);
-    });
-});
+app.get("/api/reportes/productos_top", (req, res) => db.all("SELECT producto as name, SUM(cantidad) as value FROM ventas GROUP BY producto ORDER BY value DESC LIMIT 5", (e, r) => res.json(r || [])));
+app.get("/api/reportes/metodos_pago", (req, res) => db.all("SELECT metodo_pago as name, COUNT(*) as value FROM ventas GROUP BY metodo_pago", (e, r) => res.json(r || [])));
 app.get("/api/reportes/ventas_semana", (req, res) => {
     const sql = "SELECT strftime('%Y-%m-%d', fecha) as fecha, SUM(precio_total) as total FROM ventas WHERE fecha >= date('now', '-6 days') GROUP BY strftime('%Y-%m-%d', fecha) ORDER BY fecha ASC";
     db.all(sql, [], (err, rows) => {
@@ -502,17 +464,8 @@ app.get("/api/reportes/ventas_semana", (req, res) => {
         res.json(resultado);
     });
 });
-app.get("/api/reportes/metodos_pago", (req, res) => {
-    db.all("SELECT metodo_pago as name, COUNT(*) as value FROM ventas GROUP BY metodo_pago", [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(rows || []);
-    });
-});
 
-// === MANEJO DE SPA ===
-app.get(/.*/, (req, res) => {
-    res.sendFile(path.join(__dirname, "../dist/index.html"));
-});
+// SPA
+app.get(/.*/, (req, res) => res.sendFile(path.join(__dirname, "../dist/index.html")));
 
-// INICIAR SERVER
 app.listen(port, () => console.log(`🚀 SERVIDOR OK - http://localhost:${port}`));
