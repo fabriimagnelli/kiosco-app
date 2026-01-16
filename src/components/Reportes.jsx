@@ -1,140 +1,179 @@
 import React, { useState, useEffect } from "react";
+import { 
+    BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell 
+} from "recharts";
+import { FileText, TrendingUp, ShoppingBag, Edit, ArrowLeft } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 function Reportes() {
-  const [ventas, setVentas] = useState([]);
-  const [ticketExpandido, setTicketExpandido] = useState(null);
+  const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState("historial"); // Por defecto mostramos historial
+  
+  const [productosTop, setProductosTop] = useState([]);
+  const [ventasSemana, setVentasSemana] = useState([]);
+  const [metodosPago, setMetodosPago] = useState([]);
+  const [historialVentas, setHistorialVentas] = useState([]);
 
-  // Cargar historial al iniciar
   useEffect(() => {
-    // CORRECCIÓN: Agregado "/api" a la ruta
-    fetch("http://localhost:3001/api/historial")
-      .then((res) => res.json())
-      .then((data) => {
-        // Validación de seguridad: Si no es una lista, no romper la app
-        if (Array.isArray(data)) {
-            setVentas(data);
-        } else {
-            console.error("Error: El servidor no devolvió una lista de ventas", data);
-            setVentas([]);
-        }
-      })
-      .catch((error) => console.error("Error de conexión:", error));
+    cargarEstadisticas();
+    cargarHistorial();
   }, []);
 
-  // --- LÓGICA DE AGRUPACIÓN ---
-  // 1. Agrupar productos por Ticket ID
-  const ventasPorTicket = ventas.reduce((acc, item) => {
-    const id = item.ticket_id || "sin_id"; 
-    if (!acc[id]) {
-        acc[id] = {
-            id: id,
-            fecha: item.fecha,
-            metodo: item.metodo_pago,
-            total: 0,
-            items: []
-        };
-    }
-    acc[id].items.push(item);
-    acc[id].total += item.precio_total;
-    return acc;
-  }, {});
-
-  // 2. Convertir a lista y ordenar por fecha (más reciente arriba)
-  const listaTickets = Object.values(ventasPorTicket).sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
-
-  // 3. Agrupar esos tickets por Día
-  const ventasPorDia = listaTickets.reduce((acc, ticket) => {
-    // Fecha formateada para Argentina
-    const fechaObj = new Date(ticket.fecha);
-    const fechaCorta = fechaObj.toLocaleDateString("es-AR", { timeZone: "America/Argentina/Buenos_Aires" });
-    
-    if (!acc[fechaCorta]) acc[fechaCorta] = [];
-    acc[fechaCorta].push(ticket);
-    return acc;
-  }, {});
-
-  const getHora = (fechaStr) => {
-    return new Date(fechaStr).toLocaleTimeString("es-AR", { hour: '2-digit', minute: '2-digit', timeZone: "America/Argentina/Buenos_Aires" });
+  const cargarEstadisticas = () => {
+    fetch("http://localhost:3001/api/reportes/productos_top").then(r=>r.json()).then(setProductosTop);
+    fetch("http://localhost:3001/api/reportes/ventas_semana").then(r=>r.json()).then(setVentasSemana);
+    fetch("http://localhost:3001/api/reportes/metodos_pago").then(r=>r.json()).then(setMetodosPago);
   };
 
+  const cargarHistorial = () => {
+    fetch("http://localhost:3001/api/ventas")
+      .then(r => r.json())
+      .then(data => {
+        // Agrupar por Ticket ID
+        const agrupado = {};
+        data.forEach(v => {
+            if(!agrupado[v.ticket_id]) {
+                agrupado[v.ticket_id] = {
+                    ticket_id: v.ticket_id,
+                    fecha: v.fecha,
+                    total: 0,
+                    metodo: v.metodo_pago,
+                    items: 0
+                };
+            }
+            agrupado[v.ticket_id].total += v.precio_total;
+            agrupado[v.ticket_id].items += 1;
+        });
+        setHistorialVentas(Object.values(agrupado).sort((a,b) => new Date(b.fecha) - new Date(a.fecha)));
+      });
+  };
+
+  const editarVenta = (ticket) => {
+    if(!confirm(`¿Deseas editar el Ticket #${ticket.ticket_id}? Esto cargará los productos en Ventas y borrará este registro al confirmar.`)) return;
+    navigate("/ventas", { state: { ticketEditar: ticket.ticket_id } });
+  };
+
+  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
+
   return (
-    <div className="flex flex-col h-[calc(100vh-100px)] p-6 gap-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-3xl font-bold text-gray-800">📊 Historial de Ventas</h2>
-        <p className="text-gray-500">Agrupado por Día y Comprobante</p>
+    <div className="p-6 bg-slate-100 min-h-full flex flex-col gap-6">
+      
+      {/* TABS DE NAVEGACIÓN */}
+      <div className="flex bg-white p-1 rounded-xl shadow-sm w-fit">
+        <button 
+            onClick={() => setActiveTab("historial")}
+            className={`px-6 py-2 rounded-lg font-bold text-sm transition-all ${activeTab === 'historial' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+        >
+            Historial de Ventas
+        </button>
+        <button 
+            onClick={() => setActiveTab("estadisticas")}
+            className={`px-6 py-2 rounded-lg font-bold text-sm transition-all ${activeTab === 'estadisticas' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+        >
+            Estadísticas y Gráficos
+        </button>
       </div>
 
-      <div className="bg-white rounded-lg shadow-md flex-1 overflow-y-auto p-4 border border-gray-200">
-        
-        {Object.keys(ventasPorDia).length === 0 ? (
-            <p className="text-center text-gray-400 mt-10">No hay ventas registradas aún.</p>
-        ) : (
-            Object.keys(ventasPorDia).map((fecha) => (
-                <div key={fecha} className="mb-8">
-                    {/* CABECERA DEL DÍA */}
-                    <div className="flex items-center gap-4 mb-4 sticky top-0 bg-white z-10 py-2 border-b-2 border-indigo-100">
-                        <span className="bg-indigo-100 text-indigo-800 px-4 py-1 rounded-full font-bold text-sm">
-                            📅 {fecha}
-                        </span>
-                        <div className="h-px bg-gray-200 flex-1"></div>
-                    </div>
+      {activeTab === "historial" && (
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex-1 flex flex-col">
+             <div className="p-4 border-b bg-slate-50 flex justify-between items-center">
+                 <h3 className="font-bold text-slate-700 flex items-center gap-2"><FileText size={18}/> Últimas Ventas</h3>
+                 <button onClick={cargarHistorial} className="text-xs text-blue-600 font-bold hover:underline">Actualizar</button>
+             </div>
+             <div className="overflow-y-auto flex-1">
+                 <table className="w-full text-left">
+                     <thead className="bg-slate-50 text-xs font-bold text-slate-500 uppercase sticky top-0">
+                         <tr>
+                             <th className="p-4">Ticket</th>
+                             <th className="p-4">Fecha</th>
+                             <th className="p-4">Método</th>
+                             <th className="p-4 text-center">Items</th>
+                             <th className="p-4 text-right">Total</th>
+                             <th className="p-4 text-center">Acción</th>
+                         </tr>
+                     </thead>
+                     <tbody>
+                         {historialVentas.map(ticket => (
+                             <tr key={ticket.ticket_id} className="border-b hover:bg-slate-50">
+                                 <td className="p-4 font-bold text-slate-700">#{ticket.ticket_id}</td>
+                                 <td className="p-4 text-sm text-slate-500">{new Date(ticket.fecha).toLocaleString()}</td>
+                                 <td className="p-4">
+                                     <span className="px-2 py-1 bg-blue-50 text-blue-600 rounded text-xs font-bold border border-blue-100">
+                                         {ticket.metodo}
+                                     </span>
+                                 </td>
+                                 <td className="p-4 text-center text-sm">{ticket.items}</td>
+                                 <td className="p-4 text-right font-bold text-lg text-green-600">$ {ticket.total.toLocaleString()}</td>
+                                 <td className="p-4 text-center">
+                                     <button 
+                                        onClick={() => editarVenta(ticket)}
+                                        className="bg-orange-50 text-orange-600 p-2 rounded-lg hover:bg-orange-100 hover:text-orange-700 transition-colors flex items-center gap-2 mx-auto text-xs font-bold"
+                                     >
+                                        <Edit size={14}/> Editar / Corregir
+                                     </button>
+                                 </td>
+                             </tr>
+                         ))}
+                     </tbody>
+                 </table>
+             </div>
+          </div>
+      )}
 
-                    {/* LISTA DE TICKETS */}
-                    <div className="flex flex-col gap-3">
-                        {ventasPorDia[fecha].map((ticket) => (
-                            <div key={ticket.id} className="border rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-                                
-                                {/* RESUMEN DEL TICKET (Click para abrir) */}
-                                <div 
-                                    onClick={() => setTicketExpandido(ticketExpandido === ticket.id ? null : ticket.id)}
-                                    className="bg-gray-50 p-4 flex justify-between items-center cursor-pointer hover:bg-gray-100 transition-colors"
-                                >
-                                    <div className="flex items-center gap-4">
-                                        <div className="bg-gray-200 text-gray-600 font-bold px-2 py-1 rounded text-xs">
-                                            🕒 {getHora(ticket.fecha)}
-                                        </div>
-                                        <div>
-                                            <p className="font-bold text-gray-700">Ticket #{ticket.id.slice(-6)}</p>
-                                            <p className="text-xs text-gray-500">{ticket.items.length} productos • {ticket.metodo}</p>
-                                        </div>
-                                    </div>
-                                    
-                                    <div className="flex items-center gap-4">
-                                        <span className="text-xl font-bold text-green-700">$ {ticket.total}</span>
-                                        <span className="text-gray-400 text-sm transform transition-transform">
-                                            {ticketExpandido === ticket.id ? "▲" : "▼"}
-                                        </span>
-                                    </div>
-                                </div>
-
-                                {/* DETALLE DESPLEGABLE */}
-                                {ticketExpandido === ticket.id && (
-                                    <div className="bg-white p-4 border-t border-gray-100">
-                                        <table className="w-full text-sm">
-                                            <thead>
-                                                <tr className="text-gray-400 border-b">
-                                                    <th className="text-left pb-2 font-normal">Producto</th>
-                                                    <th className="text-right pb-2 font-normal">Precio</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {ticket.items.map((item, index) => (
-                                                    <tr key={index} className="border-b last:border-0 border-gray-50">
-                                                        <td className="py-2 text-gray-700">{item.producto}</td>
-                                                        <td className="py-2 text-right font-bold text-gray-600">$ {item.precio_total}</td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                )}
-                            </div>
-                        ))}
-                    </div>
+      {activeTab === "estadisticas" && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-6">
+            
+            {/* VENTAS SEMANALES */}
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><TrendingUp size={20}/> Ventas de la Semana</h3>
+                <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={ventasSemana}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false}/>
+                            <XAxis dataKey="name" tick={{fontSize: 12}}/>
+                            <YAxis tick={{fontSize: 12}}/>
+                            <Tooltip cursor={{fill: 'transparent'}}/>
+                            <Bar dataKey="total" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={40}/>
+                        </BarChart>
+                    </ResponsiveContainer>
                 </div>
-            ))
-        )}
-      </div>
+            </div>
+
+            {/* MÉTODOS DE PAGO */}
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><FileText size={20}/> Métodos de Pago</h3>
+                <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                            <Pie data={metodosPago} cx="50%" cy="50%" outerRadius={80} fill="#8884d8" dataKey="value" label>
+                                {metodosPago.map((entry, index) => (
+                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                ))}
+                            </Pie>
+                            <Tooltip />
+                        </PieChart>
+                    </ResponsiveContainer>
+                </div>
+            </div>
+
+            {/* PRODUCTOS MÁS VENDIDOS */}
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 md:col-span-2">
+                <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><ShoppingBag size={20}/> Productos Más Vendidos</h3>
+                <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={productosTop} layout="vertical" margin={{left: 20}}>
+                            <CartesianGrid strokeDasharray="3 3" horizontal={false}/>
+                            <XAxis type="number" hide/>
+                            <YAxis dataKey="name" type="category" width={150} tick={{fontSize: 12}}/>
+                            <Tooltip />
+                            <Bar dataKey="value" fill="#10b981" radius={[0, 4, 4, 0]} barSize={20}/>
+                        </BarChart>
+                    </ResponsiveContainer>
+                </div>
+            </div>
+        </div>
+      )}
+
     </div>
   );
 }

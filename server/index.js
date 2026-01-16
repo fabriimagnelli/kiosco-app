@@ -75,7 +75,6 @@ db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS cierres (id INTEGER PRIMARY KEY AUTOINCREMENT, tipo TEXT, total_ventas REAL, total_gastos REAL, total_sistema REAL, total_fisico REAL, diferencia REAL, fecha DATETIME DEFAULT CURRENT_TIMESTAMP)`);
   db.run(`CREATE TABLE IF NOT EXISTS retiros (id INTEGER PRIMARY KEY AUTOINCREMENT, monto REAL, descripcion TEXT, tipo TEXT, fecha DATETIME DEFAULT CURRENT_TIMESTAMP, cierre_id INTEGER)`);
 
-  // Migraciones
   ensureColumn("productos", "codigo_barras", "TEXT");
   ensureColumn("cigarrillos", "codigo_barras", "TEXT");
   ensureColumn("ventas", "pago_efectivo", "REAL DEFAULT 0");
@@ -94,10 +93,8 @@ db.serialize(() => {
   ensureColumn("movimientos_proveedores", "metodo_pago", "TEXT DEFAULT 'Efectivo'");
   ensureColumn("fiados", "metodo_pago", "TEXT DEFAULT 'Efectivo'");
 
-  // Migrar datos viejos
   db.run("UPDATE productos SET categoria = 'Varios' WHERE categoria IS NULL OR categoria = ''");
   
-  // Semilla admin
   db.get("SELECT count(*) as count FROM usuarios", (err, row) => {
       if (row && row.count === 0) db.run("INSERT INTO usuarios (usuario, password) VALUES (?, ?)", ["admin", "1234"]);
   });
@@ -207,15 +204,60 @@ app.get("/api/historial", (req, res) => {
     });
 });
 
+// NUEVO: OBTENER VENTA ESPECÍFICA PARA EDICIÓN
+// (Intenta unir con tablas de productos para recuperar el ID original y el stock actual)
+app.get("/api/ventas/:ticket_id", async (req, res) => {
+    try {
+        const ticketId = req.params.ticket_id;
+        const items = await dbAll(`
+            SELECT v.*, 
+                   COALESCE(p.id, c.id) as original_id, 
+                   COALESCE(p.stock, c.stock) as stock_actual,
+                   COALESCE(p.precio, c.precio) as precio_actual
+            FROM ventas v
+            LEFT JOIN productos p ON v.producto = p.nombre AND lower(v.categoria) != 'cigarrillo'
+            LEFT JOIN cigarrillos c ON v.producto = c.nombre AND lower(v.categoria) = 'cigarrillo'
+            WHERE v.ticket_id = ?
+        `, [ticketId]);
+        res.json(items);
+    } catch(e) { res.status(500).json({error: e.message}) }
+});
+
+// MODIFICADO: POST VENTAS CON LÓGICA DE CORRECCIÓN
 app.post("/api/ventas", async (req, res) => {
-    const { productos, metodo_pago, desglose, cliente_id, pago_anticipado, metodo_anticipo } = req.body;
+    const { productos, metodo_pago, desglose, cliente_id, pago_anticipado, metodo_anticipo, ticket_a_corregir } = req.body;
     
     if (!productos || productos.length === 0) return res.status(400).json({ error: "Carrito vacío" });
 
     try {
-        const ticket_id = await obtenerSiguienteTicket();
         await dbRun("BEGIN TRANSACTION");
 
+        // 1. SI ES UNA CORRECCIÓN, PRIMERO DESHACEMOS LA VENTA ANTERIOR
+        let ticket_id;
+        if (ticket_a_corregir) {
+            ticket_id = ticket_a_corregir; // Mantenemos el mismo ticket
+            
+            // A. Recuperar items viejos para devolver stock
+            const itemsViejos = await dbAll("SELECT * FROM ventas WHERE ticket_id = ?", [ticket_id]);
+            for (const item of itemsViejos) {
+                // Buscamos dónde devolver el stock según categoría
+                const tabla = (item.categoria && item.categoria.toLowerCase() === 'cigarrillo') ? 'cigarrillos' : 'productos';
+                // Devolvemos stock buscando por nombre (ya que ventas guarda nombres)
+                await dbRun(`UPDATE ${tabla} SET stock = stock + ? WHERE nombre = ?`, [item.cantidad, item.producto]);
+            }
+
+            // B. Borrar la venta vieja
+            await dbRun("DELETE FROM ventas WHERE ticket_id = ?", [ticket_id]);
+
+            // C. Borrar deuda asociada si la hubo (buscando por descripción del ticket)
+            await dbRun("DELETE FROM fiados WHERE descripcion LIKE ?", [`%Ticket ${ticket_id}%`]);
+
+            console.log(`♻️ Venta #${ticket_id} revertida para corrección.`);
+        } else {
+            ticket_id = await obtenerSiguienteTicket();
+        }
+
+        // 2. PROCEDER CON LA VENTA NORMAL (NUEVA O REEMPLAZO)
         const totalVenta = productos.reduce((sum, item) => sum + (item.precio * item.cantidad), 0);
         let rEfvo = 0, rDig = 0;
 
@@ -296,10 +338,7 @@ app.get("/api/dashboard", (req, res) => {
 // RETIROS
 app.get("/api/retiros", async (req, res) => {
     try {
-        const sql = `
-            SELECT r.*, c.total_ventas, c.total_gastos, c.total_fisico, c.diferencia 
-            FROM retiros r LEFT JOIN cierres c ON r.cierre_id = c.id ORDER BY r.fecha DESC
-        `;
+        const sql = `SELECT r.*, c.total_ventas, c.total_gastos, c.total_fisico, c.diferencia FROM retiros r LEFT JOIN cierres c ON r.cierre_id = c.id ORDER BY r.fecha DESC`;
         const retiros = await dbAll(sql);
         const total = retiros.reduce((acc, curr) => acc + curr.monto, 0);
         res.json({ total, historial: retiros });
@@ -336,15 +375,12 @@ app.delete("/api/categorias_gastos/:id", (req, res) => db.run("DELETE FROM categ
 // CLIENTES & PROVEEDORES
 app.get("/api/clientes", (req, res) => db.all("SELECT c.*, SUM(f.monto) as total_deuda FROM clientes c LEFT JOIN fiados f ON c.id = f.cliente_id GROUP BY c.id", (e, r) => res.json(r || [])));
 app.post("/api/clientes", (req, res) => db.run("INSERT INTO clientes (nombre, telefono) VALUES (?,?)", [req.body.nombre, req.body.telefono], () => res.json({success: true})));
-
-// EDITAR CLIENTE (NUEVO)
 app.put("/api/clientes/:id", (req, res) => {
     const { nombre, telefono } = req.body;
     db.run("UPDATE clientes SET nombre = ?, telefono = ? WHERE id = ?", [nombre, telefono, req.params.id], () => res.json({success: true}));
 });
 
 app.get("/api/fiados/:id", (req, res) => db.all("SELECT * FROM fiados WHERE cliente_id = ? ORDER BY fecha DESC", [req.params.id], (e, r) => res.json(r || [])));
-
 app.post("/api/fiados", (req, res) => {
     const { cliente_id, monto, descripcion, metodo_pago } = req.body;
     const metodo = metodo_pago || 'Efectivo';
@@ -353,11 +389,7 @@ app.post("/api/fiados", (req, res) => {
         () => res.json({success: true})
     );
 });
-
-// ELIMINAR TRANSACCIÓN DE DEUDA (NUEVO)
-app.delete("/api/fiados/:id", (req, res) => {
-    db.run("DELETE FROM fiados WHERE id = ?", [req.params.id], () => res.json({success: true}));
-});
+app.delete("/api/fiados/:id", (req, res) => { db.run("DELETE FROM fiados WHERE id = ?", [req.params.id], () => res.json({success: true})); });
 
 app.get("/api/proveedores", (req, res) => db.all("SELECT p.*, SUM(m.monto) as total_deuda FROM proveedores p LEFT JOIN movimientos_proveedores m ON p.id = m.proveedor_id GROUP BY p.id", (e, r) => res.json(r || [])));
 app.post("/api/proveedores", (req, res) => {
@@ -384,41 +416,34 @@ app.delete("/api/movimientos_proveedores/:id", (req, res) => db.run("DELETE FROM
 
 // APERTURA Y CIERRE
 app.post("/api/apertura", (req, res) => db.run("INSERT INTO aperturas (monto, observacion, fecha) VALUES (?, ?, datetime('now', 'localtime'))", [req.body.monto, req.body.observacion], () => res.json({success: true})));
-
 app.post("/api/cierres_unificado", async (req, res) => {
     const { total_ventas, total_gastos, total_efectivo_real, monto_retiro, observacion } = req.body;
     try {
         await dbRun("BEGIN TRANSACTION");
         const base_proximo_turno = total_efectivo_real - monto_retiro;
-        
         await dbRun(`INSERT INTO cierres (tipo, total_ventas, total_gastos, total_fisico, diferencia, fecha) VALUES ('GENERAL', ?, ?, ?, ?, datetime('now', 'localtime'))`, 
             [total_ventas, total_gastos, total_efectivo_real, 0]);
         const cierreID = await dbGet("SELECT last_insert_rowid() as id");
-
         if (monto_retiro > 0) {
             await dbRun("INSERT INTO retiros (monto, descripcion, tipo, fecha, cierre_id) VALUES (?, ?, 'CIERRE', datetime('now', 'localtime'), ?)",
                 [monto_retiro, `Retiro por Cierre #${cierreID.id}`, cierreID.id]);
         }
-
         await dbRun("INSERT INTO aperturas (monto, observacion, fecha) VALUES (?, ?, datetime('now', '+1 second', 'localtime'))",
             [base_proximo_turno, `Inicio automático post-cierre (Obs: ${observacion || '-'})`]);
-
         await dbRun("COMMIT");
         res.json({ success: true });
     } catch (error) { await dbRun("ROLLBACK"); res.status(500).json({ error: error.message }); }
 });
 
-// RESUMEN DEL DÍA
+// RESUMEN
 app.get("/api/resumen_dia_independiente", async (req, res) => {
     try {
         const sqlFechaGral = "(SELECT IFNULL(MAX(fecha), '1900-01-01') FROM cierres WHERE tipo = 'GENERAL')";
-        
         const apertura = await dbGet(`SELECT IFNULL(monto, 0) as m FROM aperturas WHERE fecha > ${sqlFechaGral} ORDER BY id DESC LIMIT 1`);
         const vEfvo = await dbGet(`SELECT IFNULL(SUM(pago_efectivo), 0) as t FROM ventas WHERE fecha > ${sqlFechaGral}`);
         const vDig = await dbGet(`SELECT IFNULL(SUM(pago_digital), 0) as t FROM ventas WHERE fecha > ${sqlFechaGral}`);
         const gastos = await dbGet(`SELECT IFNULL(SUM(monto), 0) as t FROM gastos WHERE fecha > ${sqlFechaGral}`);
         const pagosProv = await dbGet(`SELECT IFNULL(SUM(ABS(monto)), 0) as t FROM movimientos_proveedores WHERE monto < 0 AND metodo_pago = 'Efectivo' AND fecha > ${sqlFechaGral}`);
-        
         const cobrosEfvo = await dbGet(`SELECT IFNULL(SUM(ABS(monto)), 0) as t FROM fiados WHERE monto < 0 AND metodo_pago = 'Efectivo' AND fecha > ${sqlFechaGral}`);
         const cobrosDig = await dbGet(`SELECT IFNULL(SUM(ABS(monto)), 0) as t FROM fiados WHERE monto < 0 AND metodo_pago != 'Efectivo' AND fecha > ${sqlFechaGral}`);
         
@@ -437,7 +462,7 @@ app.get("/api/resumen_dia_independiente", async (req, res) => {
             general: { 
                 saldo_inicial: saldoIni, 
                 ventas: totVentasEfvo,
-                ventas_digital: totVentasDig, // Agregado para desglose
+                ventas_digital: totVentasDig,
                 cobros: totCobrosEfvo,
                 cobros_transf: totCobrosDig,
                 gastos: totGastos, 
