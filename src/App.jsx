@@ -17,7 +17,7 @@ import Apertura from "./components/Apertura";
 import Balance from "./components/Balance";         
 import Reportes from "./components/Reportes";   
 import Cierre from "./components/Cierre"; 
-import Promos from "./components/Promos"; // <--- NUEVO IMPORT
+import Promos from "./components/Promos"; 
 
 const SplashScreen = () => (
   <div className="fixed inset-0 bg-slate-900 flex flex-col items-center justify-center z-50">
@@ -66,7 +66,8 @@ function RutasApp() {
     const [splashMinimo, setSplashMinimo] = useState(true);
 
     useEffect(() => {
-        const timer = setTimeout(() => setSplashMinimo(false), 2000);
+        // CAMBIO: Reducido a 500ms (0.5 segundos) para inicio rápido
+        const timer = setTimeout(() => setSplashMinimo(false), 500);
         return () => clearTimeout(timer);
     }, []);
 
@@ -82,10 +83,7 @@ function RutasApp() {
             <Route path="/productos" element={<RutaProtegida><Productos /></RutaProtegida>} />
             <Route path="/cigarrillos" element={<RutaProtegida><Cigarrillos /></RutaProtegida>} />
             <Route path="/stock" element={<RutaProtegida><Stock /></RutaProtegida>} />
-            
-            {/* NUEVA RUTA PROMOS */}
             <Route path="/promos" element={<RutaProtegida><Promos /></RutaProtegida>} />
-            
             <Route path="/clientes" element={<RutaProtegida><Clientes /></RutaProtegida>} />
             <Route path="/proveedores" element={<RutaProtegida><Proveedores /></RutaProtegida>} />
             <Route path="/gastos" element={<RutaProtegida><Gastos /></RutaProtegida>} />

@@ -1,28 +1,23 @@
 @echo off
-title SISTEMA DE KIOSCO - NO CERRAR ESTA VENTANA
+title SISTEMA DE KIOSCO
 color 0A
 
-echo ==========================================
-echo      INICIANDO SISTEMA DE GESTION
-echo ==========================================
-echo.
-echo 1. Iniciando Servidor y Base de Datos...
-echo 2. Abriendo el Sistema en el Navegador...
-echo.
-echo POR FAVOR NO CIERRE ESTA VENTANA NEGRA MIENTRAS USE EL SISTEMA.
-echo.
+REM ==========================================
+REM      INICIANDO SISTEMA (MODO RAPIDO)
+REM ==========================================
 
-REM Matar procesos node anteriores
+REM 1. Matar procesos anteriores por si quedaron colgados
 taskkill /IM node.exe /F 2>nul
 timeout /t 1 /nobreak >nul
 
 cd server
 
-echo Iniciando servidor...
-start "Servidor Kiosco" cmd /k "npm start"
+REM 2. Iniciar servidor en SEGUNDO PLANO (Sin ventana extra)
+REM Usamos /b para que no abra otra terminal. Al lanzarlo desde el VBS, todo queda oculto.
+start /b npm start
 
-REM Esperar 5 segundos a que el servidor arranque
-timeout /t 5 /nobreak >nul
+REM 3. Esperar solo un momento para asegurar que el servidor arranque
+timeout /t 2 /nobreak >nul
 
-echo Abriendo navegador...
+REM 4. Abrir el navegador
 start http://localhost:3001

@@ -29,6 +29,34 @@ const dbAll = (sql, params = []) => new Promise((resolve, reject) => {
     db.all(sql, params, (err, rows) => { err ? reject(err) : resolve(rows); });
 });
 
+// --- FUNCIÓN PARA OBTENER EL SIGUIENTE NÚMERO DE TICKET ---
+const obtenerSiguienteTicket = async () => {
+    try {
+        // Buscamos la última venta insertada por ID (la más reciente)
+        const ultima = await dbGet("SELECT ticket_id FROM ventas ORDER BY id DESC LIMIT 1");
+        
+        // Si no hay ventas previas, arrancamos con el 0001
+        if (!ultima || !ultima.ticket_id) return "0001";
+
+        const ultimoTicket = ultima.ticket_id;
+
+        // Si el ticket anterior tiene más de 6 dígitos, asumimos que es del sistema viejo (timestamp)
+        // y reiniciamos el contador a 0001.
+        if (ultimoTicket.length > 6) return "0001";
+
+        // Si es un número válido, lo parseamos, sumamos 1 y rellenamos con ceros
+        const numero = parseInt(ultimoTicket, 10);
+        if (isNaN(numero)) return "0001"; // Por seguridad
+
+        const siguiente = numero + 1;
+        return siguiente.toString().padStart(4, "0");
+
+    } catch (error) {
+        console.error("Error generando ticket:", error);
+        return "0001"; // Fallback en caso de error
+    }
+};
+
 // --- FUNCIÓN PARA AGREGAR COLUMNAS DE FORMA SEGURA ---
 const ensureColumn = (table, column, definition) => {
     db.all(`PRAGMA table_info(${table})`, (err, rows) => {
@@ -78,8 +106,11 @@ db.serialize(() => {
   ensureColumn("proveedores", "numero", "TEXT");
   ensureColumn("proveedores", "piso", "TEXT");
   ensureColumn("proveedores", "ciudad", "TEXT");
-  ensureColumn("proveedores", "activo", "INTEGER DEFAULT 1"); // 1 = Activo, 0 = Inactivo
+  ensureColumn("proveedores", "activo", "INTEGER DEFAULT 1"); 
   ensureColumn("proveedores", "comentario", "TEXT");
+  
+  // NUEVO: Columna para saber si el pago al proveedor fue Efectivo o Digital
+  ensureColumn("movimientos_proveedores", "metodo_pago", "TEXT DEFAULT 'Efectivo'");
 
   // Migrar datos viejos
   db.run("UPDATE productos SET precio = precio_venta WHERE (precio IS NULL OR precio = 0) AND precio_venta IS NOT NULL", (err) => {
@@ -196,21 +227,31 @@ app.get("/api/historial", (req, res) => {
         res.json(rows || []);
     });
 });
+
+// --- RUTA VENTAS MODIFICADA PARA TICKETS CONSECUTIVOS ---
 app.post("/api/ventas", async (req, res) => {
     const { productos, metodo_pago, desglose, cliente_id, pago_anticipado, metodo_anticipo } = req.body;
+    
     if (!productos || productos.length === 0) return res.status(400).json({ error: "Carrito vacío" });
-    const ticket_id = Date.now().toString(); 
+
     try {
+        // Obtenemos el nuevo ID consecutivo (0001, 0002, etc.)
+        const ticket_id = await obtenerSiguienteTicket();
+
         await dbRun("BEGIN TRANSACTION");
+
         const totalVenta = productos.reduce((sum, item) => sum + (item.precio * item.cantidad), 0);
         let rEfvo = 0, rDig = 0;
+
         if (cliente_id) {
+            // Lógica de Fiado / Cuenta Corriente
             const entrega = parseFloat(pago_anticipado) || 0;
             if (entrega > 0) {
                 if (metodo_anticipo === 'Efectivo') { rEfvo = entrega / totalVenta; } 
                 else { rDig = entrega / totalVenta; }
             }
         } else {
+            // Venta Directa
             if (desglose && desglose.total > 0) { 
                 rEfvo = desglose.efectivo / desglose.total; 
                 rDig = desglose.digital / desglose.total;
@@ -219,13 +260,17 @@ app.post("/api/ventas", async (req, res) => {
                 else { rEfvo = 0; rDig = 1; }
             }
         }
+
         for (const item of productos) {
             const total = item.precio * item.cantidad;
             const pEfvo = total * rEfvo; 
             const pDig = total * rDig;
             const tipo = item.tipo || 'General';
+
             await dbRun(`INSERT INTO ventas (ticket_id, producto, cantidad, precio_total, metodo_pago, categoria, fecha, pago_efectivo, pago_digital) VALUES (?,?,?,?,?,?, datetime('now', 'localtime'), ?, ?)`, 
                 [ticket_id, item.nombre, item.cantidad, total, metodo_pago, tipo, pEfvo, pDig]);
+
+            // Descontar Stock
             if (!item.es_manual && item.id) {
                 if (item.tipo === "Promo") {
                     const ings = await dbAll("SELECT * FROM detalle_promos WHERE promo_id = ?", [item.id]);
@@ -239,18 +284,24 @@ app.post("/api/ventas", async (req, res) => {
                 }
             }
         }
+
+        // Registrar Deuda si aplica
         if (cliente_id) {
             const entrega = parseFloat(pago_anticipado) || 0;
             const deuda = totalVenta - entrega;
             if (deuda > 0) { 
-                let desc = `Compra (Ticket ${ticket_id.slice(-4)})`;
+                let desc = `Compra (Ticket ${ticket_id})`; // Ticket más corto y legible
                 if (entrega > 0) desc += ` - Entrega $${entrega} (${metodo_anticipo})`;
                 await dbRun("INSERT INTO fiados (cliente_id, monto, descripcion, fecha) VALUES (?,?,?, datetime('now', 'localtime'))", [cliente_id, deuda, desc]);
             }
         }
+
         await dbRun("COMMIT");
-        res.json({ success: true });
-    } catch (error) { await dbRun("ROLLBACK"); res.status(500).json({ error: error.message }); }
+        res.json({ success: true, ticket_id }); // Devolvemos el ticket ID para imprimir si se quiere
+    } catch (error) { 
+        await dbRun("ROLLBACK"); 
+        res.status(500).json({ error: error.message }); 
+    }
 });
 
 // LOGIN & DASHBOARD
@@ -282,7 +333,7 @@ app.get("/api/categorias_gastos", (req, res) => {
     db.all("SELECT * FROM categorias_gastos", (err, rows) => {
         if (err) {
             console.error("Error al obtener categorías:", err.message);
-            return res.json([]); // O podrías devolver un 500
+            return res.json([]); 
         }
         res.json(rows || []);
     });
@@ -364,7 +415,15 @@ app.delete("/api/movimientos_proveedores/:id", (req, res) => {
         res.json({ success: true });
     });
 });
-app.post("/api/movimientos_proveedores", (req, res) => db.run("INSERT INTO movimientos_proveedores (proveedor_id, monto, descripcion, fecha) VALUES (?,?,?, datetime('now', 'localtime'))", [req.body.proveedor_id, req.body.monto, req.body.descripcion], () => res.json({success: true})));
+
+// --- RUTA MODIFICADA: GUARDAR MOVIMIENTO PROVEEDOR (con metodo_pago) ---
+app.post("/api/movimientos_proveedores", (req, res) => {
+    const { proveedor_id, monto, descripcion, metodo_pago } = req.body;
+    db.run("INSERT INTO movimientos_proveedores (proveedor_id, monto, descripcion, metodo_pago, fecha) VALUES (?,?,?,?, datetime('now', 'localtime'))", 
+    [proveedor_id, monto, descripcion, metodo_pago || 'Efectivo'], 
+    () => res.json({success: true}));
+});
+
 
 app.post("/api/apertura", (req, res) => db.run("INSERT INTO aperturas (monto, observacion, fecha) VALUES (?, ?, datetime('now', 'localtime'))", [req.body.monto, req.body.observacion], () => res.json({success: true})));
 app.post("/api/cierres", (req, res) => {
@@ -374,6 +433,7 @@ app.post("/api/cierres", (req, res) => {
         () => res.json({ success: true }));
 });
 
+// --- REPORTE DEL DÍA (INDEPENDIENTE) MODIFICADO ---
 app.get("/api/resumen_dia_independiente", async (req, res) => {
     try {
         const sqlFechaGral = "(SELECT IFNULL(MAX(fecha), '1900-01-01') FROM cierres WHERE tipo = 'GENERAL')";
@@ -384,9 +444,15 @@ app.get("/api/resumen_dia_independiente", async (req, res) => {
         const vCig = await dbGet(`SELECT IFNULL(SUM(pago_efectivo), 0) as t FROM ventas WHERE LOWER(categoria) = 'cigarrillo' AND fecha > ${sqlFechaCig}`);
         const vDig = await dbGet(`SELECT IFNULL(SUM(pago_digital), 0) as t FROM ventas WHERE fecha > ${sqlFechaGral}`);
         const gastos = await dbGet(`SELECT IFNULL(SUM(monto), 0) as t FROM gastos WHERE fecha > ${sqlFechaGral}`);
-        const pagosProv = await dbGet(`SELECT IFNULL(SUM(monto), 0) as t FROM movimientos_proveedores WHERE fecha > ${sqlFechaGral}`);
+        
+        // CORREGIDO: Solo sumar pagos a proveedores hechos en EFECTIVO para el cierre de caja
+        const pagosProv = await dbGet(`SELECT IFNULL(SUM(ABS(monto)), 0) as t FROM movimientos_proveedores WHERE monto < 0 AND metodo_pago = 'Efectivo' AND fecha > ${sqlFechaGral}`);
+        
         const cobros = await dbGet(`SELECT IFNULL(SUM(ABS(monto)), 0) as t FROM fiados WHERE monto < 0 AND fecha > ${sqlFechaGral}`);
         
+        // Deuda total acumulada (Informativa, para mostrar aparte si se quiere)
+        const deudaTotal = await dbGet("SELECT IFNULL(SUM(monto), 0) as t FROM movimientos_proveedores");
+
         const saldoIni = apertura ? apertura.m : 0;
         const totGral = vGral ? vGral.t : 0;
         const totCig = vCig ? vCig.t : 0;
@@ -394,10 +460,20 @@ app.get("/api/resumen_dia_independiente", async (req, res) => {
         const totGastos = gastos ? gastos.t : 0;
         const totProv = pagosProv ? pagosProv.t : 0;
         const totCobros = cobros ? cobros.t : 0;
+        
         const esperadoCaja = saldoIni + totGral + totCobros - totGastos - totProv;
 
         res.json({
-            general: { saldo_inicial: saldoIni, ventas: totGral, cobros: totCobros, gastos: totGastos, proveedores: totProv, digital: totDig, esperado: esperadoCaja },
+            general: { 
+                saldo_inicial: saldoIni, 
+                ventas: totGral, 
+                cobros: totCobros, 
+                gastos: totGastos, 
+                proveedores: totProv, // Solo efectivo
+                deuda_total: deudaTotal.t,
+                digital: totDig, 
+                esperado: esperadoCaja 
+            },
             cigarrillos: { ventas: totCig, esperado: totCig },
             digital: totDig
         });
@@ -433,7 +509,7 @@ app.get("/api/reportes/metodos_pago", (req, res) => {
     });
 });
 
-// === MANEJO DE SPA (ESTA ES LA PARTE IMPORTANTE PARA EL ERROR 404) ===
+// === MANEJO DE SPA ===
 app.get(/.*/, (req, res) => {
     res.sendFile(path.join(__dirname, "../dist/index.html"));
 });
