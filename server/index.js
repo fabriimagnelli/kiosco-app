@@ -204,8 +204,6 @@ app.get("/api/historial", (req, res) => {
     });
 });
 
-// NUEVO: OBTENER VENTA ESPECÍFICA PARA EDICIÓN
-// (Intenta unir con tablas de productos para recuperar el ID original y el stock actual)
 app.get("/api/ventas/:ticket_id", async (req, res) => {
     try {
         const ticketId = req.params.ticket_id;
@@ -223,7 +221,6 @@ app.get("/api/ventas/:ticket_id", async (req, res) => {
     } catch(e) { res.status(500).json({error: e.message}) }
 });
 
-// MODIFICADO: POST VENTAS CON LÓGICA DE CORRECCIÓN
 app.post("/api/ventas", async (req, res) => {
     const { productos, metodo_pago, desglose, cliente_id, pago_anticipado, metodo_anticipo, ticket_a_corregir } = req.body;
     
@@ -232,32 +229,21 @@ app.post("/api/ventas", async (req, res) => {
     try {
         await dbRun("BEGIN TRANSACTION");
 
-        // 1. SI ES UNA CORRECCIÓN, PRIMERO DESHACEMOS LA VENTA ANTERIOR
         let ticket_id;
         if (ticket_a_corregir) {
-            ticket_id = ticket_a_corregir; // Mantenemos el mismo ticket
-            
-            // A. Recuperar items viejos para devolver stock
+            ticket_id = ticket_a_corregir;
             const itemsViejos = await dbAll("SELECT * FROM ventas WHERE ticket_id = ?", [ticket_id]);
             for (const item of itemsViejos) {
-                // Buscamos dónde devolver el stock según categoría
                 const tabla = (item.categoria && item.categoria.toLowerCase() === 'cigarrillo') ? 'cigarrillos' : 'productos';
-                // Devolvemos stock buscando por nombre (ya que ventas guarda nombres)
                 await dbRun(`UPDATE ${tabla} SET stock = stock + ? WHERE nombre = ?`, [item.cantidad, item.producto]);
             }
-
-            // B. Borrar la venta vieja
             await dbRun("DELETE FROM ventas WHERE ticket_id = ?", [ticket_id]);
-
-            // C. Borrar deuda asociada si la hubo (buscando por descripción del ticket)
             await dbRun("DELETE FROM fiados WHERE descripcion LIKE ?", [`%Ticket ${ticket_id}%`]);
-
             console.log(`♻️ Venta #${ticket_id} revertida para corrección.`);
         } else {
             ticket_id = await obtenerSiguienteTicket();
         }
 
-        // 2. PROCEDER CON LA VENTA NORMAL (NUEVA O REEMPLAZO)
         const totalVenta = productos.reduce((sum, item) => sum + (item.precio * item.cantidad), 0);
         let rEfvo = 0, rDig = 0;
 
@@ -345,8 +331,9 @@ app.get("/api/retiros", async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// GASTOS
+// GASTOS (CORREGIDO EL BUG DEL 500)
 app.get("/api/gastos", (req, res) => db.all("SELECT * FROM gastos ORDER BY fecha DESC", (e, r) => res.json(r || [])));
+
 app.post("/api/gastos", async (req, res) => {
     const { monto, descripcion, categoria, metodo_pago } = req.body;
     try {
@@ -356,8 +343,9 @@ app.post("/api/gastos", async (req, res) => {
             [monto, descFinal, categoria]);
 
         if (metodo_pago === "Retiros") {
+            // CORRECCIÓN ANTERIOR
             await dbRun("INSERT INTO retiros (monto, descripcion, tipo, fecha) VALUES (?, ?, 'GASTO', datetime('now', 'localtime'))",
-                [-Math.abs(monto), `Pago Gasto: ${descripcion}`, 'GASTO']);
+                [-Math.abs(monto), `Pago Gasto: ${descripcion}`]);
         }
         await dbRun("COMMIT");
         res.json({ success: true });
@@ -366,7 +354,33 @@ app.post("/api/gastos", async (req, res) => {
         res.status(500).json({ error: e.message });
     }
 });
-app.delete("/api/gastos/:id", (req, res) => db.run("DELETE FROM gastos WHERE id=?", [req.params.id], () => res.json({success: true})));
+
+// GASTOS - DELETE (CORREGIDO: DEVOLUCIÓN A RETIROS)
+app.delete("/api/gastos/:id", async (req, res) => {
+    try {
+        const id = req.params.id;
+        const gasto = await dbGet("SELECT * FROM gastos WHERE id = ?", [id]);
+        
+        if (!gasto) return res.status(404).json({ error: "Gasto no encontrado" });
+
+        await dbRun("BEGIN TRANSACTION");
+
+        // Si el gasto dice [Retiros] en la descripción, significa que salió de la caja fuerte.
+        if (gasto.descripcion && gasto.descripcion.includes("[Retiros]")) {
+            // Devolvemos el dinero sumándolo (ya que gasto.monto está en positivo en la tabla gastos)
+            await dbRun("INSERT INTO retiros (monto, descripcion, tipo, fecha) VALUES (?, ?, 'DEVOLUCION', datetime('now', 'localtime'))", 
+                [gasto.monto, `Devolución por anulación de Gasto: ${gasto.descripcion}`]);
+        }
+
+        await dbRun("DELETE FROM gastos WHERE id = ?", [id]);
+        await dbRun("COMMIT");
+        
+        res.json({ success: true });
+    } catch (e) {
+        await dbRun("ROLLBACK");
+        res.status(500).json({ error: e.message });
+    }
+});
 
 app.get("/api/categorias_gastos", (req, res) => db.all("SELECT * FROM categorias_gastos", (e, r) => res.json(r || [])));
 app.post("/api/categorias_gastos", (req, res) => db.run("INSERT INTO categorias_gastos (nombre) VALUES (?)", [req.body.nombre], function() { res.json({id: this.lastID}) }));
