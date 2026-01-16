@@ -1,175 +1,309 @@
 import React, { useState, useEffect } from "react";
-import { User, Search, Plus, ArrowUpRight, ArrowDownLeft, Send, Wallet, Trash2 } from "lucide-react";
+import { User, DollarSign, Plus, Eye, X, Smartphone, CreditCard, Trash2, Edit2, Save } from "lucide-react";
 
-function Deudores() {
+function Clientes() {
   const [clientes, setClientes] = useState([]);
-  const [busqueda, setBusqueda] = useState("");
-  const [nuevoNombre, setNuevoNombre] = useState("");
-  const [clienteActivo, setClienteActivo] = useState(null);
+  const [nuevoCliente, setNuevoCliente] = useState({ nombre: "", telefono: "" });
+  
+  // Estado para editar
+  const [editandoCliente, setEditandoCliente] = useState(null); 
+
+  // Estados para Modal de Detalle/Pagos
+  const [clienteSelec, setClienteSelec] = useState(null);
   const [historial, setHistorial] = useState([]);
-  const [montoMov, setMontoMov] = useState("");
-  const [descMov, setDescMov] = useState("");
+  const [montoPago, setMontoPago] = useState("");
+  const [descPago, setDescPago] = useState("");
+  const [metodoPago, setMetodoPago] = useState("Efectivo");
+
+  useEffect(() => {
+    cargarClientes();
+  }, []);
 
   const cargarClientes = () => {
-    fetch("http://localhost:3001/api/clientes").then((res) => res.json()).then((data) => setClientes(data));
+    fetch("http://localhost:3001/api/clientes")
+      .then(res => res.json())
+      .then(setClientes);
   };
-
-  useEffect(() => { cargarClientes(); }, []);
 
   const crearCliente = (e) => {
     e.preventDefault();
-    if (!nuevoNombre) return;
+    if(!nuevoCliente.nombre) return;
     fetch("http://localhost:3001/api/clientes", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ nombre: nuevoNombre, telefono: "" }),
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(nuevoCliente)
     }).then(() => {
-      setNuevoNombre("");
-      cargarClientes();
-    });
-  };
-
-  const eliminarCliente = (clienteId) => {
-    if (!confirm("¿Eliminar cliente?")) return;
-    fetch(`http://localhost:3001/api/clientes/${clienteId}`, { method: "DELETE" }).then(() => {
-        alert("✅ Cliente eliminado");
-        if (clienteActivo?.id === clienteId) setClienteActivo(null);
+        setNuevoCliente({ nombre: "", telefono: "" });
         cargarClientes();
     });
   };
 
-  const verCuenta = (cliente) => {
-    setClienteActivo(cliente);
-    fetch(`http://localhost:3001/api/fiados/${cliente.id}`).then((res) => res.json()).then((data) => setHistorial(data));
+  const iniciarEdicion = (cliente) => {
+    setEditandoCliente({ ...cliente });
   };
 
-  const registrarMovimiento = (esPago) => {
-    if (!montoMov || !clienteActivo) return alert("Ingresa un monto.");
-    const montoFinal = esPago ? -Math.abs(parseFloat(montoMov)) : Math.abs(parseFloat(montoMov));
-    const descripcion = descMov || (esPago ? "Pago a cuenta" : "Compra fiado");
-
-    fetch("http://localhost:3001/api/fiados", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cliente_id: clienteActivo.id, monto: montoFinal, descripcion }),
-    })
-    .then(() => {
-        alert("✅ Movimiento registrado");
-        setMontoMov(""); setDescMov(""); cargarClientes(); verCuenta(clienteActivo);
+  const guardarEdicion = () => {
+    if (!editandoCliente.nombre) return;
+    fetch(`http://localhost:3001/api/clientes/${editandoCliente.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nombre: editandoCliente.nombre, telefono: editandoCliente.telefono })
+    }).then(() => {
+        setEditandoCliente(null);
+        cargarClientes();
     });
   };
 
-  const enviarWhatsApp = () => {
-    if (!clienteActivo) return;
-    const saldo = clientes.find(c => c.id === clienteActivo.id)?.total_deuda || 0;
-    window.open(`https://wa.me/?text=${encodeURIComponent(`Hola ${clienteActivo.nombre}, tu deuda es de: $${saldo}`)}`, "_blank");
+  const verDetalle = (cliente) => {
+    setClienteSelec(cliente);
+    cargarHistorial(cliente.id);
   };
 
-  const clientesFiltrados = clientes.filter(c => c.nombre.toLowerCase().includes(busqueda.toLowerCase()));
-  const saldoActivo = clientes.find(c => c.id === clienteActivo?.id)?.total_deuda || 0;
+  const cargarHistorial = (id) => {
+    fetch(`http://localhost:3001/api/fiados/${id}`)
+        .then(res => res.json())
+        .then(setHistorial);
+  };
+
+  const registrarPago = (e) => {
+    e.preventDefault();
+    if(!montoPago) return;
+
+    fetch("http://localhost:3001/api/fiados", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+            cliente_id: clienteSelec.id, 
+            monto: -Math.abs(parseFloat(montoPago)), 
+            descripcion: descPago || "Pago a cuenta",
+            metodo_pago: metodoPago
+        })
+    }).then(() => {
+        setMontoPago("");
+        setDescPago("");
+        setMetodoPago("Efectivo");
+        cargarHistorial(clienteSelec.id);
+        cargarClientes();
+    });
+  };
+
+  const eliminarTransaccion = (id) => {
+    if(!confirm("¿Estás seguro de eliminar este movimiento? Esto afectará el saldo del cliente.")) return;
+    fetch(`http://localhost:3001/api/fiados/${id}`, { method: "DELETE" })
+      .then(() => {
+          cargarHistorial(clienteSelec.id);
+          cargarClientes();
+      });
+  };
 
   return (
-    <div className="flex flex-col md:flex-row h-full gap-6 bg-slate-100 p-6">
-      {/* SECCIÓN LISTA DE CLIENTES (IZQUIERDA) */}
-      <div className="w-full md:w-1/3 bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex flex-col h-full">
-        <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2"><Wallet/> Clientes</h2>
-        
-        <form onSubmit={crearCliente} className="flex gap-2 mb-4">
-            <input className="bg-slate-50 border p-3 rounded-xl flex-1" placeholder="Nuevo cliente..." value={nuevoNombre} onChange={e => setNuevoNombre(e.target.value)} />
-            <button className="bg-blue-600 text-white p-3 rounded-xl"><Plus size={20}/></button>
+    <div className="flex flex-col h-full bg-slate-100 p-6 gap-6">
+      
+      {/* FORMULARIO CREAR CLIENTE */}
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+        <h2 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
+            <User size={20} className="text-blue-600"/> Nuevo Cliente
+        </h2>
+        <form onSubmit={crearCliente} className="flex gap-4">
+            <input 
+                className="flex-1 p-3 border rounded-xl" 
+                placeholder="Nombre del Cliente" 
+                value={nuevoCliente.nombre}
+                onChange={e => setNuevoCliente({...nuevoCliente, nombre: e.target.value})}
+            />
+            <input 
+                className="w-48 p-3 border rounded-xl" 
+                placeholder="Teléfono" 
+                value={nuevoCliente.telefono}
+                onChange={e => setNuevoCliente({...nuevoCliente, telefono: e.target.value})}
+            />
+            <button className="bg-blue-600 text-white p-3 rounded-xl hover:bg-blue-700 font-bold">
+                <Plus size={24}/>
+            </button>
         </form>
-        
-        <div className="relative mb-4">
-            <Search className="absolute left-3 top-3 text-slate-400" size={18} />
-            <input className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border rounded-xl" placeholder="Buscar..." value={busqueda} onChange={e => setBusqueda(e.target.value)} />
+      </div>
+
+      {/* LISTA DE CLIENTES */}
+      <div className="flex-1 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
+        <div className="p-4 bg-slate-50 border-b font-bold text-slate-500 text-xs uppercase grid grid-cols-12 gap-4">
+            <div className="col-span-4">Nombre</div>
+            <div className="col-span-3">Teléfono</div>
+            <div className="col-span-3 text-right">Saldo Deudor</div>
+            <div className="col-span-2 text-center">Acciones</div>
         </div>
-        
-        <div className="overflow-y-auto flex-1 space-y-2 pr-1">
-            {clientesFiltrados.map(c => (
-                <div key={c.id} onClick={() => verCuenta(c)} className={`p-4 rounded-xl cursor-pointer border flex justify-between items-center transition-all ${clienteActivo?.id === c.id ? "bg-blue-50 border-blue-500 shadow-sm" : "bg-white hover:bg-slate-50"}`}>
-                    <span className="font-bold text-slate-700">{c.nombre}</span>
-                    <div className="flex gap-2 items-center">
-                        {/* CAMBIO: Agregado texto "Total:" */}
-                        <span className={`font-bold px-3 py-1 rounded-lg text-xs ${c.total_deuda > 0 ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}>
-                            Total: ${c.total_deuda || 0}
-                        </span>
-                        <button onClick={(e) => {e.stopPropagation(); eliminarCliente(c.id)}} className="text-slate-300 hover:text-red-400 transition-colors"><Trash2 size={16}/></button>
+        <div className="flex-1 overflow-y-auto">
+            {clientes.map(c => (
+                <div key={c.id} className="grid grid-cols-12 gap-4 p-4 border-b hover:bg-slate-50 items-center">
+                    
+                    {/* NOMBRE Y TELÉFONO (EDITABLE) */}
+                    {editandoCliente && editandoCliente.id === c.id ? (
+                        <>
+                            <div className="col-span-4">
+                                <input 
+                                    className="w-full p-1 border rounded"
+                                    value={editandoCliente.nombre}
+                                    onChange={e => setEditandoCliente({...editandoCliente, nombre: e.target.value})}
+                                />
+                            </div>
+                            <div className="col-span-3">
+                                <input 
+                                    className="w-full p-1 border rounded"
+                                    value={editandoCliente.telefono}
+                                    onChange={e => setEditandoCliente({...editandoCliente, telefono: e.target.value})}
+                                />
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            <div className="col-span-4 font-bold text-slate-700">{c.nombre}</div>
+                            <div className="col-span-3 text-slate-500 text-sm flex items-center gap-1">
+                                <Smartphone size={14}/> {c.telefono || "-"}
+                            </div>
+                        </>
+                    )}
+
+                    <div className={`col-span-3 text-right font-bold text-lg ${c.total_deuda > 0 ? 'text-red-500' : 'text-green-500'}`}>
+                        $ {c.total_deuda ? c.total_deuda.toLocaleString() : "0"}
+                    </div>
+                    
+                    <div className="col-span-2 text-center flex justify-center gap-2">
+                        {editandoCliente && editandoCliente.id === c.id ? (
+                            <>
+                                <button onClick={guardarEdicion} className="bg-green-100 text-green-600 p-2 rounded-lg hover:bg-green-200">
+                                    <Save size={18}/>
+                                </button>
+                                <button onClick={() => setEditandoCliente(null)} className="bg-red-100 text-red-600 p-2 rounded-lg hover:bg-red-200">
+                                    <X size={18}/>
+                                </button>
+                            </>
+                        ) : (
+                            <>
+                                <button onClick={() => iniciarEdicion(c)} className="bg-slate-100 text-slate-600 p-2 rounded-lg hover:bg-orange-100 hover:text-orange-600 transition-colors" title="Editar">
+                                    <Edit2 size={18}/>
+                                </button>
+                                <button onClick={() => verDetalle(c)} className="bg-slate-100 text-slate-600 p-2 rounded-lg hover:bg-blue-100 hover:text-blue-600 transition-colors" title="Ver Historial">
+                                    <Eye size={18}/>
+                                </button>
+                            </>
+                        )}
                     </div>
                 </div>
             ))}
         </div>
       </div>
 
-      {/* SECCIÓN DETALLE CLIENTE (DERECHA) */}
-      <div className="w-full md:w-2/3 flex flex-col gap-4 overflow-hidden">
-        {clienteActivo ? (
-            <>
-                {/* CAMBIO: Encabezado mejorado con botón y etiquetas claras */}
-                <div className="bg-slate-800 text-white p-6 rounded-2xl shadow-lg border border-slate-700 flex flex-col md:flex-row justify-between items-center gap-4">
-                    <div className="flex items-center gap-4 w-full md:w-auto">
-                        <div className="bg-slate-700 p-3 rounded-xl">
-                            <User size={32} className="text-blue-400"/>
-                        </div>
-                        <div>
-                            <p className="text-slate-400 text-xs uppercase font-bold tracking-wider">Cliente</p>
-                            <h2 className="text-3xl font-bold">{clienteActivo.nombre}</h2>
-                        </div>
+      {/* MODAL DETALLE Y PAGOS */}
+      {clienteSelec && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
+                
+                <div className="p-6 border-b flex justify-between items-center bg-slate-50 rounded-t-2xl">
+                    <div>
+                        <h2 className="text-xl font-bold text-slate-800">{clienteSelec.nombre}</h2>
+                        <p className="text-sm text-slate-500">Historial de movimientos</p>
                     </div>
+                    <button onClick={() => setClienteSelec(null)} className="text-slate-400 hover:text-red-500">
+                        <X size={24}/>
+                    </button>
+                </div>
 
-                    <div className="flex items-center gap-6 w-full md:w-auto justify-between md:justify-end">
-                        <button 
-                            onClick={enviarWhatsApp} 
-                            className="bg-green-600 hover:bg-green-500 text-white px-5 py-3 rounded-xl transition-colors shadow-lg flex items-center gap-2 font-bold text-sm"
-                        >
-                            <span>Enviar Saldo</span>
-                            <Send size={18} />
-                        </button>
+                {/* FORMULARIO DE PAGO */}
+                <div className="p-6 bg-blue-50 border-b border-blue-100">
+                    <h3 className="text-sm font-bold text-blue-800 uppercase mb-3 flex items-center gap-2">
+                        <DollarSign size={16}/> Registrar Pago
+                    </h3>
+                    <form onSubmit={registrarPago} className="flex flex-col md:flex-row gap-3">
+                        <div className="flex-1">
+                            <input 
+                                type="number" 
+                                className="w-full p-3 border border-blue-200 rounded-lg"
+                                placeholder="Monto ($)"
+                                value={montoPago}
+                                onChange={e => setMontoPago(e.target.value)}
+                            />
+                        </div>
+                        <div className="flex-1">
+                            <input 
+                                type="text" 
+                                className="w-full p-3 border border-blue-200 rounded-lg"
+                                placeholder="Descripción (Opcional)"
+                                value={descPago}
+                                onChange={e => setDescPago(e.target.value)}
+                            />
+                        </div>
                         
-                        <div className="text-right bg-slate-700/50 px-5 py-2 rounded-xl border border-slate-600">
-                            <p className="text-slate-400 text-xs uppercase font-bold">Total Deuda</p>
-                            <p className={`text-3xl font-bold ${saldoActivo > 0 ? "text-red-400" : "text-green-400"}`}>
-                                $ {saldoActivo.toLocaleString()}
-                            </p>
+                        <div className="w-full md:w-40 relative">
+                            <CreditCard size={16} className="absolute left-3 top-3.5 text-blue-400"/>
+                            <select 
+                                className="w-full pl-9 pr-3 py-3 border border-blue-200 rounded-lg bg-white text-blue-900 font-bold text-sm outline-none cursor-pointer"
+                                value={metodoPago}
+                                onChange={e => setMetodoPago(e.target.value)}
+                            >
+                                <option value="Efectivo">Efectivo</option>
+                                <option value="Transferencia">Transferencia</option>
+                            </select>
                         </div>
-                    </div>
+
+                        <button className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-bold shadow-md transition-colors">
+                            PAGAR
+                        </button>
+                    </form>
                 </div>
 
-                <div className="bg-white p-5 rounded-2xl shadow-sm border flex gap-4 items-end">
-                    <div className="flex-1"><label className="text-xs font-bold text-slate-500 mb-1 block">Monto</label><input type="number" className="w-full p-3 bg-slate-50 border rounded-xl font-bold text-lg outline-none focus:ring-2 focus:ring-blue-500" placeholder="$0.00" value={montoMov} onChange={e => setMontoMov(e.target.value)}/></div>
-                    <div className="flex-[2]"><label className="text-xs font-bold text-slate-500 mb-1 block">Descripción</label><input type="text" className="w-full p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" placeholder="Ej: Coca Cola + Galletitas" value={descMov} onChange={e => setDescMov(e.target.value)}/></div>
-                    <button onClick={() => registrarMovimiento(false)} className="bg-red-50 hover:bg-red-100 text-red-600 p-3 rounded-xl font-bold flex gap-2 transition-colors border border-red-100"><ArrowUpRight/> FIAR</button>
-                    <button onClick={() => registrarMovimiento(true)} className="bg-green-50 hover:bg-green-100 text-green-600 p-3 rounded-xl font-bold flex gap-2 transition-colors border border-green-100"><ArrowDownLeft/> PAGAR</button>
+                {/* LISTA HISTORIAL CON BOTÓN ELIMINAR */}
+                <div className="flex-1 overflow-y-auto p-0">
+                    <table className="w-full text-left">
+                        <thead className="bg-slate-50 text-xs uppercase text-slate-500 font-bold sticky top-0">
+                            <tr>
+                                <th className="p-4">Fecha</th>
+                                <th className="p-4">Descripción</th>
+                                <th className="p-4 text-center">Método</th>
+                                <th className="p-4 text-right">Monto</th>
+                                <th className="p-4 text-center">Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {historial.map(h => (
+                                <tr key={h.id} className="border-b last:border-0 hover:bg-slate-50">
+                                    <td className="p-4 text-xs text-slate-500">
+                                        {new Date(h.fecha).toLocaleDateString()}
+                                    </td>
+                                    <td className="p-4 text-sm font-medium text-slate-700">{h.descripcion}</td>
+                                    <td className="p-4 text-center">
+                                        {h.monto < 0 && (
+                                            <span className={`text-[10px] font-bold px-2 py-1 rounded border ${
+                                                h.metodo_pago === 'Transferencia' 
+                                                ? 'bg-purple-50 text-purple-600 border-purple-100'
+                                                : 'bg-green-50 text-green-600 border-green-100'
+                                            }`}>
+                                                {h.metodo_pago || 'Efectivo'}
+                                            </span>
+                                        )}
+                                    </td>
+                                    <td className={`p-4 text-right font-bold ${h.monto > 0 ? 'text-red-500' : 'text-green-600'}`}>
+                                        $ {Math.abs(h.monto).toLocaleString()}
+                                    </td>
+                                    <td className="p-4 text-center">
+                                        <button 
+                                            onClick={() => eliminarTransaccion(h.id)}
+                                            className="text-slate-300 hover:text-red-500 transition-colors"
+                                            title="Eliminar movimiento"
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
                 </div>
 
-                <div className="flex-1 bg-white rounded-2xl shadow-sm border overflow-hidden flex flex-col">
-                    <div className="overflow-y-auto flex-1">
-                        <table className="w-full text-left">
-                            <thead className="bg-slate-50 sticky top-0">
-                                <tr><th className="p-4 text-xs font-bold text-slate-500 uppercase">Fecha</th><th className="p-4 text-xs font-bold text-slate-500 uppercase">Detalle</th><th className="p-4 text-right text-xs font-bold text-slate-500 uppercase">Monto</th></tr>
-                            </thead>
-                            <tbody>
-                                {historial.map(mov => (
-                                    <tr key={mov.id} className="border-b hover:bg-slate-50 transition-colors">
-                                        <td className="p-4 text-slate-500 text-sm font-medium">{new Date(mov.fecha).toLocaleDateString()}</td>
-                                        <td className="p-4 text-slate-700 font-medium">{mov.descripcion}</td>
-                                        <td className={`p-4 text-right font-bold ${mov.monto > 0 ? "text-red-500" : "text-green-600"}`}>$ {mov.monto}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                        {historial.length === 0 && <div className="p-10 text-center text-slate-400">No hay movimientos registrados.</div>}
-                    </div>
-                </div>
-            </>
-        ) : (
-            <div className="flex-1 bg-white rounded-2xl border-2 border-dashed border-slate-300 flex flex-col gap-4 items-center justify-center text-slate-400">
-                <div className="bg-slate-50 p-6 rounded-full"><User size={48} className="text-slate-300"/></div>
-                <p className="font-medium">Selecciona un cliente para ver su cuenta</p>
             </div>
-        )}
-      </div>
+        </div>
+      )}
+
     </div>
   );
 }
 
-export default Deudores;
+export default Clientes;

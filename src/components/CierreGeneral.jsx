@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Calculator, Save, AlertTriangle, Wallet, Coins } from "lucide-react";
+import { Calculator, Save, AlertTriangle, Wallet, Coins, ArrowRight } from "lucide-react";
 
 function CierreGeneral() {
   const [resumen, setResumen] = useState(null);
@@ -20,7 +20,6 @@ function CierreGeneral() {
       .then((data) => setResumen(data.general));
   }, []);
 
-  // Calcular total físico en tiempo real
   const calcularTotalFisico = () => {
     let total = 0;
     Object.keys(billetes).forEach(denominacion => {
@@ -88,27 +87,58 @@ function CierreGeneral() {
       <div className="w-full lg:w-1/3 space-y-4">
         <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
           <h2 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
-            <Calculator size={18} className="text-blue-600"/> Resumen Sistema
+            <Calculator size={18} className="text-blue-600"/> Resumen Sistema (Efectivo)
           </h2>
           <div className="space-y-2 text-sm">
-            <div className="flex justify-between"><span>Inicial:</span> <span className="font-bold">$ {resumen.saldo_inicial}</span></div>
-            <div className="flex justify-between text-green-600"><span>Ventas Efvo:</span> <span className="font-bold">+ $ {resumen.ventas}</span></div>
-            <div className="flex justify-between text-green-600"><span>Cobros:</span> <span className="font-bold">+ $ {resumen.cobros}</span></div>
-            <div className="flex justify-between text-red-500"><span>Gastos:</span> <span className="font-bold">- $ {resumen.gastos}</span></div>
-            <div className="flex justify-between text-red-500"><span>Prov. (Efvo):</span> <span className="font-bold">- $ {resumen.proveedores}</span></div>
+            <div className="flex justify-between"><span>Inicial:</span> <span className="font-bold">$ {resumen.saldo_inicial.toLocaleString()}</span></div>
+            <div className="flex justify-between text-green-600">
+                <span className="flex items-center gap-1"><ArrowRight size={12}/> Ventas Efvo:</span> 
+                <span className="font-bold">+ $ {resumen.ventas.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between text-green-600">
+                <span className="flex items-center gap-1"><ArrowRight size={12}/> Cobros Efvo:</span> 
+                <span className="font-bold">+ $ {resumen.cobros.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between text-red-500">
+                <span>Gastos:</span> <span className="font-bold">- $ {resumen.gastos.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between text-red-500">
+                <span>Prov. (Efvo):</span> <span className="font-bold">- $ {resumen.proveedores.toLocaleString()}</span>
+            </div>
             <hr className="my-2"/>
             <div className="flex justify-between text-lg font-bold text-slate-800">
-              <span>DEBE HABER:</span> <span>$ {resumen.esperado}</span>
+              <span>DEBE HABER (EFVO):</span> <span>$ {resumen.esperado.toLocaleString()}</span>
             </div>
           </div>
         </div>
         
+        {/* INFO TRANSFERENCIAS / DIGITAL (DESGLOSADO) */}
+        <div className="bg-slate-800 text-white p-5 rounded-xl shadow-md border border-slate-700">
+            <div className="flex justify-between items-start mb-2">
+                <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400">Total Digital Hoy</h3>
+                <Wallet className="text-purple-400" size={20}/>
+            </div>
+            <p className="text-3xl font-bold text-purple-400 mb-4">$ {resumen.digital.toLocaleString()}</p>
+            
+            {/* DESGLOSE */}
+            <div className="space-y-1 text-xs text-slate-300 border-t border-slate-700 pt-2">
+                <div className="flex justify-between">
+                    <span>Ventas Digitales:</span>
+                    <span className="font-bold">$ {resumen.ventas_digital?.toLocaleString() || 0}</span>
+                </div>
+                <div className="flex justify-between text-green-400">
+                    <span>Cobros Deuda (Transf):</span>
+                    <span className="font-bold">$ {resumen.cobros_transf?.toLocaleString() || 0}</span>
+                </div>
+            </div>
+        </div>
+
         {/* Info Diferencia */}
         <div className={`p-4 rounded-xl border flex items-center gap-3 font-bold ${diferencia >= 0 ? 'bg-green-100 text-green-700 border-green-200' : 'bg-red-100 text-red-700 border-red-200'}`}>
           <AlertTriangle size={24}/>
           <div>
             <p className="text-xs uppercase opacity-70">Diferencia de Caja</p>
-            <p className="text-xl">{diferencia >= 0 ? `+ $${diferencia}` : `- $${Math.abs(diferencia)}`}</p>
+            <p className="text-xl">{diferencia >= 0 ? `+ $${diferencia.toLocaleString()}` : `- $${Math.abs(diferencia).toLocaleString()}`}</p>
           </div>
         </div>
       </div>

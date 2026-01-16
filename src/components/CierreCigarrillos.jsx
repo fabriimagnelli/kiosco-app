@@ -1,182 +1,214 @@
 import React, { useState, useEffect } from "react";
-import { DollarSign, Save, Banknote, RefreshCw, Cigarette, Filter, Settings } from "lucide-react";
+import { Calculator, Save, AlertTriangle, Wallet, Coins, ArrowRight } from "lucide-react";
 
-function CierreCigarrillos() {
-  const [datos, setDatos] = useState({ esperado: 0, ventas: 0, cantidad_tickets: 0 });
-  const [cargando, setCargando] = useState(true);
-  const [categoriasDetectadas, setCategoriasDetectadas] = useState([]);
-  const [categoriaSeleccionada, setCategoriaSeleccionada] = useState(localStorage.getItem("cat_cigarrillos") || "");
-  const [mostrarConfig, setMostrarConfig] = useState(false);
-
-  // --- Billetes (Igual al General) ---
-  const [billetes, setBilletes] = useState({
-    20000: 0, 10000: 0, 2000: 0, 1000: 0, 
-    500: 0, 200: 0, 100: 0, 50: 0, 
-    "Monedas/Otros": 0
-  });
-
-  const [totalFisico, setTotalFisico] = useState(0);
-  const [diferencia, setDiferencia] = useState(0);
-  const [procesando, setProcesando] = useState(false);
+function CierreGeneral() {
+  const [resumen, setResumen] = useState(null);
   
-  const ordenBilletes = ["20000", "10000", "2000", "1000", "500", "200", "100", "50", "Monedas/Otros"];
+  // Arqueo de Billetes
+  const [billetes, setBilletes] = useState({
+    10000: "", 2000: "", 1000: "", 500: "", 200: "", 100: "", 50: "", 20: "", 10: ""
+  });
+  const [monedas, setMonedas] = useState("");
+  
+  // Lógica de Retiro
+  const [montoRetiro, setMontoRetiro] = useState(""); 
+  const [observacion, setObservacion] = useState("");
 
-  // --- 1. CARGA INTELIGENTE ---
-  const cargarDatos = async () => {
-    setCargando(true);
-    try {
-      // CORRECCIÓN AQUÍ: Se agregó /api/ antes de resumen_dia_independiente
-      const res = await fetch("http://localhost:3001/api/resumen_dia_independiente"); 
-      if (!res.ok) throw new Error("Error conectando al servidor");
-
-      const data = await res.json();
-      setDatos({
-          esperado: data.cigarrillos.esperado || 0,
-          ventas: data.cigarrillos.ventas || 0,
-          cantidad_tickets: 0  // No tenemos este dato directamente, lo calculamos del total de ventas con categoria cigarrillo
-      });
-
-    } catch (error) {
-      console.error(error);
-      alert("No se pudieron cargar las ventas. Revisa que el servidor esté abierto.");
-    } finally {
-      setCargando(false);
-    }
-  };
-
-  useEffect(() => { cargarDatos(); }, []);
-
-  // Recalcular si el usuario cambia la categoría manualmente
-  const handleCategoriaChange = (nuevaCat) => {
-      setCategoriaSeleccionada(nuevaCat);
-      localStorage.setItem("cat_cigarrillos", nuevaCat); // Guardar preferencia
-      cargarDatos(); // Recargar para aplicar filtro
-  };
-
-  // --- CÁLCULOS DINERO ---
   useEffect(() => {
+    fetch("http://localhost:3001/api/resumen_dia_independiente")
+      .then((res) => res.json())
+      .then((data) => setResumen(data.general));
+  }, []);
+
+  // Calcular total físico en tiempo real
+  const calcularTotalFisico = () => {
     let total = 0;
-    Object.keys(billetes).forEach(denom => {
-      const valor = denom === "Monedas/Otros" ? 1 : parseInt(denom);
-      const cantidad = parseFloat(billetes[denom]) || 0;
-      total += valor * cantidad;
+    Object.keys(billetes).forEach(denominacion => {
+      const cantidad = parseFloat(billetes[denominacion]) || 0;
+      total += cantidad * parseFloat(denominacion);
     });
-    setTotalFisico(total);
-  }, [billetes]);
-
-  useEffect(() => {
-    setDiferencia(totalFisico - datos.esperado);
-  }, [totalFisico, datos.esperado]);
-
-  const handleBilleteChange = (denom, valor) => {
-    setBilletes({ ...billetes, [denom]: valor });
+    total += parseFloat(monedas) || 0;
+    return total;
   };
 
-  const guardarCierre = async () => {
-    if (!window.confirm("¿Cerrar Caja Cigarrillos?")) return;
-    setProcesando(true);
+  const handleBilleteChange = (denominacion, valor) => {
+    setBilletes({ ...billetes, [denominacion]: valor });
+  };
+
+  const realizarCierre = async () => {
+    const totalFisico = calcularTotalFisico();
+    const retiro = parseFloat(montoRetiro) || 0;
+    const baseManana = totalFisico - retiro;
+
+    if (baseManana < 0) {
+      return alert("Error: No puedes retirar más dinero del que hay en la caja.");
+    }
+
+    if (!confirm(`
+      ¿CONFIRMAR CIERRE?
+      -------------------------
+      💵 Total en Caja: $${totalFisico}
+      💰 Se retira: $${retiro}
+      🛡️ Queda para mañana: $${baseManana}
+    `)) return;
+
     try {
-        // CORRECCIÓN AQUÍ: Se agregó /api/ antes de cierres
-        await fetch("http://localhost:3001/api/cierres", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                tipo: "CIGARRILLOS",
-                total_sistema: datos.esperado,
-                total_fisico: totalFisico,
-                diferencia: diferencia,
-                fecha: new Date().toISOString()
-            })
-        });
-        alert("✅ Caja Cerrada.");
-        setBilletes({20000:0, 10000:0, 2000:0, 1000:0, 500:0, 200:0, 100:0, 50:0, "Monedas/Otros":0});
-        cargarDatos();
-    } catch (e) { alert("Error al guardar."); }
-    setProcesando(false);
+      const res = await fetch("http://localhost:3001/api/cierres_unificado", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          total_ventas: resumen.ventas,
+          total_gastos: resumen.gastos,
+          total_efectivo_real: totalFisico,
+          monto_retiro: retiro,
+          observacion: observacion
+        }),
+      });
+      
+      const data = await res.json();
+      if (data.success) {
+        alert("✅ Cierre exitoso.");
+        window.location.reload();
+      } else {
+        alert("Error: " + data.error);
+      }
+    } catch (error) { console.error(error); alert("Error de conexión"); }
   };
 
-  if (cargando) return <div className="p-10 text-center animate-pulse">Cargando ventas...</div>;
+  if (!resumen) return <div className="p-10 text-center">Cargando...</div>;
+
+  const totalFisico = calcularTotalFisico();
+  const diferencia = totalFisico - resumen.esperado;
+  const quedaEnCaja = totalFisico - (parseFloat(montoRetiro) || 0);
 
   return (
-    <div className="flex flex-col lg:flex-row h-full bg-slate-50 overflow-hidden">
+    <div className="flex flex-col lg:flex-row h-full gap-4 p-4 bg-slate-50 overflow-y-auto">
       
-      {/* IZQUIERDA: CONFIGURACIÓN Y TOTALES */}
-      <div className="w-full lg:w-1/3 bg-white border-r border-slate-200 flex flex-col z-10 shadow-lg">
-        
-        {/* Tarjeta de Total */}
-        <div className="flex-1 p-6 flex flex-col items-center justify-center">
-            <div className="bg-orange-50 w-full p-8 rounded-3xl border border-orange-100 text-center relative overflow-hidden shadow-sm">
-                <div className="w-16 h-16 rounded-full bg-orange-100 flex items-center justify-center text-orange-600 mx-auto mb-4 shadow-sm">
-                    <Cigarette size={32}/>
-                </div>
-                <p className="text-sm text-orange-600/70 font-bold uppercase tracking-widest mb-2">Ventas del Día</p>
-                <p className="text-5xl font-black text-orange-600 tracking-tight">$ {Math.round(datos.esperado).toLocaleString()}</p>
+      {/* IZQUIERDA: RESUMEN SISTEMA */}
+      <div className="w-full lg:w-1/3 space-y-4">
+        <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+          <h2 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
+            <Calculator size={18} className="text-blue-600"/> Resumen Sistema
+          </h2>
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between"><span>Inicial:</span> <span className="font-bold">$ {resumen.saldo_inicial.toLocaleString()}</span></div>
+            <div className="flex justify-between text-green-600">
+                <span className="flex items-center gap-1"><ArrowRight size={12}/> Ventas Efvo:</span> 
+                <span className="font-bold">+ $ {resumen.ventas.toLocaleString()}</span>
             </div>
+            <div className="flex justify-between text-green-600">
+                <span className="flex items-center gap-1"><ArrowRight size={12}/> Cobros Efvo:</span> 
+                <span className="font-bold">+ $ {resumen.cobros.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between text-red-500">
+                <span>Gastos:</span> <span className="font-bold">- $ {resumen.gastos.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between text-red-500">
+                <span>Prov. (Efvo):</span> <span className="font-bold">- $ {resumen.proveedores.toLocaleString()}</span>
+            </div>
+            <hr className="my-2"/>
+            <div className="flex justify-between text-lg font-bold text-slate-800">
+              <span>DEBE HABER (EFVO):</span> <span>$ {resumen.esperado.toLocaleString()}</span>
+            </div>
+          </div>
+        </div>
+        
+        {/* Info Transferencias / Digital */}
+        <div className="bg-slate-800 text-white p-5 rounded-xl shadow-md border border-slate-700">
+            <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-2">Total Transferencias Hoy</h3>
+            <p className="text-3xl font-bold text-purple-400">$ {resumen.digital.toLocaleString()}</p>
+            <p className="text-[10px] text-slate-500 mt-1">Incluye Ventas Digitales y Pagos de Deudores por transferencia.</p>
         </div>
 
+        {/* Info Diferencia */}
+        <div className={`p-4 rounded-xl border flex items-center gap-3 font-bold ${diferencia >= 0 ? 'bg-green-100 text-green-700 border-green-200' : 'bg-red-100 text-red-700 border-red-200'}`}>
+          <AlertTriangle size={24}/>
+          <div>
+            <p className="text-xs uppercase opacity-70">Diferencia de Caja</p>
+            <p className="text-xl">{diferencia >= 0 ? `+ $${diferencia.toLocaleString()}` : `- $${Math.abs(diferencia).toLocaleString()}`}</p>
+          </div>
+        </div>
       </div>
 
-      {/* DERECHA: CONTEO DE BILLETES */}
-      <div className="flex-1 flex flex-col bg-slate-50 relative">
-        <div className="p-4 border-b bg-white font-bold text-slate-700 flex items-center gap-2 shadow-sm">
-            <Banknote className="text-green-600"/> Arqueo de Caja
-        </div>
+      {/* DERECHA: CONTEO DE BILLETES Y RETIRO */}
+      <div className="flex-1 bg-white p-5 rounded-xl shadow-lg border border-slate-200">
+        <h2 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+          <Wallet size={20} className="text-green-600"/> Arqueo de Caja
+        </h2>
 
-        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {ordenBilletes.map((denom) => {
-                    const cantidad = billetes[denom];
-                    const valor = denom === "Monedas/Otros" ? 1 : parseInt(denom);
-                    const subtotal = (parseFloat(cantidad) || 0) * valor;
-                    const active = cantidad > 0;
-                    return (
-                        <div key={denom} className={`p-3 rounded-xl border transition-all ${active ? "bg-white border-blue-400 ring-1 ring-blue-100" : "bg-white border-slate-200"}`}>
-                            <div className="flex justify-between mb-1">
-                                <span className="text-[10px] font-bold text-slate-500 uppercase">{denom}</span>
-                                {active && <span className="text-[10px] font-bold text-blue-600">$ {Math.round(subtotal).toLocaleString()}</span>}
-                            </div>
-                            <input
-                                type="number"
-                                min="0"
-                                className="w-full text-xl font-bold bg-transparent outline-none text-slate-800"
-                                placeholder="0"
-                                value={cantidad || ""}
-                                onChange={(e) => handleBilleteChange(denom, e.target.value)}
-                                onFocus={(e) => e.target.select()}
-                            />
-                        </div>
-                    );
-                })}
+        {/* 1. GRILLA COMPACTA DE BILLETES */}
+        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 mb-4">
+          {[10000, 2000, 1000, 500, 200, 100, 50, 20, 10].map((val) => (
+            <div key={val} className="bg-slate-50 p-2 rounded border border-slate-200 text-center">
+              <label className="block text-xs font-bold text-slate-500 mb-1">${val}</label>
+              <input 
+                type="number" 
+                className="w-full text-center font-bold text-slate-800 bg-white border rounded py-1 focus:ring-2 focus:ring-blue-400 outline-none"
+                placeholder="0"
+                value={billetes[val]}
+                onChange={(e) => handleBilleteChange(val, e.target.value)}
+              />
             </div>
+          ))}
+          <div className="bg-slate-50 p-2 rounded border border-slate-200 text-center col-span-3 sm:col-span-1">
+            <label className="block text-xs font-bold text-slate-500 mb-1 flex justify-center items-center gap-1"><Coins size={10}/> Monedas (Total)</label>
+            <input 
+              type="number" 
+              className="w-full text-center font-bold text-slate-800 bg-white border rounded py-1 focus:ring-2 focus:ring-blue-400 outline-none"
+              placeholder="$ Total"
+              value={monedas}
+              onChange={(e) => setMonedas(e.target.value)}
+            />
+          </div>
         </div>
 
-        {/* FOOTER RESULTADOS */}
-        <div className="p-6 bg-white border-t flex flex-col sm:flex-row items-center gap-4 shadow-lg z-20">
+        {/* TOTAL CONTADO */}
+        <div className="bg-slate-800 text-white p-3 rounded-lg flex justify-between items-center mb-6">
+          <span className="text-sm font-bold uppercase tracking-wider text-slate-300">Total Contado</span>
+          <span className="text-2xl font-bold text-green-400">$ {totalFisico.toLocaleString()}</span>
+        </div>
+
+        {/* 2. SECCIÓN RETIRO Y APERTURA */}
+        <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
+          <div className="flex flex-col md:flex-row gap-4 items-end">
             <div className="flex-1 w-full">
-                <div className="flex justify-between items-center mb-1">
-                    <span className="text-xs font-bold text-slate-400 uppercase">Total Contado</span>
-                    <span className="text-xl font-black text-slate-800">$ {Math.round(totalFisico).toLocaleString()}</span>
-                </div>
-                <div className={`flex justify-between items-center px-3 py-2 rounded-lg border text-sm font-bold ${
-                    diferencia === 0 ? "bg-green-100 text-green-700 border-green-200" : 
-                    diferencia > 0 ? "bg-blue-100 text-blue-700 border-blue-200" : 
-                    "bg-red-100 text-red-700 border-red-200"
-                }`}>
-                    <span>{diferencia === 0 ? "OK" : diferencia > 0 ? "SOBRA" : "FALTA"}</span>
-                    <span className="text-lg">{diferencia > 0 ? "+" : ""}{Math.round(diferencia).toLocaleString()}</span>
-                </div>
+              <label className="block text-sm font-bold text-blue-800 mb-1">¿Cuánto retiras de la caja?</label>
+              <input 
+                type="number" 
+                className="w-full p-3 border-2 border-blue-200 rounded-lg text-xl font-bold text-blue-700 focus:outline-none focus:border-blue-500"
+                placeholder="0.00"
+                value={montoRetiro}
+                onChange={(e) => setMontoRetiro(e.target.value)}
+              />
             </div>
-            <button 
-                onClick={guardarCierre} 
-                disabled={procesando}
-                className="w-full sm:w-auto px-8 py-4 bg-orange-600 hover:bg-orange-700 text-white rounded-xl font-bold shadow-lg shadow-orange-500/20 active:scale-95 transition-all flex items-center justify-center gap-2"
-            >
-                <Save size={18}/> {procesando ? "..." : "Cerrar Caja"}
-            </button>
+            <div className="flex-1 w-full bg-white p-3 rounded-lg border border-blue-100 text-right">
+              <span className="block text-xs font-bold text-slate-400 uppercase">Queda para mañana (Inicio)</span>
+              <span className={`text-2xl font-black ${quedaEnCaja < 0 ? 'text-red-500' : 'text-slate-700'}`}>
+                $ {quedaEnCaja.toLocaleString()}
+              </span>
+            </div>
+          </div>
         </div>
+
+        {/* Observación y Botón */}
+        <div className="mt-4">
+          <input 
+            className="w-full p-3 border rounded-lg text-sm mb-4" 
+            placeholder="Observaciones (Opcional)..."
+            value={observacion}
+            onChange={e => setObservacion(e.target.value)}
+          />
+          <button 
+            onClick={realizarCierre}
+            className="w-full py-4 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl shadow-lg transition-transform active:scale-95 flex justify-center items-center gap-2"
+          >
+            <Save size={20}/> CERRAR TURNO
+          </button>
+        </div>
+
       </div>
     </div>
   );
 }
 
-export default CierreCigarrillos;
+export default CierreGeneral;
