@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Search, ShoppingCart, Trash2, CreditCard, User, AlertTriangle, RefreshCw } from "lucide-react";
+import { Search, ShoppingCart, Trash2, CreditCard, User, AlertTriangle, RefreshCw, Plus } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 function Ventas() {
@@ -11,6 +11,10 @@ function Ventas() {
   const [productos, setProductos] = useState([]);
   const [carrito, setCarrito] = useState([]);
   const [metodo, setMetodo] = useState("Efectivo");
+  
+  // Estados para Carga Manual
+  const [manualNombre, setManualNombre] = useState("");
+  const [manualPrecio, setManualPrecio] = useState("");
   
   // Clientes y Fiados
   const [clientes, setClientes] = useState([]);
@@ -73,6 +77,24 @@ function Ventas() {
     } else {
       setCarrito([...carrito, { ...prod, cantidad: 1 }]);
     }
+  };
+
+  const agregarManual = (e) => {
+    e.preventDefault();
+    if (!manualNombre.trim() || !manualPrecio) return;
+
+    const nuevoItem = {
+        id: `manual-${Date.now()}`, 
+        nombre: manualNombre,
+        precio: parseFloat(manualPrecio),
+        cantidad: 1,
+        tipo: 'Manual',
+        stock: '-' 
+    };
+
+    setCarrito([...carrito, nuevoItem]);
+    setManualNombre("");
+    setManualPrecio("");
   };
 
   const eliminarDelCarrito = (index) => {
@@ -151,6 +173,27 @@ function Ventas() {
             autoFocus
           />
         </div>
+
+        {/* CARGA MANUAL DE PRODUCTOS */}
+        <form onSubmit={agregarManual} className="bg-white p-4 rounded-2xl shadow-sm flex items-center gap-2 border border-slate-200">
+            <Plus className="text-slate-400" />
+            <input 
+                className="flex-1 outline-none text-lg" 
+                placeholder="Ingresar nombre producto manual..." 
+                value={manualNombre}
+                onChange={e => setManualNombre(e.target.value)}
+            />
+            <input 
+                type="number"
+                className="w-32 outline-none text-lg border-l border-slate-200 pl-4" 
+                placeholder="$ Precio"
+                value={manualPrecio}
+                onChange={e => setManualPrecio(e.target.value)}
+            />
+            <button type="submit" className="bg-slate-900 text-white font-bold px-4 py-1 rounded-lg hover:bg-slate-800">
+                Agregar
+            </button>
+        </form>
         
         <div className="flex-1 overflow-y-auto grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 pb-2">
           {productosFiltrados.slice(0, 50).map((prod, i) => (
@@ -189,7 +232,10 @@ function Ventas() {
             carrito.map((item, index) => (
               <div key={index} className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-100">
                 <div className="flex-1">
-                  <p className="font-bold text-sm text-slate-700">{item.nombre}</p>
+                  <p className="font-bold text-sm text-slate-700">
+                    {item.nombre} 
+                    {item.tipo === 'Manual' && <span className="text-[10px] bg-slate-200 text-slate-500 px-1 ml-1 rounded">Manual</span>}
+                  </p>
                   <p className="text-xs text-slate-500">$ {item.precio} x {item.cantidad}</p>
                 </div>
                 <div className="flex items-center gap-3">

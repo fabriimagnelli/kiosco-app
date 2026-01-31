@@ -41,7 +41,7 @@ const obtenerSiguienteTicket = async () => {
 // --- INICIALIZACIÓN DB ---
 const initDB = async () => {
     try {
-        // Tablas
+        // Tablas existentes
         await dbRun(`CREATE TABLE IF NOT EXISTS productos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             nombre TEXT NOT NULL,
@@ -84,6 +84,15 @@ const initDB = async () => {
             pagado INTEGER DEFAULT 0
         )`);
 
+        // NUEVA TABLA: CLIENTES (Para solucionar error api/clientes)
+        await dbRun(`CREATE TABLE IF NOT EXISTS clientes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL,
+            telefono TEXT,
+            direccion TEXT,
+            email TEXT
+        )`);
+
         await dbRun(`CREATE TABLE IF NOT EXISTS proveedores (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             nombre TEXT NOT NULL,
@@ -120,7 +129,7 @@ const initDB = async () => {
             fecha DATETIME DEFAULT CURRENT_TIMESTAMP
         )`);
 
-        // Actualizaciones de columnas
+        // Actualizaciones de columnas (Migraciones simples)
         const ensureColumn = async (table, column, definition) => {
             try {
                 await dbRun(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
@@ -135,7 +144,7 @@ const initDB = async () => {
         await ensureColumn("cigarrillos", "costo", "REAL DEFAULT 0");
         await ensureColumn("ventas", "pago_efectivo", "REAL DEFAULT 0");
         await ensureColumn("ventas", "pago_digital", "REAL DEFAULT 0");
-        await ensureColumn("ventas", "editado", "INTEGER DEFAULT 0"); // <--- NUEVO: Para marcar reporte editado
+        await ensureColumn("ventas", "editado", "INTEGER DEFAULT 0");
 
         console.log("Base de datos inicializada correctamente.");
     } catch (e) {
@@ -146,6 +155,98 @@ const initDB = async () => {
 initDB();
 
 // --- RUTAS ---
+
+// 1. DASHBOARD (SOLUCIÓN A ERROR api/dashboard)
+app.get("/api/dashboard", async (req, res) => {
+    try {
+        // Ventas Hoy
+        const ventasHoy = await dbGet("SELECT SUM(precio_total) as total, COUNT(DISTINCT ticket_id) as tickets FROM ventas WHERE date(fecha) = date('now', 'localtime')");
+        
+        // Gastos Hoy
+        const gastosHoy = await dbGet("SELECT SUM(monto) as total FROM gastos WHERE date(fecha) = date('now', 'localtime')");
+        
+        // Stock Bajo (Ejemplo: menos de 5 unidades)
+        const prodBajo = await dbAll("SELECT nombre, stock FROM productos WHERE stock <= 5");
+        const cigBajo = await dbAll("SELECT nombre, stock FROM cigarrillos WHERE stock <= 5");
+        
+        res.json({
+            ventas_hoy: ventasHoy.total || 0,
+            tickets_hoy: ventasHoy.tickets || 0,
+            gastos_hoy: gastosHoy.total || 0,
+            bajo_stock: [...prodBajo, ...cigBajo]
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 2. RESUMEN INDEPENDIENTE (SOLUCIÓN A ERROR api/resumen_dia_independiente)
+app.get("/api/resumen_dia_independiente", async (req, res) => {
+    try {
+        const ventas = await dbAll("SELECT * FROM ventas WHERE date(fecha) = date('now', 'localtime')");
+        const gastos = await dbAll("SELECT * FROM gastos WHERE date(fecha) = date('now', 'localtime')");
+        const retiros = await dbAll("SELECT * FROM retiros WHERE date(fecha) = date('now', 'localtime')");
+
+        let totalEfvo = 0;
+        let totalDig = 0;
+        
+        ventas.forEach(v => {
+            if (v.pago_efectivo !== undefined && (v.pago_efectivo > 0 || v.pago_digital > 0)) {
+                totalEfvo += v.pago_efectivo;
+                totalDig += v.pago_digital;
+            } else {
+                if (v.metodo_pago === 'Efectivo') totalEfvo += v.precio_total;
+                else if (v.metodo_pago === 'Transferencia' || v.metodo_pago === 'Debito') totalDig += v.precio_total;
+                else if (v.metodo_pago === 'Mixto') {
+                    totalEfvo += v.precio_total / 2;
+                    totalDig += v.precio_total / 2;
+                }
+            }
+        });
+
+        const totalGastos = gastos.reduce((sum, g) => sum + g.monto, 0);
+        const totalRetiros = retiros.reduce((sum, r) => sum + r.monto, 0);
+
+        res.json({
+            total_efectivo: totalEfvo,
+            total_digital: totalDig,
+            total_gastos: totalGastos,
+            total_retiros: totalRetiros,
+            ventas_total: totalEfvo + totalDig
+        });
+
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 3. CLIENTES (SOLUCIÓN A ERROR api/clientes)
+app.get("/api/clientes", (req, res) => {
+    db.all("SELECT * FROM clientes ORDER BY nombre", [], (err, rows) => {
+        if (err) res.status(500).json({ error: err.message });
+        else res.json(rows);
+    });
+});
+
+app.post("/api/clientes", (req, res) => {
+    const { nombre, telefono, direccion, email } = req.body;
+    db.run("INSERT INTO clientes (nombre, telefono, direccion, email) VALUES (?,?,?,?)",
+        [nombre, telefono, direccion, email],
+        function (err) {
+            if (err) res.status(500).json({ error: err.message });
+            else res.json({ id: this.lastID });
+        }
+    );
+});
+
+app.delete("/api/clientes/:id", (req, res) => {
+    db.run("DELETE FROM clientes WHERE id=?", req.params.id, function (err) {
+        if (err) res.status(500).json({ error: err.message });
+        else res.json({ deleted: this.changes });
+    });
+});
+
+// --- RESTO DE RUTAS EXISTENTES ---
 
 // PRODUCTOS
 app.get("/api/productos", (req, res) => {
@@ -221,30 +322,29 @@ app.delete("/api/cigarrillos/:id", (req, res) => {
     });
 });
 
-// VENTAS (PROCESAR VENTA)
+// VENTAS
 app.post("/api/ventas", async (req, res) => {
-    const { productos, total, metodo_pago, pago_efectivo, pago_digital, ticket_a_corregir } = req.body;
+    const { productos, metodo_pago, pago_efectivo, pago_digital, ticket_a_corregir, cliente_id } = req.body;
+    // Nota: El total a veces se calcula en el front, pero es mejor recalcularlo o recibirlo.
+    // Aquí asumimos que productos trae precio y cantidad.
     
     if (!productos || productos.length === 0) {
         return res.status(400).json({ error: "No hay productos en la venta" });
     }
 
+    // Calcular total backend para seguridad
+    const total = productos.reduce((acc, p) => acc + (p.precio * p.cantidad), 0);
+
     try {
         await dbRun("BEGIN TRANSACTION");
 
-        // Si es una corrección, primero eliminamos la venta anterior
         if (ticket_a_corregir) {
-            // No devolvemos stock aquí porque se asume que la nueva venta sobrescribe la realidad del stock
-            // O si prefieres lógica estricta: devolver stock del viejo y restar el nuevo. 
-            // Para simplificar "edición": borramos el registro de venta viejo y creamos el nuevo con fecha actual.
             await dbRun("DELETE FROM ventas WHERE ticket_id = ?", [ticket_a_corregir]);
-            // También borramos fiados si existía para ese ticket
             await dbRun("DELETE FROM fiados WHERE descripcion LIKE ?", [`%Ticket ${ticket_a_corregir}%`]);
         }
 
         const ticket_id = await obtenerSiguienteTicket();
         
-        // Calcular pagos proporcionales si es mixto, si no, asignar directo
         let pEfvo = 0;
         let pDig = 0;
 
@@ -257,29 +357,33 @@ app.post("/api/ventas", async (req, res) => {
             pDig = total;
         }
 
-        // Variable para marcar si es editado (si viene de una corrección)
         const esEdicion = ticket_a_corregir ? 1 : 0;
 
         for (const item of productos) {
-            const tabla = (item.categoria && item.categoria.toLowerCase() === 'cigarrillo') ? 'cigarrillos' : 'productos';
+            const tabla = (item.categoria && item.categoria.toLowerCase() === 'cigarrillo') ? 'cigarrillos' : (item.tipo === 'Manual' ? null : 'productos');
             
-            // Descontar stock
-            await dbRun(`UPDATE ${tabla} SET stock = stock - ? WHERE nombre = ?`, [item.cantidad, item.nombre]);
+            // Descontar stock solo si no es manual
+            if (tabla) {
+                await dbRun(`UPDATE ${tabla} SET stock = stock - ? WHERE nombre = ?`, [item.cantidad, item.nombre]);
+            }
 
-            // Registrar venta individual (MODIFICADO: Agregado campo 'editado')
             const tipo = item.tipo || 'General';
             await dbRun(`INSERT INTO ventas (ticket_id, producto, cantidad, precio_total, metodo_pago, categoria, fecha, pago_efectivo, pago_digital, editado) VALUES (?,?,?,?,?,?, datetime('now', 'localtime'), ?, ?, ?)`, 
                 [ticket_id, item.nombre, item.cantidad, total, metodo_pago, tipo, pEfvo, pDig, esEdicion]);
         }
 
-        // Si es Fiado, registrar en tabla deudores
-        if (metodo_pago === 'Fiado') {
-             // Asumimos que viene el nombre del cliente en algún lado o es "Cliente Mostrador" si no se especifica
-             // En una implementación real deberías pasar el cliente desde el front.
-             // Por ahora usamos un placeholder o si el front lo manda en el futuro.
-             // Como el body actual no trae cliente, usamos "Cliente Ticket #ID"
+        // Si es Fiado
+        if (metodo_pago === 'Fiado' || cliente_id) {
+             let nombreCliente = "Cliente Varios";
+             if(cliente_id){
+                 const cli = await dbGet("SELECT nombre FROM clientes WHERE id = ?", [cliente_id]);
+                 if(cli) nombreCliente = cli.nombre;
+             }
+             
+             // Si hay pago anticipado, se resta del monto a deber (lógica simplificada)
+             // Aquí asumimos que si es fiado va todo a la cuenta, salvo que haya lógica extra en el front.
              await dbRun("INSERT INTO fiados (cliente, monto, descripcion) VALUES (?, ?, ?)", 
-                 ["Cliente Varios", total, `Fiado Ticket ${ticket_id}`]);
+                 [nombreCliente, total, `Fiado Ticket ${ticket_id}`]);
         }
 
         await dbRun("COMMIT");
@@ -291,13 +395,11 @@ app.post("/api/ventas", async (req, res) => {
     }
 });
 
-// NUEVA RUTA: ELIMINAR VENTA (Devolviendo Stock)
 app.delete("/api/ventas/:ticket_id", async (req, res) => {
     const { ticket_id } = req.params;
     try {
         await dbRun("BEGIN TRANSACTION");
         
-        // 1. Recuperar items para devolver stock
         const items = await dbAll("SELECT * FROM ventas WHERE ticket_id = ?", [ticket_id]);
         
         if (items.length === 0) {
@@ -306,19 +408,14 @@ app.delete("/api/ventas/:ticket_id", async (req, res) => {
         }
 
         for (const item of items) {
-            // Determinar tabla
-            // NOTA: Asegúrate que la categoría guardada coincida con tu lógica ('cigarrillo' vs 'General'/'Golosina'/etc)
-            // En el POST guardas item.categoria. Si es 'cigarrillo' usa tabla cigarrillos.
             const tabla = (item.categoria && item.categoria.toLowerCase() === 'cigarrillo') ? 'cigarrillos' : 'productos';
-            
-            // Devolver stock
-            await dbRun(`UPDATE ${tabla} SET stock = stock + ? WHERE nombre = ?`, [item.cantidad, item.producto]);
+            // Solo devolvemos stock si existe la tabla (evitamos error con manuales)
+             try {
+                await dbRun(`UPDATE ${tabla} SET stock = stock + ? WHERE nombre = ?`, [item.cantidad, item.producto]);
+             } catch(e) { /* Ignorar si no encuentra producto manual */ }
         }
 
-        // 2. Eliminar de ventas
         await dbRun("DELETE FROM ventas WHERE ticket_id = ?", [ticket_id]);
-
-        // 3. Eliminar deuda asociada en fiados si existe (buscando por descripción)
         await dbRun("DELETE FROM fiados WHERE descripcion LIKE ?", [`%Ticket ${ticket_id}%`]);
 
         await dbRun("COMMIT");
@@ -352,10 +449,8 @@ app.post("/api/fiados", (req, res) => {
     });
 });
 
-app.put("/api/fiados/:id", (req, res) => { // Pagar fiado (parcial o total)
+app.put("/api/fiados/:id", (req, res) => {
     const { pago } = req.body; 
-    // Esto es simplificado. Lo ideal es restar monto o marcar pagado.
-    // Vamos a restar del monto. Si llega a 0, pagado = 1.
     db.get("SELECT * FROM fiados WHERE id=?", [req.params.id], (err, row) => {
         if(err || !row) return res.status(404).json({error: "No encontrado"});
         
@@ -413,12 +508,12 @@ app.delete("/api/retiros/:id", (req, res) => {
     db.run("DELETE FROM retiros WHERE id=?", [req.params.id], (err) => err ? res.status(500).json({error: err.message}) : res.json({success: true}));
 });
 
-// CAJA DIARIA (APERTURA / CIERRE)
+// CAJA DIARIA
 app.get("/api/caja/hoy", (req, res) => {
     const hoy = new Date().toISOString().split('T')[0];
     db.get("SELECT * FROM caja_diaria WHERE fecha = ?", [hoy], (err, row) => {
         if (err) res.status(500).json({ error: err.message });
-        else res.json(row || null); // Si es null, no se abrió caja
+        else res.json(row || null);
     });
 });
 
@@ -427,8 +522,6 @@ app.post("/api/caja/abrir", (req, res) => {
     const hoy = new Date().toISOString().split('T')[0];
     db.run("INSERT INTO caja_diaria (fecha, inicio_caja) VALUES (?, ?)", [hoy, inicio], function(err) {
         if(err) {
-            // Si ya existe, actualizamos inicio si no está cerrada? O retornamos error.
-            // Asumimos simple: si ya existe, error o ignorar.
             res.status(400).json({ error: "Caja ya abierta hoy" });
         } else {
             res.json({ success: true });
@@ -439,7 +532,6 @@ app.post("/api/caja/abrir", (req, res) => {
 app.post("/api/caja/cerrar", async (req, res) => {
     const hoy = new Date().toISOString().split('T')[0];
     try {
-        // Calcular totales del día
         const ventas = await dbAll("SELECT * FROM ventas WHERE date(fecha) = date('now', 'localtime')");
         const gastos = await dbAll("SELECT * FROM gastos WHERE date(fecha) = date('now', 'localtime')");
         const retiros = await dbAll("SELECT * FROM retiros WHERE date(fecha) = date('now', 'localtime')");
@@ -448,8 +540,6 @@ app.post("/api/caja/cerrar", async (req, res) => {
         let totalDig = 0;
         
         ventas.forEach(v => {
-            // Si tiene desglosado pago_efectivo y pago_digital usar eso
-            // Si son viejos registros sin eso, usar logica anterior (metodo_pago)
             if (v.pago_efectivo !== undefined && (v.pago_efectivo > 0 || v.pago_digital > 0)) {
                 totalEfvo += v.pago_efectivo;
                 totalDig += v.pago_digital;
@@ -457,7 +547,6 @@ app.post("/api/caja/cerrar", async (req, res) => {
                 if (v.metodo_pago === 'Efectivo') totalEfvo += v.precio_total;
                 else if (v.metodo_pago === 'Transferencia' || v.metodo_pago === 'Debito') totalDig += v.precio_total;
                 else if (v.metodo_pago === 'Mixto') {
-                    // Fallback si no guardó desglose
                     totalEfvo += v.precio_total / 2; 
                     totalDig += v.precio_total / 2;
                 }
@@ -467,7 +556,6 @@ app.post("/api/caja/cerrar", async (req, res) => {
         const totalGastos = gastos.reduce((sum, g) => sum + g.monto, 0);
         const totalRetiros = retiros.reduce((sum, r) => sum + r.monto, 0);
 
-        // Recuperar inicio caja
         const caja = await dbGet("SELECT * FROM caja_diaria WHERE fecha = ?", [hoy]);
         const inicio = caja ? caja.inicio_caja : 0;
         
@@ -498,7 +586,6 @@ app.get("/api/caja/estado", async (req, res) => {
         const caja = await dbGet("SELECT * FROM caja_diaria WHERE fecha = ?", [hoy]);
         if (!caja) return res.json({ abierta: false });
 
-        // Calcular en tiempo real
         const ventas = await dbAll("SELECT * FROM ventas WHERE date(fecha) = date('now', 'localtime')");
         const gastos = await dbAll("SELECT * FROM gastos WHERE date(fecha) = date('now', 'localtime')");
         const retiros = await dbAll("SELECT * FROM retiros WHERE date(fecha) = date('now', 'localtime')");
