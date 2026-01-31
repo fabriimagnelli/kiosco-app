@@ -8,6 +8,8 @@ const port = 3001;
 
 app.use(cors());
 app.use(express.json());
+
+// Servir archivos estáticos del frontend compilado
 app.use(express.static(path.join(__dirname, "../dist")));
 
 // Conexión DB
@@ -84,7 +86,6 @@ const initDB = async () => {
             pagado INTEGER DEFAULT 0
         )`);
 
-        // NUEVA TABLA: CLIENTES (Para solucionar error api/clientes)
         await dbRun(`CREATE TABLE IF NOT EXISTS clientes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             nombre TEXT NOT NULL,
@@ -129,14 +130,11 @@ const initDB = async () => {
             fecha DATETIME DEFAULT CURRENT_TIMESTAMP
         )`);
 
-        // Actualizaciones de columnas (Migraciones simples)
+        // Actualizaciones de columnas
         const ensureColumn = async (table, column, definition) => {
             try {
                 await dbRun(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-                console.log(`Columna ${column} agregada a ${table}`);
-            } catch (e) {
-                // Ignorar si ya existe
-            }
+            } catch (e) { }
         };
 
         await ensureColumn("productos", "costo", "REAL DEFAULT 0");
@@ -156,16 +154,11 @@ initDB();
 
 // --- RUTAS ---
 
-// 1. DASHBOARD (SOLUCIÓN A ERROR api/dashboard)
+// 1. DASHBOARD
 app.get("/api/dashboard", async (req, res) => {
     try {
-        // Ventas Hoy
         const ventasHoy = await dbGet("SELECT SUM(precio_total) as total, COUNT(DISTINCT ticket_id) as tickets FROM ventas WHERE date(fecha) = date('now', 'localtime')");
-        
-        // Gastos Hoy
         const gastosHoy = await dbGet("SELECT SUM(monto) as total FROM gastos WHERE date(fecha) = date('now', 'localtime')");
-        
-        // Stock Bajo (Ejemplo: menos de 5 unidades)
         const prodBajo = await dbAll("SELECT nombre, stock FROM productos WHERE stock <= 5");
         const cigBajo = await dbAll("SELECT nombre, stock FROM cigarrillos WHERE stock <= 5");
         
@@ -180,7 +173,7 @@ app.get("/api/dashboard", async (req, res) => {
     }
 });
 
-// 2. RESUMEN INDEPENDIENTE (SOLUCIÓN A ERROR api/resumen_dia_independiente)
+// 2. RESUMEN INDEPENDIENTE
 app.get("/api/resumen_dia_independiente", async (req, res) => {
     try {
         const ventas = await dbAll("SELECT * FROM ventas WHERE date(fecha) = date('now', 'localtime')");
@@ -220,7 +213,83 @@ app.get("/api/resumen_dia_independiente", async (req, res) => {
     }
 });
 
-// 3. CLIENTES (SOLUCIÓN A ERROR api/clientes)
+// 3. NUEVOS ENDPOINTS PARA CIERRE ESPECÍFICO (SOLUCIÓN CARGANDO...)
+
+// Ventas del día detalladas
+app.get("/api/ventas/hoy", (req, res) => {
+    const sql = "SELECT * FROM ventas WHERE date(fecha) = date('now', 'localtime') ORDER BY fecha DESC";
+    db.all(sql, [], (err, rows) => {
+        if (err) res.status(500).json({ error: err.message });
+        else res.json(rows);
+    });
+});
+
+// Resumen SOLO Cigarrillos
+app.get("/api/cierre/cigarrillos", async (req, res) => {
+    try {
+        // Buscamos ventas donde la categoria sea 'Cigarrillos' o 'cigarrillos'
+        const ventas = await dbAll("SELECT * FROM ventas WHERE date(fecha) = date('now', 'localtime') AND LOWER(categoria) LIKE '%cigarrillo%'");
+        
+        let total = 0;
+        let costo = 0; // Si quisieras calcular ganancia
+
+        ventas.forEach(v => {
+            total += v.precio_total;
+        });
+
+        res.json({
+            total_ventas: total,
+            cantidad_tickets: ventas.length,
+            items: ventas
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Resumen General (Todo MENOS Cigarrillos)
+app.get("/api/cierre/general", async (req, res) => {
+    try {
+        // Buscamos ventas donde la categoria NO sea cigarrillos
+        const ventas = await dbAll("SELECT * FROM ventas WHERE date(fecha) = date('now', 'localtime') AND LOWER(categoria) NOT LIKE '%cigarrillo%'");
+        const gastos = await dbAll("SELECT * FROM gastos WHERE date(fecha) = date('now', 'localtime')");
+        const retiros = await dbAll("SELECT * FROM retiros WHERE date(fecha) = date('now', 'localtime')");
+
+        let totalEfvo = 0;
+        let totalDig = 0;
+
+        ventas.forEach(v => {
+            if (v.pago_efectivo > 0 || v.pago_digital > 0) {
+                totalEfvo += v.pago_efectivo;
+                totalDig += v.pago_digital;
+            } else {
+                if (v.metodo_pago === 'Efectivo') totalEfvo += v.precio_total;
+                else if (v.metodo_pago === 'Transferencia' || v.metodo_pago === 'Debito') totalDig += v.precio_total;
+                else if (v.metodo_pago === 'Mixto') {
+                    totalEfvo += v.precio_total / 2;
+                    totalDig += v.precio_total / 2;
+                }
+            }
+        });
+
+        const totalGastos = gastos.reduce((sum, g) => sum + g.monto, 0);
+        const totalRetiros = retiros.reduce((sum, r) => sum + r.monto, 0);
+
+        res.json({
+            total_efectivo: totalEfvo,
+            total_digital: totalDig,
+            total_ventas: totalEfvo + totalDig,
+            gastos: totalGastos,
+            retiros: totalRetiros,
+            neto: (totalEfvo + totalDig) - totalGastos - totalRetiros
+        });
+
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 4. CLIENTES
 app.get("/api/clientes", (req, res) => {
     db.all("SELECT * FROM clientes ORDER BY nombre", [], (err, rows) => {
         if (err) res.status(500).json({ error: err.message });
@@ -246,7 +315,7 @@ app.delete("/api/clientes/:id", (req, res) => {
     });
 });
 
-// --- RESTO DE RUTAS EXISTENTES ---
+// --- RESTO DE RUTAS ---
 
 // PRODUCTOS
 app.get("/api/productos", (req, res) => {
@@ -325,14 +394,11 @@ app.delete("/api/cigarrillos/:id", (req, res) => {
 // VENTAS
 app.post("/api/ventas", async (req, res) => {
     const { productos, metodo_pago, pago_efectivo, pago_digital, ticket_a_corregir, cliente_id } = req.body;
-    // Nota: El total a veces se calcula en el front, pero es mejor recalcularlo o recibirlo.
-    // Aquí asumimos que productos trae precio y cantidad.
     
     if (!productos || productos.length === 0) {
         return res.status(400).json({ error: "No hay productos en la venta" });
     }
 
-    // Calcular total backend para seguridad
     const total = productos.reduce((acc, p) => acc + (p.precio * p.cantidad), 0);
 
     try {
@@ -362,7 +428,6 @@ app.post("/api/ventas", async (req, res) => {
         for (const item of productos) {
             const tabla = (item.categoria && item.categoria.toLowerCase() === 'cigarrillo') ? 'cigarrillos' : (item.tipo === 'Manual' ? null : 'productos');
             
-            // Descontar stock solo si no es manual
             if (tabla) {
                 await dbRun(`UPDATE ${tabla} SET stock = stock - ? WHERE nombre = ?`, [item.cantidad, item.nombre]);
             }
@@ -372,16 +437,12 @@ app.post("/api/ventas", async (req, res) => {
                 [ticket_id, item.nombre, item.cantidad, total, metodo_pago, tipo, pEfvo, pDig, esEdicion]);
         }
 
-        // Si es Fiado
         if (metodo_pago === 'Fiado' || cliente_id) {
              let nombreCliente = "Cliente Varios";
              if(cliente_id){
                  const cli = await dbGet("SELECT nombre FROM clientes WHERE id = ?", [cliente_id]);
                  if(cli) nombreCliente = cli.nombre;
              }
-             
-             // Si hay pago anticipado, se resta del monto a deber (lógica simplificada)
-             // Aquí asumimos que si es fiado va todo a la cuenta, salvo que haya lógica extra en el front.
              await dbRun("INSERT INTO fiados (cliente, monto, descripcion) VALUES (?, ?, ?)", 
                  [nombreCliente, total, `Fiado Ticket ${ticket_id}`]);
         }
@@ -409,10 +470,9 @@ app.delete("/api/ventas/:ticket_id", async (req, res) => {
 
         for (const item of items) {
             const tabla = (item.categoria && item.categoria.toLowerCase() === 'cigarrillo') ? 'cigarrillos' : 'productos';
-            // Solo devolvemos stock si existe la tabla (evitamos error con manuales)
              try {
                 await dbRun(`UPDATE ${tabla} SET stock = stock + ? WHERE nombre = ?`, [item.cantidad, item.producto]);
-             } catch(e) { /* Ignorar si no encuentra producto manual */ }
+             } catch(e) { }
         }
 
         await dbRun("DELETE FROM ventas WHERE ticket_id = ?", [ticket_id]);
@@ -633,6 +693,11 @@ app.get("/api/reportes/ventas_semana", (req, res) => {
         }
         res.json(resultado);
     });
+});
+
+// --- MANEJO DE RUTAS SPA ---
+app.get(/.*/, (req, res) => {
+    res.sendFile(path.join(__dirname, '../dist/index.html'));
 });
 
 app.listen(port, () => {
