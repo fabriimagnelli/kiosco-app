@@ -1,18 +1,22 @@
 import React, { useState, useEffect } from "react";
-import { User, DollarSign, Plus, Eye, X, Smartphone, CreditCard, Trash2, Edit2, Save } from "lucide-react";
+import { User, Phone, MapPin, DollarSign, Search, Plus, Trash2, ChevronRight, X, Calendar, ArrowDownLeft, ArrowUpRight } from "lucide-react";
 
-function Clientes() {
+function Deudores() {
   const [clientes, setClientes] = useState([]);
-  const [nuevoCliente, setNuevoCliente] = useState({ nombre: "", telefono: "" });
-  
-  // Estado para editar
-  const [editandoCliente, setEditandoCliente] = useState(null); 
-
-  // Estados para Modal de Detalle/Pagos
-  const [clienteSelec, setClienteSelec] = useState(null);
   const [historial, setHistorial] = useState([]);
+  const [seleccionado, setSeleccionado] = useState(null);
+  
+  // ESTADO PARA LA BÚSQUEDA
+  const [busqueda, setBusqueda] = useState("");
+
+  const [showModal, setShowModal] = useState(false);
+  const [showModalPago, setShowModalPago] = useState(false);
+  
+  // Formulario Cliente
+  const [nuevoCliente, setNuevoCliente] = useState({ nombre: "", telefono: "", direccion: "", email: "" });
+  
+  // Formulario Pago
   const [montoPago, setMontoPago] = useState("");
-  const [descPago, setDescPago] = useState("");
   const [metodoPago, setMetodoPago] = useState("Efectivo");
 
   useEffect(() => {
@@ -21,283 +25,283 @@ function Clientes() {
 
   const cargarClientes = () => {
     fetch("http://localhost:3001/api/clientes")
-      .then(res => res.json())
-      .then(setClientes);
+      .then((res) => res.json())
+      .then((data) => setClientes(data));
   };
 
-  const crearCliente = (e) => {
-    e.preventDefault();
-    if(!nuevoCliente.nombre) return;
-    fetch("http://localhost:3001/api/clientes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(nuevoCliente)
-    }).then(() => {
-        setNuevoCliente({ nombre: "", telefono: "" });
-        cargarClientes();
-    });
-  };
-
-  const iniciarEdicion = (cliente) => {
-    setEditandoCliente({ ...cliente });
-  };
-
-  const guardarEdicion = () => {
-    if (!editandoCliente.nombre) return;
-    fetch(`http://localhost:3001/api/clientes/${editandoCliente.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nombre: editandoCliente.nombre, telefono: editandoCliente.telefono })
-    }).then(() => {
-        setEditandoCliente(null);
-        cargarClientes();
-    });
-  };
-
-  const verDetalle = (cliente) => {
-    setClienteSelec(cliente);
-    cargarHistorial(cliente.id);
-  };
-
-  const cargarHistorial = (id) => {
-    fetch(`http://localhost:3001/api/fiados/${id}`)
+  const seleccionarCliente = (cliente) => {
+    setSeleccionado(cliente);
+    fetch(`http://localhost:3001/api/fiados/${cliente.id}`)
         .then(res => res.json())
         .then(setHistorial);
   };
 
-  const registrarPago = (e) => {
+  // --- LÓGICA DE FILTRADO ---
+  const clientesFiltrados = clientes.filter(c => 
+    c.nombre.toLowerCase().includes(busqueda.toLowerCase())
+  );
+
+  const handleCrearCliente = (e) => {
     e.preventDefault();
-    if(!montoPago) return;
+    fetch("http://localhost:3001/api/clientes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(nuevoCliente),
+    }).then(() => {
+      setShowModal(false);
+      setNuevoCliente({ nombre: "", telefono: "", direccion: "", email: "" });
+      cargarClientes();
+    });
+  };
+
+  const handleEliminarCliente = (id, e) => {
+    e.stopPropagation();
+    if (confirm("¿Estás seguro de eliminar este cliente y todo su historial?")) {
+        fetch(`http://localhost:3001/api/clientes/${id}`, { method: "DELETE" })
+            .then(() => {
+                setSeleccionado(null);
+                cargarClientes();
+            });
+    }
+  };
+
+  const handleRegistrarPago = (e) => {
+    e.preventDefault();
+    if (!montoPago || parseFloat(montoPago) <= 0) return alert("Ingrese un monto válido");
 
     fetch("http://localhost:3001/api/fiados", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-            cliente_id: clienteSelec.id, 
-            monto: -Math.abs(parseFloat(montoPago)), 
-            descripcion: descPago || "Pago a cuenta",
+        body: JSON.stringify({
+            cliente_id: seleccionado.id,
+            monto: -Math.abs(parseFloat(montoPago)), // Monto negativo para restar deuda
+            descripcion: "Pago de deuda",
             metodo_pago: metodoPago
         })
     }).then(() => {
+        setShowModalPago(false);
         setMontoPago("");
-        setDescPago("");
         setMetodoPago("Efectivo");
-        cargarHistorial(clienteSelec.id);
-        cargarClientes();
+        seleccionarCliente(seleccionado); // Recargar historial
+        cargarClientes(); // Actualizar total deuda en lista
     });
   };
 
-  const eliminarTransaccion = (id) => {
-    if(!confirm("¿Estás seguro de eliminar este movimiento? Esto afectará el saldo del cliente.")) return;
-    fetch(`http://localhost:3001/api/fiados/${id}`, { method: "DELETE" })
-      .then(() => {
-          cargarHistorial(clienteSelec.id);
-          cargarClientes();
-      });
-  };
-
   return (
-    <div className="flex flex-col h-full bg-slate-100 p-6 gap-6">
+    <div className="flex flex-col h-full bg-slate-100 p-4 gap-4 overflow-hidden">
       
-      {/* FORMULARIO CREAR CLIENTE */}
-      <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-        <h2 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
-            <User size={20} className="text-blue-600"/> Nuevo Cliente
-        </h2>
-        <form onSubmit={crearCliente} className="flex gap-4">
-            <input 
-                className="flex-1 p-3 border rounded-xl" 
-                placeholder="Nombre del Cliente" 
-                value={nuevoCliente.nombre}
-                onChange={e => setNuevoCliente({...nuevoCliente, nombre: e.target.value})}
-            />
-            <input 
-                className="w-48 p-3 border rounded-xl" 
-                placeholder="Teléfono" 
-                value={nuevoCliente.telefono}
-                onChange={e => setNuevoCliente({...nuevoCliente, telefono: e.target.value})}
-            />
-            <button className="bg-blue-600 text-white p-3 rounded-xl hover:bg-blue-700 font-bold">
-                <Plus size={24}/>
-            </button>
-        </form>
+      {/* HEADER */}
+      <div className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-slate-200 shrink-0">
+        <h1 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+            <User className="text-blue-600" /> Clientes & Deudores
+        </h1>
+        <button 
+            onClick={() => setShowModal(true)}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-blue-700 shadow-md transition-all active:scale-95"
+        >
+            <Plus size={18}/> Nuevo Cliente
+        </button>
       </div>
 
-      {/* LISTA DE CLIENTES */}
-      <div className="flex-1 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
-        <div className="p-4 bg-slate-50 border-b font-bold text-slate-500 text-xs uppercase grid grid-cols-12 gap-4">
-            <div className="col-span-4">Nombre</div>
-            <div className="col-span-3">Teléfono</div>
-            <div className="col-span-3 text-right">Saldo Deudor</div>
-            <div className="col-span-2 text-center">Acciones</div>
-        </div>
-        <div className="flex-1 overflow-y-auto">
-            {clientes.map(c => (
-                <div key={c.id} className="grid grid-cols-12 gap-4 p-4 border-b hover:bg-slate-50 items-center">
-                    
-                    {/* NOMBRE Y TELÉFONO (EDITABLE) */}
-                    {editandoCliente && editandoCliente.id === c.id ? (
-                        <>
-                            <div className="col-span-4">
-                                <input 
-                                    className="w-full p-1 border rounded"
-                                    value={editandoCliente.nombre}
-                                    onChange={e => setEditandoCliente({...editandoCliente, nombre: e.target.value})}
-                                />
-                            </div>
-                            <div className="col-span-3">
-                                <input 
-                                    className="w-full p-1 border rounded"
-                                    value={editandoCliente.telefono}
-                                    onChange={e => setEditandoCliente({...editandoCliente, telefono: e.target.value})}
-                                />
-                            </div>
-                        </>
-                    ) : (
-                        <>
-                            <div className="col-span-4 font-bold text-slate-700">{c.nombre}</div>
-                            <div className="col-span-3 text-slate-500 text-sm flex items-center gap-1">
-                                <Smartphone size={14}/> {c.telefono || "-"}
-                            </div>
-                        </>
-                    )}
-
-                    <div className={`col-span-3 text-right font-bold text-lg ${c.total_deuda > 0 ? 'text-red-500' : 'text-green-500'}`}>
-                        $ {c.total_deuda ? c.total_deuda.toLocaleString() : "0"}
-                    </div>
-                    
-                    <div className="col-span-2 text-center flex justify-center gap-2">
-                        {editandoCliente && editandoCliente.id === c.id ? (
-                            <>
-                                <button onClick={guardarEdicion} className="bg-green-100 text-green-600 p-2 rounded-lg hover:bg-green-200">
-                                    <Save size={18}/>
-                                </button>
-                                <button onClick={() => setEditandoCliente(null)} className="bg-red-100 text-red-600 p-2 rounded-lg hover:bg-red-200">
-                                    <X size={18}/>
-                                </button>
-                            </>
-                        ) : (
-                            <>
-                                <button onClick={() => iniciarEdicion(c)} className="bg-slate-100 text-slate-600 p-2 rounded-lg hover:bg-orange-100 hover:text-orange-600 transition-colors" title="Editar">
-                                    <Edit2 size={18}/>
-                                </button>
-                                <button onClick={() => verDetalle(c)} className="bg-slate-100 text-slate-600 p-2 rounded-lg hover:bg-blue-100 hover:text-blue-600 transition-colors" title="Ver Historial">
-                                    <Eye size={18}/>
-                                </button>
-                            </>
-                        )}
-                    </div>
-                </div>
-            ))}
-        </div>
-      </div>
-
-      {/* MODAL DETALLE Y PAGOS */}
-      {clienteSelec && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
-                
-                <div className="p-6 border-b flex justify-between items-center bg-slate-50 rounded-t-2xl">
-                    <div>
-                        <h2 className="text-xl font-bold text-slate-800">{clienteSelec.nombre}</h2>
-                        <p className="text-sm text-slate-500">Historial de movimientos</p>
-                    </div>
-                    <button onClick={() => setClienteSelec(null)} className="text-slate-400 hover:text-red-500">
-                        <X size={24}/>
-                    </button>
-                </div>
-
-                {/* FORMULARIO DE PAGO */}
-                <div className="p-6 bg-blue-50 border-b border-blue-100">
-                    <h3 className="text-sm font-bold text-blue-800 uppercase mb-3 flex items-center gap-2">
-                        <DollarSign size={16}/> Registrar Pago
-                    </h3>
-                    <form onSubmit={registrarPago} className="flex flex-col md:flex-row gap-3">
-                        <div className="flex-1">
-                            <input 
-                                type="number" 
-                                className="w-full p-3 border border-blue-200 rounded-lg"
-                                placeholder="Monto ($)"
-                                value={montoPago}
-                                onChange={e => setMontoPago(e.target.value)}
-                            />
-                        </div>
-                        <div className="flex-1">
-                            <input 
-                                type="text" 
-                                className="w-full p-3 border border-blue-200 rounded-lg"
-                                placeholder="Descripción (Opcional)"
-                                value={descPago}
-                                onChange={e => setDescPago(e.target.value)}
-                            />
-                        </div>
-                        
-                        <div className="w-full md:w-40 relative">
-                            <CreditCard size={16} className="absolute left-3 top-3.5 text-blue-400"/>
-                            <select 
-                                className="w-full pl-9 pr-3 py-3 border border-blue-200 rounded-lg bg-white text-blue-900 font-bold text-sm outline-none cursor-pointer"
-                                value={metodoPago}
-                                onChange={e => setMetodoPago(e.target.value)}
-                            >
-                                <option value="Efectivo">Efectivo</option>
-                                <option value="Transferencia">Transferencia</option>
-                            </select>
-                        </div>
-
-                        <button className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-bold shadow-md transition-colors">
-                            PAGAR
+      <div className="flex flex-1 gap-4 overflow-hidden">
+        
+        {/* LISTA DE CLIENTES (IZQUIERDA) */}
+        <div className={`flex-1 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col overflow-hidden transition-all duration-300 ${seleccionado ? 'w-1/2' : 'w-full'}`}>
+            
+            {/* BARRA DE BÚSQUEDA */}
+            <div className="p-4 border-b bg-slate-50">
+                <div className="flex items-center gap-2 bg-white border border-slate-300 rounded-lg px-3 py-2 shadow-sm focus-within:ring-2 focus-within:ring-blue-200 transition-all">
+                    <Search size={18} className="text-slate-400"/>
+                    <input 
+                        className="w-full outline-none text-slate-700 font-medium bg-transparent"
+                        placeholder="Buscar cliente por nombre..."
+                        value={busqueda}
+                        onChange={(e) => setBusqueda(e.target.value)}
+                        autoFocus
+                    />
+                    {busqueda && (
+                        <button onClick={() => setBusqueda("")} className="text-slate-400 hover:text-slate-600">
+                            <X size={16}/>
                         </button>
-                    </form>
+                    )}
                 </div>
+            </div>
 
-                {/* LISTA HISTORIAL CON BOTÓN ELIMINAR */}
-                <div className="flex-1 overflow-y-auto p-0">
+            {/* LISTA FILTRADA */}
+            <div className="overflow-y-auto flex-1">
+                {clientesFiltrados.length === 0 ? (
+                    <div className="text-center p-8 text-slate-400 italic">
+                        No se encontraron clientes.
+                    </div>
+                ) : (
                     <table className="w-full text-left">
-                        <thead className="bg-slate-50 text-xs uppercase text-slate-500 font-bold sticky top-0">
+                        <thead className="bg-white text-slate-500 text-xs uppercase font-bold sticky top-0 z-10 border-b">
                             <tr>
-                                <th className="p-4">Fecha</th>
-                                <th className="p-4">Descripción</th>
-                                <th className="p-4 text-center">Método</th>
-                                <th className="p-4 text-right">Monto</th>
-                                <th className="p-4 text-center">Acción</th>
+                                <th className="p-4">Cliente</th>
+                                <th className="p-4 text-right">Estado Deuda</th>
+                                <th className="p-4 w-10"></th>
                             </tr>
                         </thead>
-                        <tbody>
-                            {historial.map(h => (
-                                <tr key={h.id} className="border-b last:border-0 hover:bg-slate-50">
-                                    <td className="p-4 text-xs text-slate-500">
-                                        {new Date(h.fecha).toLocaleDateString()}
+                        <tbody className="divide-y divide-slate-100">
+                            {clientesFiltrados.map((c) => (
+                                <tr 
+                                    key={c.id} 
+                                    onClick={() => seleccionarCliente(c)}
+                                    className={`cursor-pointer transition hover:bg-slate-50 group ${seleccionado?.id === c.id ? "bg-blue-50" : ""}`}
+                                >
+                                    <td className="p-4">
+                                        <p className="font-bold text-slate-700">{c.nombre}</p>
+                                        <div className="flex items-center gap-3 mt-1 text-xs text-slate-400">
+                                            {c.telefono && <span className="flex items-center gap-1"><Phone size={10}/> {c.telefono}</span>}
+                                            {c.direccion && <span className="flex items-center gap-1"><MapPin size={10}/> {c.direccion}</span>}
+                                        </div>
                                     </td>
-                                    <td className="p-4 text-sm font-medium text-slate-700">{h.descripcion}</td>
-                                    <td className="p-4 text-center">
-                                        {h.monto < 0 && (
-                                            <span className={`text-[10px] font-bold px-2 py-1 rounded border ${
-                                                h.metodo_pago === 'Transferencia' 
-                                                ? 'bg-purple-50 text-purple-600 border-purple-100'
-                                                : 'bg-green-50 text-green-600 border-green-100'
-                                            }`}>
-                                                {h.metodo_pago || 'Efectivo'}
+                                    <td className="p-4 text-right">
+                                        {c.total_deuda > 0 ? (
+                                            <span className="bg-red-100 text-red-600 px-3 py-1 rounded-full text-xs font-black">
+                                                $ {c.total_deuda.toLocaleString()}
+                                            </span>
+                                        ) : (
+                                            <span className="bg-green-100 text-green-600 px-3 py-1 rounded-full text-xs font-bold">
+                                                Al día
                                             </span>
                                         )}
                                     </td>
-                                    <td className={`p-4 text-right font-bold ${h.monto > 0 ? 'text-red-500' : 'text-green-600'}`}>
-                                        $ {Math.abs(h.monto).toLocaleString()}
-                                    </td>
-                                    <td className="p-4 text-center">
-                                        <button 
-                                            onClick={() => eliminarTransaccion(h.id)}
-                                            className="text-slate-300 hover:text-red-500 transition-colors"
-                                            title="Eliminar movimiento"
-                                        >
-                                            <Trash2 size={16} />
-                                        </button>
+                                    <td className="p-4 text-right">
+                                        <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button onClick={(e) => handleEliminarCliente(c.id, e)} className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition">
+                                                <Trash2 size={16}/>
+                                            </button>
+                                            <ChevronRight size={20} className="text-slate-300"/>
+                                        </div>
                                     </td>
                                 </tr>
                             ))}
                         </tbody>
                     </table>
-                </div>
+                )}
+            </div>
+        </div>
 
+        {/* DETALLE DEL CLIENTE (DERECHA) */}
+        {seleccionado && (
+            <div className="w-1/2 min-w-[350px] flex flex-col animate-slide-in-right">
+                <div className="bg-white rounded-xl shadow-lg border border-slate-200 flex flex-col h-full overflow-hidden relative">
+                    
+                    {/* Header Detalle */}
+                    <div className="bg-slate-900 p-6 text-white relative">
+                        <button onClick={() => setSeleccionado(null)} className="absolute top-4 right-4 p-1.5 bg-white/10 hover:bg-white/20 rounded-full transition"><X size={16}/></button>
+                        
+                        <h2 className="text-2xl font-bold">{seleccionado.nombre}</h2>
+                        <div className="flex gap-4 mt-2 text-sm text-slate-300">
+                            {seleccionado.telefono && <span className="flex items-center gap-1"><Phone size={14}/> {seleccionado.telefono}</span>}
+                            {seleccionado.direccion && <span className="flex items-center gap-1"><MapPin size={14}/> {seleccionado.direccion}</span>}
+                        </div>
+
+                        {/* RESUMEN DEUDA */}
+                        <div className="mt-6 flex items-center justify-between bg-white/10 p-4 rounded-xl border border-white/10">
+                            <div>
+                                <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Deuda Actual</p>
+                                <p className={`text-3xl font-black ${seleccionado.total_deuda > 0 ? "text-red-400" : "text-green-400"}`}>
+                                    $ {seleccionado.total_deuda?.toLocaleString() || "0"}
+                                </p>
+                            </div>
+                            {seleccionado.total_deuda > 0 && (
+                                <button 
+                                    onClick={() => setShowModalPago(true)}
+                                    className="bg-green-500 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-green-600 shadow-lg flex items-center gap-2 transition active:scale-95"
+                                >
+                                    <DollarSign size={16}/> Registrar Pago
+                                </button>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* HISTORIAL */}
+                    <div className="flex-1 overflow-y-auto bg-slate-50 p-4">
+                        <h3 className="text-xs font-bold text-slate-500 uppercase mb-3 ml-1">Historial de Movimientos</h3>
+                        <div className="space-y-3">
+                            {historial.map((mov) => (
+                                <div key={mov.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 flex justify-between items-center">
+                                    <div>
+                                        <p className="text-xs text-slate-400 font-bold mb-1 flex items-center gap-1">
+                                            <Calendar size={12}/> {new Date(mov.fecha).toLocaleString()}
+                                        </p>
+                                        <p className="font-medium text-slate-700 text-sm">{mov.descripcion}</p>
+                                        {mov.monto < 0 && <p className="text-[10px] text-slate-400 mt-1">Pago en: {mov.metodo_pago}</p>}
+                                    </div>
+                                    <div className={`text-right font-bold ${mov.monto > 0 ? "text-red-500" : "text-green-500"}`}>
+                                        <div className="flex items-center justify-end gap-1">
+                                            {mov.monto > 0 ? <ArrowUpRight size={14}/> : <ArrowDownLeft size={14}/>}
+                                            <span className="text-lg">$ {Math.abs(mov.monto).toLocaleString()}</span>
+                                        </div>
+                                        <p className="text-[10px] uppercase font-bold opacity-50">{mov.monto > 0 ? "Fiado" : "Pago"}</p>
+                                    </div>
+                                </div>
+                            ))}
+                            {historial.length === 0 && (
+                                <p className="text-center text-slate-400 text-sm py-10">Sin movimientos registrados.</p>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        )}
+      </div>
+
+      {/* MODAL NUEVO CLIENTE */}
+      {showModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md animate-fade-in overflow-hidden">
+                <div className="bg-blue-600 p-4 flex justify-between items-center text-white">
+                    <h3 className="font-bold flex items-center gap-2"><User size={20}/> Nuevo Cliente</h3>
+                    <button onClick={() => setShowModal(false)}><X/></button>
+                </div>
+                <form onSubmit={handleCrearCliente} className="p-6 flex flex-col gap-4">
+                    <input className="border p-3 rounded-lg bg-slate-50 outline-none focus:ring-2 focus:ring-blue-100" placeholder="Nombre Completo *" required value={nuevoCliente.nombre} onChange={e => setNuevoCliente({...nuevoCliente, nombre: e.target.value})} autoFocus />
+                    <input className="border p-3 rounded-lg bg-slate-50 outline-none focus:ring-2 focus:ring-blue-100" placeholder="Teléfono" value={nuevoCliente.telefono} onChange={e => setNuevoCliente({...nuevoCliente, telefono: e.target.value})} />
+                    <input className="border p-3 rounded-lg bg-slate-50 outline-none focus:ring-2 focus:ring-blue-100" placeholder="Dirección" value={nuevoCliente.direccion} onChange={e => setNuevoCliente({...nuevoCliente, direccion: e.target.value})} />
+                    <input className="border p-3 rounded-lg bg-slate-50 outline-none focus:ring-2 focus:ring-blue-100" placeholder="Email (Opcional)" value={nuevoCliente.email} onChange={e => setNuevoCliente({...nuevoCliente, email: e.target.value})} />
+                    <button type="submit" className="bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition shadow-lg mt-2">Guardar Cliente</button>
+                </form>
+            </div>
+        </div>
+      )}
+
+      {/* MODAL PAGO */}
+      {showModalPago && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm animate-fade-in overflow-hidden">
+                <div className="bg-green-600 p-4 flex justify-between items-center text-white">
+                    <h3 className="font-bold flex items-center gap-2"><DollarSign size={20}/> Registrar Pago</h3>
+                    <button onClick={() => setShowModalPago(false)}><X/></button>
+                </div>
+                <form onSubmit={handleRegistrarPago} className="p-6 flex flex-col gap-4">
+                    <div>
+                        <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Monto a pagar</label>
+                        <input 
+                            type="number" 
+                            className="border p-3 rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-green-100 w-full text-2xl font-bold text-green-600" 
+                            placeholder="$ 0.00" 
+                            required 
+                            value={montoPago} 
+                            onChange={e => setMontoPago(e.target.value)} 
+                            autoFocus 
+                        />
+                    </div>
+                    <div>
+                        <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Método de Pago</label>
+                        <select 
+                            className="w-full p-3 border rounded-xl bg-white font-medium"
+                            value={metodoPago}
+                            onChange={(e) => setMetodoPago(e.target.value)}
+                        >
+                            <option value="Efectivo">💵 Efectivo</option>
+                            <option value="Transferencia">💳 Transferencia</option>
+                        </select>
+                    </div>
+                    <button type="submit" className="bg-green-600 text-white py-3 rounded-xl font-bold hover:bg-green-700 transition shadow-lg mt-2">Confirmar Pago</button>
+                </form>
             </div>
         </div>
       )}
@@ -306,4 +310,4 @@ function Clientes() {
   );
 }
 
-export default Clientes;
+export default Deudores;

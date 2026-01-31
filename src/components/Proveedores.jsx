@@ -79,7 +79,12 @@ const [transData, setTransData] = useState({
     
     fetch("http://localhost:3001/api/movimientos_proveedores", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ proveedor_id: transData.proveedor_id, monto: montoFinal, descripcion: transData.descripcion || "Movimiento Manual" })
+      body: JSON.stringify({ 
+          proveedor_id: transData.proveedor_id, 
+          monto: montoFinal, 
+          descripcion: transData.descripcion || "Movimiento Manual",
+          metodo_pago: transData.metodo_pago // Enviamos el método seleccionado
+      })
     }).then(() => {
       setShowModalTrans(false);
       cargarDatos(); // Recarga la lista de movimientos
@@ -262,6 +267,7 @@ const [transData, setTransData] = useState({
                                     <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase mt-2 ${seleccionado.monto > 0 ? "bg-red-500/20 text-red-200" : "bg-green-500/20 text-green-200"}`}>
                                         {seleccionado.monto > 0 ? <><ArrowUpRight size={10}/> Deuda Generada</> : <><ArrowDownLeft size={10}/> Pago Registrado</>}
                                     </div>
+                                    <p className="text-xs text-slate-400 mt-2">Método: {seleccionado.metodo_pago || 'Efectivo'}</p>
                                 </>
                             )}
                          </div>
@@ -375,15 +381,19 @@ const [transData, setTransData] = useState({
                         <button type="button" onClick={() => setTransData({...transData, tipo: 'Deuda'})} className={`flex-1 p-2 rounded font-bold border ${transData.tipo === 'Deuda' ? 'bg-red-50 border-red-200 text-red-600' : 'bg-white text-slate-400'}`}>Generar Deuda</button>
                         <button type="button" onClick={() => setTransData({...transData, tipo: 'Pago'})} className={`flex-1 p-2 rounded font-bold border ${transData.tipo === 'Pago' ? 'bg-green-50 border-green-200 text-green-600' : 'bg-white text-slate-400'}`}>Registrar Pago</button>
                     </div>
+                    
+                    {/* SELECTOR DE MÉTODO DE PAGO */}
                     {transData.tipo === 'Pago' && (
-    <div className="mt-2">
-        <label className="text-xs font-bold text-slate-500 uppercase">Se paga con:</label>
-        <div className="flex gap-2 mt-1">
-            <button type="button" onClick={() => setTransData({...transData, metodo_pago: 'Efectivo'})} className={`flex-1 p-2 rounded text-sm font-bold border ${transData.metodo_pago === 'Efectivo' ? 'bg-green-100 border-green-300 text-green-700' : 'bg-slate-50'}`}>💵 Efectivo (Caja)</button>
-            <button type="button" onClick={() => setTransData({...transData, metodo_pago: 'Digital'})} className={`flex-1 p-2 rounded text-sm font-bold border ${transData.metodo_pago === 'Digital' ? 'bg-blue-100 border-blue-300 text-blue-700' : 'bg-slate-50'}`}>💳 Transferencia/Otro</button>
-        </div>
-    </div>
-)}
+                        <div className="mt-2">
+                            <label className="text-xs font-bold text-slate-500 uppercase">Se paga con:</label>
+                            <div className="flex gap-2 mt-1">
+                                <button type="button" onClick={() => setTransData({...transData, metodo_pago: 'Efectivo'})} className={`flex-1 p-2 rounded text-xs font-bold border ${transData.metodo_pago === 'Efectivo' ? 'bg-green-100 border-green-300 text-green-700' : 'bg-slate-50'}`}>💵 Efectivo (Caja)</button>
+                                <button type="button" onClick={() => setTransData({...transData, metodo_pago: 'Digital'})} className={`flex-1 p-2 rounded text-xs font-bold border ${transData.metodo_pago === 'Digital' ? 'bg-blue-100 border-blue-300 text-blue-700' : 'bg-slate-50'}`}>💳 Transferencia</button>
+                                <button type="button" onClick={() => setTransData({...transData, metodo_pago: 'Fondo Retiros'})} className={`flex-1 p-2 rounded text-xs font-bold border ${transData.metodo_pago === 'Fondo Retiros' ? 'bg-orange-100 border-orange-300 text-orange-700' : 'bg-slate-50'}`}>💰 Fondo Retiros</button>
+                            </div>
+                        </div>
+                    )}
+
                     <input type="number" step="0.01" className="border p-3 rounded bg-slate-50 text-xl font-bold" placeholder="$ 0.00" value={transData.monto} onChange={e => setTransData({...transData, monto: e.target.value})} required />
                     <input className="border p-3 rounded bg-slate-50" placeholder="Descripción (Ej: Factura A-0001)" value={transData.descripcion} onChange={e => setTransData({...transData, descripcion: e.target.value})} />
                     <button type="submit" className="bg-slate-800 text-white py-3 rounded font-bold hover:bg-slate-700 shadow-lg">Confirmar Movimiento</button>

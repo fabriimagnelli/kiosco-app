@@ -87,9 +87,8 @@ function Cigarrillos() {
       <div className="flex flex-col md:flex-row justify-between items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-            <Cigarette className="text-yellow-600"/> Gestión de Cigarrillos
+            <Cigarette className="text-yellow-600"/> Inventario de cigarrillos
           </h1>
-          <p className="text-slate-500 text-sm">Precios diferenciados para Efectivo y Digital.</p>
         </div>
         
         <div className="flex gap-2 w-full md:w-auto">
@@ -189,7 +188,7 @@ function Cigarrillos() {
                                 value={form.stock} onChange={e => setForm({...form, stock: e.target.value})}/>
                         </div>
                         <div>
-                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Código (Opcional)</label>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Código</label>
                             <input type="text" className="w-full p-3 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:border-purple-500 outline-none font-mono"
                                 placeholder="Escanear..."
                                 value={form.codigo_barras} onChange={e => setForm({...form, codigo_barras: e.target.value})}/>

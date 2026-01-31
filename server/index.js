@@ -74,16 +74,19 @@ const initDB = async () => {
             fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
             pago_efectivo REAL DEFAULT 0,
             pago_digital REAL DEFAULT 0,
-            editado INTEGER DEFAULT 0
+            editado INTEGER DEFAULT 0,
+            cierre_id INTEGER DEFAULT NULL
         )`);
 
         await dbRun(`CREATE TABLE IF NOT EXISTS fiados (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             cliente TEXT NOT NULL,
+            cliente_id INTEGER,
             monto REAL NOT NULL,
             fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
             descripcion TEXT,
-            pagado INTEGER DEFAULT 0
+            pagado INTEGER DEFAULT 0,
+            metodo_pago TEXT DEFAULT 'Efectivo'
         )`);
 
         await dbRun(`CREATE TABLE IF NOT EXISTS clientes (
@@ -108,7 +111,9 @@ const initDB = async () => {
             descripcion TEXT NOT NULL,
             monto REAL NOT NULL,
             categoria TEXT DEFAULT 'General',
-            fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+            fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+            cierre_id INTEGER DEFAULT NULL,
+            metodo_pago TEXT DEFAULT 'Efectivo'
         )`);
 
         await dbRun(`CREATE TABLE IF NOT EXISTS caja_diaria (
@@ -123,19 +128,55 @@ const initDB = async () => {
             cerrado INTEGER DEFAULT 0
         )`);
 
+        await dbRun(`CREATE TABLE IF NOT EXISTS movimientos_proveedores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            proveedor_id INTEGER,
+            monto REAL,
+            descripcion TEXT,
+            metodo_pago TEXT DEFAULT 'Efectivo',
+            fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
+
+        await dbRun(`CREATE TABLE IF NOT EXISTS caja_cigarrillos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TEXT UNIQUE,
+            inicio REAL DEFAULT 0
+        )`);
+
         await dbRun(`CREATE TABLE IF NOT EXISTS retiros (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             descripcion TEXT,
             monto REAL NOT NULL,
-            fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+            fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+            cierre_id INTEGER DEFAULT NULL
         )`);
 
-        // Actualizaciones de columnas
+        await dbRun(`CREATE TABLE IF NOT EXISTS historial_cierres (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+            tipo TEXT DEFAULT 'General',
+            total_ventas REAL,
+            total_gastos REAL,
+            total_efectivo_real REAL,
+            monto_retiro REAL,
+            observacion TEXT
+        )`);
+
+        // Actualizaciones de columnas (Migraciones automáticas)
         const ensureColumn = async (table, column, definition) => {
             try {
                 await dbRun(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+                console.log(`Columna ${column} agregada a ${table}`);
             } catch (e) { }
         };
+
+        await ensureColumn("gastos", "metodo_pago", "TEXT DEFAULT 'Efectivo'");
+        
+        await ensureColumn("fiados", "cliente", "TEXT");
+        await ensureColumn("fiados", "cliente_id", "INTEGER");
+        await ensureColumn("fiados", "descripcion", "TEXT");
+        await ensureColumn("fiados", "pagado", "INTEGER DEFAULT 0");
+        await ensureColumn("fiados", "metodo_pago", "TEXT DEFAULT 'Efectivo'");
 
         await ensureColumn("productos", "costo", "REAL DEFAULT 0");
         await ensureColumn("productos", "categoria", "TEXT DEFAULT 'General'");
@@ -143,6 +184,17 @@ const initDB = async () => {
         await ensureColumn("ventas", "pago_efectivo", "REAL DEFAULT 0");
         await ensureColumn("ventas", "pago_digital", "REAL DEFAULT 0");
         await ensureColumn("ventas", "editado", "INTEGER DEFAULT 0");
+        
+        await ensureColumn("historial_cierres", "total_ventas", "REAL DEFAULT 0");
+        await ensureColumn("historial_cierres", "total_gastos", "REAL DEFAULT 0");
+        await ensureColumn("historial_cierres", "total_efectivo_real", "REAL DEFAULT 0");
+        await ensureColumn("historial_cierres", "monto_retiro", "REAL DEFAULT 0");
+        await ensureColumn("historial_cierres", "observacion", "TEXT");
+        await ensureColumn("historial_cierres", "tipo", "TEXT DEFAULT 'General'");
+
+        await ensureColumn("ventas", "cierre_id", "INTEGER DEFAULT NULL");
+        await ensureColumn("gastos", "cierre_id", "INTEGER DEFAULT NULL");
+        await ensureColumn("retiros", "cierre_id", "INTEGER DEFAULT NULL");
 
         console.log("Base de datos inicializada correctamente.");
     } catch (e) {
@@ -213,51 +265,68 @@ app.get("/api/resumen_dia_independiente", async (req, res) => {
     }
 });
 
-// 3. NUEVOS ENDPOINTS PARA CIERRE ESPECÍFICO (SOLUCIÓN CARGANDO...)
+// 3. RUTAS DE CIERRE Y RETIROS
 
-// Ventas del día detalladas
-app.get("/api/ventas/hoy", (req, res) => {
-    const sql = "SELECT * FROM ventas WHERE date(fecha) = date('now', 'localtime') ORDER BY fecha DESC";
-    db.all(sql, [], (err, rows) => {
-        if (err) res.status(500).json({ error: err.message });
-        else res.json(rows);
-    });
-});
-
-// Resumen SOLO Cigarrillos
-app.get("/api/cierre/cigarrillos", async (req, res) => {
+// RETIROS
+app.get("/api/retiros", async (req, res) => {
     try {
-        // Buscamos ventas donde la categoria sea 'Cigarrillos' o 'cigarrillos'
-        const ventas = await dbAll("SELECT * FROM ventas WHERE date(fecha) = date('now', 'localtime') AND LOWER(categoria) LIKE '%cigarrillo%'");
+        const manuales = await dbAll("SELECT id, fecha, descripcion, monto, 'MANUAL' as tipo FROM retiros");
         
-        let total = 0;
-        let costo = 0; // Si quisieras calcular ganancia
+        const cierres = await dbAll(`
+            SELECT 
+                id, 
+                fecha, 
+                CASE 
+                    WHEN tipo = 'cigarrillos' THEN 'Retiro Caja Cigarrillos' 
+                    ELSE 'Retiro Caja General' 
+                END as descripcion, 
+                monto_retiro as monto, 
+                'CIERRE' as tipo, 
+                id as cierre_id, 
+                total_ventas, 
+                total_gastos, 
+                total_efectivo_real as total_fisico 
+            FROM historial_cierres 
+            WHERE monto_retiro > 0
+        `);
 
-        ventas.forEach(v => {
-            total += v.precio_total;
-        });
+        const historial = [...manuales, ...cierres];
+        historial.sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+        const total = historial.reduce((acc, item) => acc + item.monto, 0);
 
-        res.json({
-            total_ventas: total,
-            cantidad_tickets: ventas.length,
-            items: ventas
-        });
+        res.json({ historial, total });
+
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
 });
 
-// Resumen General (Todo MENOS Cigarrillos)
+app.post("/api/retiros", (req, res) => {
+    const { descripcion, monto } = req.body;
+    db.run("INSERT INTO retiros (descripcion, monto) VALUES (?,?)", [descripcion, monto], (err) => err ? res.status(500).json({error: err.message}) : res.json({success: true}));
+});
+
+app.delete("/api/retiros/:id", (req, res) => {
+    db.run("DELETE FROM retiros WHERE id=?", [req.params.id], (err) => err ? res.status(500).json({error: err.message}) : res.json({success: true}));
+});
+
+// Cierres
 app.get("/api/cierre/general", async (req, res) => {
     try {
-        // Buscamos ventas donde la categoria NO sea cigarrillos
-        const ventas = await dbAll("SELECT * FROM ventas WHERE date(fecha) = date('now', 'localtime') AND LOWER(categoria) NOT LIKE '%cigarrillo%'");
-        const gastos = await dbAll("SELECT * FROM gastos WHERE date(fecha) = date('now', 'localtime')");
-        const retiros = await dbAll("SELECT * FROM retiros WHERE date(fecha) = date('now', 'localtime')");
+        const caja = await dbGet("SELECT * FROM caja_diaria WHERE fecha = date('now', 'localtime')");
+        const saldoInicial = caja ? caja.inicio_caja : 0;
+
+        const ventas = await dbAll("SELECT * FROM ventas WHERE cierre_id IS NULL AND LOWER(categoria) NOT LIKE '%cigarrillo%'");
+        const gastosData = await dbAll("SELECT * FROM gastos WHERE cierre_id IS NULL");
+        
+        const cobrosData = await dbAll("SELECT * FROM fiados WHERE date(fecha) = date('now', 'localtime') AND monto < 0");
 
         let totalEfvo = 0;
         let totalDig = 0;
+        let cobrosEfvo = 0;
+        let cobrosDig = 0;
 
+        // Sumar Ventas
         ventas.forEach(v => {
             if (v.pago_efectivo > 0 || v.pago_digital > 0) {
                 totalEfvo += v.pago_efectivo;
@@ -272,16 +341,41 @@ app.get("/api/cierre/general", async (req, res) => {
             }
         });
 
-        const totalGastos = gastos.reduce((sum, g) => sum + g.monto, 0);
-        const totalRetiros = retiros.reduce((sum, r) => sum + r.monto, 0);
+        // Sumar Cobros de Deudores
+        cobrosData.forEach(c => {
+            const montoPositivo = Math.abs(c.monto);
+            if (c.metodo_pago === 'Transferencia' || c.metodo_pago === 'Digital') {
+                cobrosDig += montoPositivo;
+            } else {
+                cobrosEfvo += montoPositivo;
+            }
+        });
+
+        let gastosGrales = 0;
+        let pagosProveedores = 0;
+
+        // FILTRAR GASTOS PARA CAJA FÍSICA (Solo restamos si se pagó en Efectivo)
+        gastosData.forEach(g => {
+            if (g.metodo_pago === 'Efectivo') {
+                if (g.categoria && g.categoria.toLowerCase().includes('proveedor')) {
+                    pagosProveedores += g.monto;
+                } else {
+                    gastosGrales += g.monto;
+                }
+            }
+        });
+        
+        const esperado = saldoInicial + totalEfvo + cobrosEfvo - gastosGrales - pagosProveedores;
+        const totalDigital = totalDig + cobrosDig;
 
         res.json({
-            total_efectivo: totalEfvo,
-            total_digital: totalDig,
-            total_ventas: totalEfvo + totalDig,
-            gastos: totalGastos,
-            retiros: totalRetiros,
-            neto: (totalEfvo + totalDig) - totalGastos - totalRetiros
+            saldo_inicial: saldoInicial,
+            ventas: totalEfvo, 
+            cobros: cobrosEfvo, 
+            gastos: gastosGrales,
+            proveedores: pagosProveedores,
+            digital: totalDigital, 
+            esperado: esperado
         });
 
     } catch (e) {
@@ -289,9 +383,82 @@ app.get("/api/cierre/general", async (req, res) => {
     }
 });
 
+app.get("/api/cierre/cigarrillos", async (req, res) => {
+    try {
+        const caja = await dbGet("SELECT * FROM caja_cigarrillos WHERE fecha = date('now', 'localtime')");
+        const saldoInicial = caja ? caja.inicio : 0;
+
+        const ventas = await dbAll("SELECT * FROM ventas WHERE cierre_id IS NULL AND LOWER(categoria) LIKE '%cigarrillo%'");
+        
+        let total = 0;
+        let cantidadPack = 0;
+
+        ventas.forEach(v => {
+            total += v.precio_total;
+            cantidadPack += v.cantidad;
+        });
+
+        res.json({
+            saldo_inicial: saldoInicial,
+            ventas: total,
+            cantidad: cantidadPack,
+            items: ventas
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post("/api/cierres_unificado", async (req, res) => {
+    const { tipo, total_efectivo_real, monto_retiro, observacion, total_ventas, total_gastos } = req.body;
+    const hoy = new Date().toISOString().split('T')[0];
+
+    try {
+        await dbRun("BEGIN TRANSACTION");
+
+        await dbRun("INSERT INTO historial_cierres (tipo, total_ventas, total_gastos, total_efectivo_real, monto_retiro, observacion) VALUES (?, ?, ?, ?, ?, ?)", 
+            [tipo || 'General', total_ventas || 0, total_gastos || 0, total_efectivo_real, monto_retiro, observacion]
+        );
+        
+        const cierreRow = await dbGet("SELECT last_insert_rowid() as id");
+        const cierreId = cierreRow.id;
+
+        const nuevoInicio = total_efectivo_real - monto_retiro;
+
+        if (tipo === 'cigarrillos') {
+            await dbRun("UPDATE ventas SET cierre_id = ? WHERE cierre_id IS NULL AND LOWER(categoria) LIKE '%cigarrillo%'", [cierreId]);
+            const existeCaja = await dbGet("SELECT * FROM caja_cigarrillos WHERE fecha = ?", [hoy]);
+            if(existeCaja) {
+                await dbRun("UPDATE caja_cigarrillos SET inicio = ? WHERE fecha = ?", [nuevoInicio, hoy]);
+            } else {
+                await dbRun("INSERT INTO caja_cigarrillos (fecha, inicio) VALUES (?, ?)", [hoy, nuevoInicio]);
+            }
+        } else {
+            await dbRun("UPDATE ventas SET cierre_id = ? WHERE cierre_id IS NULL AND LOWER(categoria) NOT LIKE '%cigarrillo%'", [cierreId]);
+            await dbRun("UPDATE gastos SET cierre_id = ? WHERE cierre_id IS NULL", [cierreId]);
+            await dbRun("UPDATE retiros SET cierre_id = ? WHERE cierre_id IS NULL", [cierreId]);
+
+            const existeCaja = await dbGet("SELECT * FROM caja_diaria WHERE fecha = ?", [hoy]);
+            if (existeCaja) {
+                await dbRun(`UPDATE caja_diaria SET inicio_caja = ?, total_efectivo = 0, total_digital = 0, gastos = 0, retiros = 0, cerrado = 0 WHERE fecha = ?`, [nuevoInicio, hoy]);
+            } else {
+                await dbRun("INSERT INTO caja_diaria (fecha, inicio_caja) VALUES (?, ?)", [hoy, nuevoInicio]);
+            }
+        }
+
+        await dbRun("COMMIT");
+        res.json({ success: true });
+
+    } catch (e) {
+        await dbRun("ROLLBACK");
+        res.status(500).json({ error: e.message });
+    }
+});
+
+
 // 4. CLIENTES
 app.get("/api/clientes", (req, res) => {
-    db.all("SELECT * FROM clientes ORDER BY nombre", [], (err, rows) => {
+    db.all("SELECT c.*, COALESCE(SUM(f.monto), 0) as total_deuda FROM clientes c LEFT JOIN fiados f ON c.id = f.cliente_id GROUP BY c.id ORDER BY c.nombre", [], (err, rows) => {
         if (err) res.status(500).json({ error: err.message });
         else res.json(rows);
     });
@@ -312,6 +479,118 @@ app.delete("/api/clientes/:id", (req, res) => {
     db.run("DELETE FROM clientes WHERE id=?", req.params.id, function (err) {
         if (err) res.status(500).json({ error: err.message });
         else res.json({ deleted: this.changes });
+    });
+});
+
+// 5. FIADOS Y MOVIMIENTOS
+app.get("/api/fiados", (req, res) => {
+    db.all("SELECT * FROM fiados ORDER BY fecha DESC", [], (err, rows) => {
+        if (err) res.status(500).json({ error: err.message });
+        else res.json(rows);
+    });
+});
+
+app.get("/api/fiados/:id", (req, res) => {
+    db.all("SELECT * FROM fiados WHERE cliente_id = ? ORDER BY fecha DESC", [req.params.id], (err, rows) => {
+        if (err) res.status(500).json({ error: err.message });
+        else res.json(rows || []);
+    });
+});
+
+app.post("/api/fiados", (req, res) => {
+    const { cliente_id, monto, descripcion, metodo_pago } = req.body;
+    
+    db.get("SELECT nombre FROM clientes WHERE id = ?", [cliente_id], (err, row) => {
+        const nombreCliente = row ? row.nombre : "Desconocido";
+        
+        db.run("INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago) VALUES (?,?,?,?,?)", 
+            [nombreCliente, cliente_id, monto, descripcion, metodo_pago || 'Efectivo'], 
+            function(err) {
+                if(err) res.status(500).json({error: err.message});
+                else res.json({id: this.lastID});
+            }
+        );
+    });
+});
+
+app.delete("/api/fiados/:id", (req, res) => {
+    db.run("DELETE FROM fiados WHERE id=?", req.params.id, function(err) {
+        if(err) res.status(500).json({error: err.message});
+        else res.json({success: true});
+    });
+});
+
+// 6. PROVEEDORES
+app.get("/api/proveedores", (req, res) => {
+    db.all("SELECT * FROM proveedores ORDER BY nombre", [], (err, rows) => res.json(rows || []));
+});
+app.post("/api/proveedores", (req, res) => {
+    const { nombre, telefono, direccion, dia_visita, rubro } = req.body;
+    db.run("INSERT INTO proveedores (nombre, telefono, direccion, dia_visita, rubro) VALUES (?,?,?,?,?)",
+        [nombre, telefono, direccion, dia_visita, rubro], (err) => err ? res.status(500).json({error: err.message}) : res.json({success: true}));
+});
+app.delete("/api/proveedores/:id", (req, res) => {
+    db.run("DELETE FROM proveedores WHERE id=?", [req.params.id], (err) => err ? res.status(500).json({error: err.message}) : res.json({success: true}));
+});
+
+app.get("/api/movimientos_todos", (req, res) => {
+    const sql = `
+        SELECT m.*, p.nombre as proveedor_nombre 
+        FROM movimientos_proveedores m 
+        JOIN proveedores p ON m.proveedor_id = p.id 
+        ORDER BY m.fecha DESC`;
+    db.all(sql, [], (err, rows) => {
+        if(err) res.status(500).json({error: err.message});
+        else res.json(rows || []);
+    });
+});
+
+// MOVIMIENTOS PROVEEDORES CORREGIDO (Registra en GASTOS si es Efectivo)
+app.post("/api/movimientos_proveedores", async (req, res) => {
+    const { proveedor_id, monto, descripcion, metodo_pago } = req.body;
+    const metodo = metodo_pago || 'Efectivo';
+
+    try {
+        await dbRun("BEGIN TRANSACTION");
+
+        // 1. Guardar en historial de proveedor
+        await dbRun("INSERT INTO movimientos_proveedores (proveedor_id, monto, descripcion, metodo_pago) VALUES (?,?,?,?)",
+            [proveedor_id, monto, descripcion, metodo]
+        );
+
+        // Obtenemos nombre del proveedor para el detalle
+        const prov = await dbGet("SELECT nombre FROM proveedores WHERE id = ?", [proveedor_id]);
+        const nombreProv = prov ? prov.nombre : "Proveedor Desconocido";
+        const montoAbs = Math.abs(monto); // El monto viene negativo si es pago, lo hacemos positivo para gastos
+
+        // 2. Si es PAGO (monto negativo)
+        if (monto < 0) {
+            if (metodo === 'Fondo Retiros') {
+                // Descontar del colchón de retiros
+                await dbRun("INSERT INTO retiros (descripcion, monto) VALUES (?, ?)", 
+                    [`Pago Proveedor: ${nombreProv}`, monto] // Mantenemos negativo para restar del fondo
+                );
+            } else if (metodo === 'Efectivo' || !metodo) {
+                // Descontar de la caja chica (registrando como GASTO)
+                await dbRun("INSERT INTO gastos (descripcion, monto, categoria, metodo_pago) VALUES (?,?,?,?)", 
+                    [`Pago a ${nombreProv}: ${descripcion || ''}`, montoAbs, 'Proveedores', 'Efectivo']
+                );
+            }
+        }
+
+        await dbRun("COMMIT");
+        res.json({ success: true });
+
+    } catch (e) {
+        await dbRun("ROLLBACK");
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.delete("/api/movimientos_proveedores/:id", (req, res) => {
+    db.run("DELETE FROM movimientos_proveedores WHERE id=?", [req.params.id], function(err) {
+        if(err) res.status(500).json({error: err.message});
+        else res.json({deleted: this.changes});
     });
 });
 
@@ -393,8 +672,11 @@ app.delete("/api/cigarrillos/:id", (req, res) => {
 
 // VENTAS
 app.post("/api/ventas", async (req, res) => {
-    const { productos, metodo_pago, pago_efectivo, pago_digital, ticket_a_corregir, cliente_id } = req.body;
+    const { productos, metodo_pago, ticket_a_corregir, cliente_id } = req.body;
     
+    const pagoAnticipado = parseFloat(req.body.pago_anticipado) || 0;
+    const metodoAnticipo = req.body.metodo_anticipo || 'Efectivo';
+
     if (!productos || productos.length === 0) {
         return res.status(400).json({ error: "No hay productos en la venta" });
     }
@@ -415,10 +697,13 @@ app.post("/api/ventas", async (req, res) => {
         let pDig = 0;
 
         if (metodo_pago === 'Mixto') {
-            pEfvo = parseFloat(pago_efectivo) || 0;
-            pDig = parseFloat(pago_digital) || 0;
+            pEfvo = parseFloat(req.body.pago_efectivo) || 0;
+            pDig = parseFloat(req.body.pago_digital) || 0;
         } else if (metodo_pago === 'Efectivo') {
             pEfvo = total;
+        } else if (metodo_pago === 'Fiado') {
+            if (metodoAnticipo === 'Efectivo') pEfvo = pagoAnticipado;
+            else pDig = pagoAnticipado;
         } else {
             pDig = total;
         }
@@ -426,25 +711,41 @@ app.post("/api/ventas", async (req, res) => {
         const esEdicion = ticket_a_corregir ? 1 : 0;
 
         for (const item of productos) {
-            const tabla = (item.categoria && item.categoria.toLowerCase() === 'cigarrillo') ? 'cigarrillos' : (item.tipo === 'Manual' ? null : 'productos');
-            
+            let tabla = null;
+            if (item.tipo === 'Cigarrillo' || (item.categoria && item.categoria.toLowerCase().includes('cigarrillo'))) {
+                tabla = 'cigarrillos';
+            } else if (item.tipo === 'Producto') {
+                tabla = 'productos';
+            }
+
             if (tabla) {
+                const productoDB = await dbGet(`SELECT stock FROM ${tabla} WHERE nombre = ?`, [item.nombre]);
+                if (!productoDB) throw new Error(`Producto no encontrado en stock: ${item.nombre}`);
+                if (productoDB.stock < item.cantidad) throw new Error(`Stock insuficiente para ${item.nombre}. Disponible: ${productoDB.stock}`);
                 await dbRun(`UPDATE ${tabla} SET stock = stock - ? WHERE nombre = ?`, [item.cantidad, item.nombre]);
             }
 
-            const tipo = item.tipo || 'General';
+            let categoriaGuardar = item.tipo || 'General';
+            if (tabla === 'cigarrillos' || item.tipo === 'Cigarrillo') {
+                categoriaGuardar = 'Cigarrillo';
+            }
+
             await dbRun(`INSERT INTO ventas (ticket_id, producto, cantidad, precio_total, metodo_pago, categoria, fecha, pago_efectivo, pago_digital, editado) VALUES (?,?,?,?,?,?, datetime('now', 'localtime'), ?, ?, ?)`, 
-                [ticket_id, item.nombre, item.cantidad, total, metodo_pago, tipo, pEfvo, pDig, esEdicion]);
+                [ticket_id, item.nombre, item.cantidad, total, metodo_pago, categoriaGuardar, pEfvo, pDig, esEdicion]);
         }
 
-        if (metodo_pago === 'Fiado' || cliente_id) {
-             let nombreCliente = "Cliente Varios";
-             if(cliente_id){
-                 const cli = await dbGet("SELECT nombre FROM clientes WHERE id = ?", [cliente_id]);
-                 if(cli) nombreCliente = cli.nombre;
+        if (metodo_pago === 'Fiado') {
+             if(!cliente_id) throw new Error("Debe seleccionar un cliente para fiar.");
+             
+             const cli = await dbGet("SELECT nombre FROM clientes WHERE id = ?", [cliente_id]);
+             const nombreCliente = cli ? cli.nombre : "Cliente Desconocido";
+             
+             const deuda = total - pagoAnticipado;
+
+             if(deuda > 0) {
+                 await dbRun("INSERT INTO fiados (cliente, cliente_id, monto, descripcion) VALUES (?, ?, ?, ?)", 
+                     [nombreCliente, cliente_id, deuda, `Fiado Ticket ${ticket_id}`]);
              }
-             await dbRun("INSERT INTO fiados (cliente, monto, descripcion) VALUES (?, ?, ?)", 
-                 [nombreCliente, total, `Fiado Ticket ${ticket_id}`]);
         }
 
         await dbRun("COMMIT");
@@ -469,10 +770,16 @@ app.delete("/api/ventas/:ticket_id", async (req, res) => {
         }
 
         for (const item of items) {
-            const tabla = (item.categoria && item.categoria.toLowerCase() === 'cigarrillo') ? 'cigarrillos' : 'productos';
-             try {
+            let tabla = null;
+            if (item.categoria && item.categoria.toLowerCase().includes('cigarrillo')) {
+                tabla = 'cigarrillos';
+            } else if (item.categoria !== 'Manual') {
+                tabla = 'productos';
+            }
+
+             if(tabla){
                 await dbRun(`UPDATE ${tabla} SET stock = stock + ? WHERE nombre = ?`, [item.cantidad, item.producto]);
-             } catch(e) { }
+             }
         }
 
         await dbRun("DELETE FROM ventas WHERE ticket_id = ?", [ticket_id]);
@@ -493,206 +800,40 @@ app.get("/api/ventas/historial", (req, res) => {
     });
 });
 
-// FIADOS
-app.get("/api/fiados", (req, res) => {
-    db.all("SELECT * FROM fiados ORDER BY fecha DESC", [], (err, rows) => {
-        if (err) res.status(500).json({ error: err.message });
-        else res.json(rows);
-    });
-});
-
-app.post("/api/fiados", (req, res) => {
-    const { cliente, monto, descripcion } = req.body;
-    db.run("INSERT INTO fiados (cliente, monto, descripcion) VALUES (?,?,?)", [cliente, monto, descripcion], function(err) {
-        if(err) res.status(500).json({error: err.message});
-        else res.json({id: this.lastID});
-    });
-});
-
-app.put("/api/fiados/:id", (req, res) => {
-    const { pago } = req.body; 
-    db.get("SELECT * FROM fiados WHERE id=?", [req.params.id], (err, row) => {
-        if(err || !row) return res.status(404).json({error: "No encontrado"});
-        
-        const nuevoMonto = row.monto - pago;
-        const pagado = nuevoMonto <= 0 ? 1 : 0;
-        
-        db.run("UPDATE fiados SET monto=?, pagado=? WHERE id=?", [nuevoMonto < 0 ? 0 : nuevoMonto, pagado, req.params.id], function(e) {
-            if(e) res.status(500).json({error: e.message});
-            else res.json({success: true});
-        });
-    });
-});
-
-app.delete("/api/fiados/:id", (req, res) => {
-    db.run("DELETE FROM fiados WHERE id=?", req.params.id, function(err) {
-        if(err) res.status(500).json({error: err.message});
-        else res.json({success: true});
-    });
-});
-
-// PROVEEDORES
-app.get("/api/proveedores", (req, res) => {
-    db.all("SELECT * FROM proveedores ORDER BY nombre", [], (err, rows) => res.json(rows || []));
-});
-app.post("/api/proveedores", (req, res) => {
-    const { nombre, telefono, direccion, dia_visita, rubro } = req.body;
-    db.run("INSERT INTO proveedores (nombre, telefono, direccion, dia_visita, rubro) VALUES (?,?,?,?,?)",
-        [nombre, telefono, direccion, dia_visita, rubro], (err) => err ? res.status(500).json({error: err.message}) : res.json({success: true}));
-});
-app.delete("/api/proveedores/:id", (req, res) => {
-    db.run("DELETE FROM proveedores WHERE id=?", [req.params.id], (err) => err ? res.status(500).json({error: err.message}) : res.json({success: true}));
-});
-
-// GASTOS
+// GASTOS (SOLUCIÓN A TU PROBLEMA DE CAJA)
 app.get("/api/gastos", (req, res) => {
     db.all("SELECT * FROM gastos ORDER BY fecha DESC", [], (err, rows) => res.json(rows || []));
 });
-app.post("/api/gastos", (req, res) => {
-    const { descripcion, monto, categoria } = req.body;
-    db.run("INSERT INTO gastos (descripcion, monto, categoria) VALUES (?,?,?)", [descripcion, monto, categoria], (err) => err ? res.status(500).json({error: err.message}) : res.json({success: true}));
+
+app.post("/api/gastos", async (req, res) => {
+    const { descripcion, monto, categoria, metodo_pago } = req.body;
+    const metodo = metodo_pago || 'Efectivo';
+
+    try {
+        await dbRun("BEGIN TRANSACTION");
+
+        await dbRun("INSERT INTO gastos (descripcion, monto, categoria, metodo_pago) VALUES (?,?,?,?)", 
+            [descripcion, monto, categoria, metodo]
+        );
+
+        // Si se paga con RETIROS, se inserta en retiros para descontar del fondo
+        if (metodo === 'Retiros') {
+            await dbRun("INSERT INTO retiros (descripcion, monto) VALUES (?, ?)", 
+                [`Gasto: ${descripcion}`, -Math.abs(monto)]
+            );
+        }
+
+        await dbRun("COMMIT");
+        res.json({ success: true });
+
+    } catch (e) {
+        await dbRun("ROLLBACK");
+        res.status(500).json({ error: e.message });
+    }
 });
+
 app.delete("/api/gastos/:id", (req, res) => {
     db.run("DELETE FROM gastos WHERE id=?", [req.params.id], (err) => err ? res.status(500).json({error: err.message}) : res.json({success: true}));
-});
-
-// RETIROS
-app.get("/api/retiros", (req, res) => {
-    db.all("SELECT * FROM retiros ORDER BY fecha DESC", [], (err, rows) => res.json(rows || []));
-});
-app.post("/api/retiros", (req, res) => {
-    const { descripcion, monto } = req.body;
-    db.run("INSERT INTO retiros (descripcion, monto) VALUES (?,?)", [descripcion, monto], (err) => err ? res.status(500).json({error: err.message}) : res.json({success: true}));
-});
-app.delete("/api/retiros/:id", (req, res) => {
-    db.run("DELETE FROM retiros WHERE id=?", [req.params.id], (err) => err ? res.status(500).json({error: err.message}) : res.json({success: true}));
-});
-
-// CAJA DIARIA
-app.get("/api/caja/hoy", (req, res) => {
-    const hoy = new Date().toISOString().split('T')[0];
-    db.get("SELECT * FROM caja_diaria WHERE fecha = ?", [hoy], (err, row) => {
-        if (err) res.status(500).json({ error: err.message });
-        else res.json(row || null);
-    });
-});
-
-app.post("/api/caja/abrir", (req, res) => {
-    const { inicio } = req.body;
-    const hoy = new Date().toISOString().split('T')[0];
-    db.run("INSERT INTO caja_diaria (fecha, inicio_caja) VALUES (?, ?)", [hoy, inicio], function(err) {
-        if(err) {
-            res.status(400).json({ error: "Caja ya abierta hoy" });
-        } else {
-            res.json({ success: true });
-        }
-    });
-});
-
-app.post("/api/caja/cerrar", async (req, res) => {
-    const hoy = new Date().toISOString().split('T')[0];
-    try {
-        const ventas = await dbAll("SELECT * FROM ventas WHERE date(fecha) = date('now', 'localtime')");
-        const gastos = await dbAll("SELECT * FROM gastos WHERE date(fecha) = date('now', 'localtime')");
-        const retiros = await dbAll("SELECT * FROM retiros WHERE date(fecha) = date('now', 'localtime')");
-
-        let totalEfvo = 0;
-        let totalDig = 0;
-        
-        ventas.forEach(v => {
-            if (v.pago_efectivo !== undefined && (v.pago_efectivo > 0 || v.pago_digital > 0)) {
-                totalEfvo += v.pago_efectivo;
-                totalDig += v.pago_digital;
-            } else {
-                if (v.metodo_pago === 'Efectivo') totalEfvo += v.precio_total;
-                else if (v.metodo_pago === 'Transferencia' || v.metodo_pago === 'Debito') totalDig += v.precio_total;
-                else if (v.metodo_pago === 'Mixto') {
-                    totalEfvo += v.precio_total / 2; 
-                    totalDig += v.precio_total / 2;
-                }
-            }
-        });
-
-        const totalGastos = gastos.reduce((sum, g) => sum + g.monto, 0);
-        const totalRetiros = retiros.reduce((sum, r) => sum + r.monto, 0);
-
-        const caja = await dbGet("SELECT * FROM caja_diaria WHERE fecha = ?", [hoy]);
-        const inicio = caja ? caja.inicio_caja : 0;
-        
-        const esperadoCaja = inicio + totalEfvo - totalGastos - totalRetiros;
-
-        db.run(`UPDATE caja_diaria SET 
-            total_efectivo = ?, 
-            total_digital = ?, 
-            gastos = ?, 
-            retiros = ?, 
-            cerrado = 1 
-            WHERE fecha = ?`, 
-            [totalEfvo, totalDig, totalGastos, totalRetiros, hoy], 
-            function(err) {
-            if (err) res.status(500).json({ error: err.message });
-            else res.json({ 
-                success: true, 
-                resumen: { inicio, totalEfvo, totalDig, totalGastos, totalRetiros, esperado: esperadoCaja }
-            });
-        });
-        
-    } catch (e) { res.status(500).json({error: e.message}); }
-});
-
-app.get("/api/caja/estado", async (req, res) => {
-    const hoy = new Date().toISOString().split('T')[0];
-    try {
-        const caja = await dbGet("SELECT * FROM caja_diaria WHERE fecha = ?", [hoy]);
-        if (!caja) return res.json({ abierta: false });
-
-        const ventas = await dbAll("SELECT * FROM ventas WHERE date(fecha) = date('now', 'localtime')");
-        const gastos = await dbAll("SELECT * FROM gastos WHERE date(fecha) = date('now', 'localtime')");
-        const retiros = await dbAll("SELECT * FROM retiros WHERE date(fecha) = date('now', 'localtime')");
-
-        let totalEfvo = 0;
-        let totalDig = 0;
-        ventas.forEach(v => {
-            if (v.pago_efectivo !== undefined && (v.pago_efectivo > 0 || v.pago_digital > 0)) {
-                totalEfvo += v.pago_efectivo;
-                totalDig += v.pago_digital;
-            } else {
-                if (v.metodo_pago === 'Efectivo') totalEfvo += v.precio_total;
-                else if (v.metodo_pago === 'Transferencia' || v.metodo_pago === 'Debito') totalDig += v.precio_total;
-            }
-        });
-
-        const totalGastos = gastos.reduce((sum, g) => sum + g.monto, 0);
-        const totalRetiros = retiros.reduce((sum, r) => sum + r.monto, 0);
-        const esperadoCaja = caja.inicio_caja + totalEfvo - totalGastos - totalRetiros;
-
-        res.json({ 
-            abierta: true, 
-            datos: { 
-                inicio: caja.inicio_caja, 
-                totalEfvo, totalDig, totalGastos, totalRetiros, 
-                esperado: esperadoCaja 
-            }
-        });
-    } catch (e) { res.status(500).json({error: e.message}); }
-});
-
-// REPORTES
-app.get("/api/reportes/productos_top", (req, res) => db.all("SELECT producto as name, SUM(cantidad) as value FROM ventas GROUP BY producto ORDER BY value DESC LIMIT 5", (e, r) => res.json(r || [])));
-app.get("/api/reportes/metodos_pago", (req, res) => db.all("SELECT metodo_pago as name, COUNT(*) as value FROM ventas GROUP BY metodo_pago", (e, r) => res.json(r || [])));
-app.get("/api/reportes/ventas_semana", (req, res) => {
-    const sql = "SELECT strftime('%Y-%m-%d', fecha) as fecha, SUM(precio_total) as total FROM ventas WHERE fecha >= date('now', '-6 days') GROUP BY strftime('%Y-%m-%d', fecha) ORDER BY fecha ASC";
-    db.all(sql, [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        const resultado = [];
-        for(let i=6; i>=0; i--) {
-            const d = new Date(); d.setDate(d.getDate() - i);
-            const fechaStr = d.toISOString().split('T')[0];
-            const dato = rows.find(r => r.fecha === fechaStr);
-            resultado.push({ fecha: fechaStr, total: dato ? dato.total : 0 });
-        }
-        res.json(resultado);
-    });
 });
 
 // --- MANEJO DE RUTAS SPA ---

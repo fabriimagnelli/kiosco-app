@@ -28,7 +28,6 @@ function Ventas() {
   useEffect(() => {
     cargarDatos();
     
-    // VERIFICAR SI VENIMOS A EDITAR UNA VENTA
     if (location.state && location.state.ticketEditar) {
         const ticketId = location.state.ticketEditar;
         setTicketEditando(ticketId);
@@ -39,7 +38,6 @@ function Ventas() {
   const cargarDatos = () => {
     fetch("http://localhost:3001/api/productos").then(r => r.json()).then(p => {
         fetch("http://localhost:3001/api/cigarrillos").then(r2 => r2.json()).then(c => {
-             // Normalizamos datos para búsqueda unificada
              const prods = p.map(x => ({...x, tipo: 'Producto'}));
              const cigs = c.map(x => ({...x, tipo: 'Cigarrillo'}));
              setProductos([...prods, ...cigs]);
@@ -53,17 +51,14 @@ function Ventas() {
         .then(res => res.json())
         .then(items => {
             if(items.length > 0) {
-                // Recuperar método de pago del primer item (asumimos es igual para todos)
                 setMetodo(items[0].metodo_pago);
-                
-                // Reconstruir carrito
                 const nuevoCarrito = items.map(item => ({
-                    id: item.original_id, // ID original para descontar stock correctamente
+                    id: item.original_id,
                     nombre: item.producto,
-                    precio: item.precio_total / item.cantidad, // Recalcular precio unitario
+                    precio: item.precio_total / item.cantidad,
                     cantidad: item.cantidad,
-                    tipo: item.categoria === 'cigarrillo' ? 'Cigarrillo' : 'Producto',
-                    stock: item.stock_actual // Stock actual en DB
+                    tipo: item.categoria === 'cigarrillo' || item.categoria === 'Cigarrillo' ? 'Cigarrillo' : 'Producto',
+                    stock: item.stock_actual
                 }));
                 setCarrito(nuevoCarrito);
             }
@@ -106,17 +101,22 @@ function Ventas() {
   const confirmarVenta = async () => {
     if (carrito.length === 0) return alert("El carrito está vacío");
 
+    // VALIDACIÓN IMPORTANTE: Si es fiado, DEBE haber cliente
+    if (metodo === "Fiado" && !clienteSelec) {
+        return alert("⚠️ Para fiar, debes seleccionar un CLIENTE obligatoriamente.");
+    }
+
     let body = {
       productos: carrito,
       metodo_pago: metodo,
       cliente_id: clienteSelec || null,
       pago_anticipado: pagoAnticipado || 0,
       metodo_anticipo: metodoAnticipo,
-      ticket_a_corregir: ticketEditando // ENVIAMOS EL ID PARA REEMPLAZAR
+      ticket_a_corregir: ticketEditando
     };
 
     if (ticketEditando) {
-        if(!confirm(`⚠️ ESTÁS EDITANDO EL TICKET #${ticketEditando}\n\nAl confirmar, se borrará la venta anterior y se creará esta nueva en su lugar.\n¿Continuar?`)) return;
+        if(!confirm(`⚠️ ESTÁS EDITANDO EL TICKET #${ticketEditando}\n\n¿Continuar?`)) return;
     }
 
     const res = await fetch("http://localhost:3001/api/ventas", {
@@ -127,20 +127,18 @@ function Ventas() {
 
     const data = await res.json();
     if (data.success) {
-      alert(ticketEditando ? "✅ Venta corregida exitosamente." : "✅ Venta registrada!");
+      alert(ticketEditando ? "✅ Venta corregida." : "✅ Venta registrada!");
       setCarrito([]);
-      setTicketEditando(null); // Salir de modo edición
+      setTicketEditando(null);
       setClienteSelec("");
       setPagoAnticipado("");
-      
-      // Limpiar el estado de navegación para no volver a cargar la edición si recarga
+      setMetodo("Efectivo"); // Resetear método
       navigate("/ventas", { state: {} });
     } else {
       alert("Error: " + data.error);
     }
   };
 
-  // Filtrado
   const productosFiltrados = productos.filter(p => 
     p.nombre.toLowerCase().includes(busqueda.toLowerCase()) || 
     (p.codigo_barras && p.codigo_barras.includes(busqueda))
@@ -156,9 +154,9 @@ function Ventas() {
         {ticketEditando && (
             <div className="bg-orange-100 border border-orange-300 text-orange-800 p-3 rounded-xl flex items-center gap-3 font-bold animate-pulse">
                 <RefreshCw className="animate-spin-slow"/>
-                <span>MODO EDICIÓN: Modificando Ticket #{ticketEditando}</span>
+                <span>MODO EDICIÓN: Ticket #{ticketEditando}</span>
                 <button onClick={() => { setTicketEditando(null); setCarrito([]); navigate("/ventas", {state:{}}); }} className="ml-auto text-xs bg-white border border-orange-300 px-3 py-1 rounded hover:bg-orange-50">
-                    Cancelar Edición
+                    Cancelar
                 </button>
             </div>
         )}
@@ -174,7 +172,7 @@ function Ventas() {
           />
         </div>
 
-        {/* CARGA MANUAL DE PRODUCTOS */}
+        {/* CARGA MANUAL */}
         <form onSubmit={agregarManual} className="bg-white p-4 rounded-2xl shadow-sm flex items-center gap-2 border border-slate-200">
             <Plus className="text-slate-400" />
             <input 
@@ -218,7 +216,7 @@ function Ventas() {
       {/* DERECHA: CARRITO */}
       <div className="w-full lg:w-96 bg-white rounded-2xl shadow-xl flex flex-col border border-slate-200">
         <div className={`p-5 text-white flex justify-between items-center rounded-t-2xl ${ticketEditando ? 'bg-orange-600' : 'bg-slate-900'}`}>
-          <h2 className="font-bold flex items-center gap-2"><ShoppingCart /> Carrito {ticketEditando ? '(Editando)' : ''}</h2>
+          <h2 className="font-bold flex items-center gap-2"><ShoppingCart /> Carrito</h2>
           <span className="bg-white/20 px-3 py-1 rounded-full text-xs font-bold">{carrito.length} items</span>
         </div>
 
@@ -249,37 +247,44 @@ function Ventas() {
 
         <div className="p-5 bg-slate-50 border-t border-slate-200 space-y-4">
             
-            {/* CLIENTE (FIADO) */}
+            {/* CLIENTE (Opcional o Requerido si es Fiado) */}
             <div>
                 <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1 mb-1">
-                    <User size={12}/> Cliente (Opcional)
+                    <User size={12}/> Cliente {metodo === 'Fiado' ? '(Obligatorio)' : '(Opcional)'}
                 </label>
                 <select 
-                    className="w-full p-2 border rounded-lg text-sm bg-white"
+                    className={`w-full p-2 border rounded-lg text-sm bg-white ${metodo === 'Fiado' && !clienteSelec ? 'border-red-500 ring-1 ring-red-500' : ''}`}
                     value={clienteSelec}
                     onChange={e => setClienteSelec(e.target.value)}
                 >
-                    <option value="">-- Cliente General --</option>
+                    <option value="">-- Consumidor Final --</option>
                     {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                 </select>
                 
+                {/* ENTREGA / PAGO ANTICIPADO (Solo si hay cliente seleccionado) */}
                 {clienteSelec && (
                    <div className="mt-2 flex gap-2 animate-in fade-in slide-in-from-top-1">
-                      <input 
-                        type="number" 
-                        placeholder="Entrega ($)" 
-                        className="w-full p-2 border rounded-lg text-sm"
-                        value={pagoAnticipado}
-                        onChange={e => setPagoAnticipado(e.target.value)}
-                      />
-                      <select 
-                        className="p-2 border rounded-lg text-sm bg-white"
-                        value={metodoAnticipo}
-                        onChange={e => setMetodoAnticipo(e.target.value)}
-                      >
-                        <option>Efectivo</option>
-                        <option>Transferencia</option>
-                      </select>
+                      <div className="flex-1">
+                          <label className="text-[10px] font-bold text-slate-400">Entrega / Seña</label>
+                          <input 
+                            type="number" 
+                            placeholder="$ 0.00" 
+                            className="w-full p-2 border rounded-lg text-sm"
+                            value={pagoAnticipado}
+                            onChange={e => setPagoAnticipado(e.target.value)}
+                          />
+                      </div>
+                      <div>
+                          <label className="text-[10px] font-bold text-slate-400">Método Entrega</label>
+                          <select 
+                            className="p-2 border rounded-lg text-sm bg-white w-full"
+                            value={metodoAnticipo}
+                            onChange={e => setMetodoAnticipo(e.target.value)}
+                          >
+                            <option value="Efectivo">Efectivo</option>
+                            <option value="Transferencia">Transferencia</option>
+                          </select>
+                      </div>
                    </div>
                 )}
             </div>
@@ -293,13 +298,13 @@ function Ventas() {
                     className="w-full p-3 border rounded-xl font-bold text-slate-700 bg-white"
                     value={metodo}
                     onChange={e => setMetodo(e.target.value)}
-                    disabled={!!clienteSelec} // Si hay cliente, el método principal se anula (es Cta Cte)
                 >
                     <option value="Efectivo">Efectivo</option>
                     <option value="Mercado Pago">Mercado Pago</option>
                     <option value="Débito">Tarjeta Débito</option>
                     <option value="Crédito">Tarjeta Crédito</option>
                     <option value="Transferencia">Transferencia</option>
+                    <option value="Fiado" className="font-bold text-red-600">Cuenta Corriente (Fiado)</option>
                 </select>
             </div>
 
@@ -312,7 +317,7 @@ function Ventas() {
                 onClick={confirmarVenta}
                 className={`w-full py-4 rounded-xl font-bold text-white shadow-lg transition-transform active:scale-95 ${ticketEditando ? 'bg-orange-600 hover:bg-orange-700' : 'bg-slate-900 hover:bg-slate-800'}`}
             >
-                {ticketEditando ? 'CONFIRMAR CORRECCIÓN' : 'CONFIRMAR VENTA'}
+                {ticketEditando ? 'CONFIRMAR CORRECCIÓN' : (metodo === 'Fiado' ? 'CONFIRMAR FIADO' : 'CONFIRMAR VENTA')}
             </button>
         </div>
       </div>

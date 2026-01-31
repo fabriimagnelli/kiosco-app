@@ -15,9 +15,10 @@ function CierreGeneral() {
   const [observacion, setObservacion] = useState("");
 
   useEffect(() => {
-    fetch("http://localhost:3001/api/resumen_dia_independiente")
+    fetch("http://localhost:3001/api/cierre/general")
       .then((res) => res.json())
-      .then((data) => setResumen(data.general));
+      .then((data) => setResumen(data))
+      .catch((err) => console.error("Error fetching cierre general:", err));
   }, []);
 
   const calcularTotalFisico = () => {
@@ -56,8 +57,9 @@ function CierreGeneral() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          tipo: 'general',
           total_ventas: resumen.ventas,
-          total_gastos: resumen.gastos,
+          total_gastos: resumen.gastos + (resumen.proveedores || 0),
           total_efectivo_real: totalFisico,
           monto_retiro: retiro,
           observacion: observacion
@@ -74,10 +76,11 @@ function CierreGeneral() {
     } catch (error) { console.error(error); alert("Error de conexión"); }
   };
 
-  if (!resumen) return <div className="p-10 text-center">Cargando...</div>;
+  if (!resumen) return <div className="p-10 text-center">Cargando cierre general...</div>;
 
   const totalFisico = calcularTotalFisico();
-  const diferencia = totalFisico - resumen.esperado;
+  const esperado = resumen.esperado || 0;
+  const diferencia = totalFisico - esperado;
   const quedaEnCaja = totalFisico - (parseFloat(montoRetiro) || 0);
 
   return (
@@ -87,50 +90,42 @@ function CierreGeneral() {
       <div className="w-full lg:w-1/3 space-y-4">
         <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
           <h2 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
-            <Calculator size={18} className="text-blue-600"/> Resumen Sistema (Efectivo)
+            <Calculator size={18} className="text-blue-600"/> Resumen Sistema (Kiosco)
           </h2>
           <div className="space-y-2 text-sm">
-            <div className="flex justify-between"><span>Inicial:</span> <span className="font-bold">$ {resumen.saldo_inicial.toLocaleString()}</span></div>
+            <div className="flex justify-between"><span>Inicial:</span> <span className="font-bold">$ {resumen.saldo_inicial?.toLocaleString()}</span></div>
             <div className="flex justify-between text-green-600">
                 <span className="flex items-center gap-1"><ArrowRight size={12}/> Ventas Efvo:</span> 
-                <span className="font-bold">+ $ {resumen.ventas.toLocaleString()}</span>
+                <span className="font-bold">+ $ {resumen.ventas?.toLocaleString()}</span>
             </div>
+            
             <div className="flex justify-between text-green-600">
                 <span className="flex items-center gap-1"><ArrowRight size={12}/> Cobros Efvo:</span> 
-                <span className="font-bold">+ $ {resumen.cobros.toLocaleString()}</span>
+                <span className="font-bold">+ $ {resumen.cobros?.toLocaleString()}</span>
             </div>
+
             <div className="flex justify-between text-red-500">
-                <span>Gastos:</span> <span className="font-bold">- $ {resumen.gastos.toLocaleString()}</span>
+                <span>Gastos:</span> <span className="font-bold">- $ {resumen.gastos?.toLocaleString()}</span>
             </div>
+
             <div className="flex justify-between text-red-500">
-                <span>Prov. (Efvo):</span> <span className="font-bold">- $ {resumen.proveedores.toLocaleString()}</span>
+                <span>Proveedores:</span> <span className="font-bold">- $ {resumen.proveedores?.toLocaleString()}</span>
             </div>
+
             <hr className="my-2"/>
             <div className="flex justify-between text-lg font-bold text-slate-800">
-              <span>DEBE HABER (EFVO):</span> <span>$ {resumen.esperado.toLocaleString()}</span>
+              <span>DEBE HABER (EFVO):</span> <span>$ {esperado.toLocaleString()}</span>
             </div>
           </div>
         </div>
         
-        {/* INFO TRANSFERENCIAS / DIGITAL (DESGLOSADO) */}
+        {/* INFO DIGITAL */}
         <div className="bg-slate-800 text-white p-5 rounded-xl shadow-md border border-slate-700">
             <div className="flex justify-between items-start mb-2">
                 <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400">Total Digital Hoy</h3>
                 <Wallet className="text-purple-400" size={20}/>
             </div>
-            <p className="text-3xl font-bold text-purple-400 mb-4">$ {resumen.digital.toLocaleString()}</p>
-            
-            {/* DESGLOSE */}
-            <div className="space-y-1 text-xs text-slate-300 border-t border-slate-700 pt-2">
-                <div className="flex justify-between">
-                    <span>Ventas Digitales:</span>
-                    <span className="font-bold">$ {resumen.ventas_digital?.toLocaleString() || 0}</span>
-                </div>
-                <div className="flex justify-between text-green-400">
-                    <span>Cobros Deuda (Transf):</span>
-                    <span className="font-bold">$ {resumen.cobros_transf?.toLocaleString() || 0}</span>
-                </div>
-            </div>
+            <p className="text-3xl font-bold text-purple-400">$ {resumen.digital?.toLocaleString()}</p>
         </div>
 
         {/* Info Diferencia */}
@@ -149,7 +144,7 @@ function CierreGeneral() {
           <Wallet size={20} className="text-green-600"/> Arqueo de Caja
         </h2>
 
-        {/* 1. GRILLA COMPACTA DE BILLETES */}
+        {/* 1. GRILLA BILLETES */}
         <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 mb-4">
           {[10000, 2000, 1000, 500, 200, 100, 50, 20, 10].map((val) => (
             <div key={val} className="bg-slate-50 p-2 rounded border border-slate-200 text-center">
