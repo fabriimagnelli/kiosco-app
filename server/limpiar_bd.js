@@ -1,57 +1,45 @@
 const sqlite3 = require("sqlite3").verbose();
-const db = new sqlite3.Database("kiosco.db");
+const path = require("path");
 
-console.log("🧹 Iniciando limpieza de la Base de Datos...");
+const dbPath = path.join(__dirname, "kiosco.db");
+const db = new sqlite3.Database(dbPath);
+
+console.log("🔥 Iniciando DESTRUCCIÓN TOTAL de la Base de Datos...");
 
 db.serialize(() => {
-  // Limpiar todos los datos manteniendo la estructura de tablas
-  const tablasALimpiar = [
-    "detalle_ventas",
-    "ventas",
-    "fiados",
-    "clientes_deudores",
-    "gastos",
-    "movimientos_proveedores",
-    "proveedores",
-    "productos",
-    "categorias",
-    "categoria_gasto",
-    "medio_pago"
+  // Lista de todas las tablas posibles
+  const tablas = [
+    "ventas", "detalle_ventas", "productos", "cigarrillos", 
+    "fiados", "clientes", "proveedores", "gastos", 
+    "caja_diaria", "movimientos_proveedores", "caja_cigarrillos", 
+    "retiros", "historial_cierres", "categorias", "categoria_gasto", "medio_pago"
   ];
 
-  tablasALimpiar.forEach((tabla) => {
-    db.run(`DELETE FROM ${tabla}`, (err) => {
+  db.run("BEGIN TRANSACTION");
+
+  tablas.forEach((tabla) => {
+    // DROP TABLE elimina la tabla y su estructura por completo
+    db.run(`DROP TABLE IF EXISTS ${tabla}`, (err) => {
       if (err) {
-        // Ignorar error si la tabla no existe
-        if (err.message.includes("no such table")) {
-          console.log(`ℹ️ ${tabla} no existe (ignorado)`);
-        } else {
-          console.error(`❌ Error limpiando ${tabla}:`, err.message);
-        }
+        console.error(`❌ Error borrando ${tabla}:`, err.message);
       } else {
-        console.log(`✅ ${tabla} limpiada`);
+        console.log(`💥 Tabla '${tabla}' eliminada por completo.`);
       }
     });
   });
 
-  // Resetear los auto-increment (VACUUM para optimizar)
-  db.run("VACUUM", (err) => {
-    if (err) {
-      console.error("❌ Error al optimizar la BD:", err.message);
-    } else {
-      console.log("✅ Base de datos optimizada");
-    }
+  // También reseteamos las secuencias internas de SQLite
+  db.run("DELETE FROM sqlite_sequence", () => {
+    console.log("🔄 Secuencias reiniciadas.");
   });
 
-  // Mensaje final
-  setTimeout(() => {
-    console.log("\n✨ ¡Base de datos limpiada exitosamente!");
-    console.log("El sistema está listo para usar con datos nuevos.\n");
+  db.run("COMMIT", (err) => {
+    if (err) {
+      console.error("❌ Error al finalizar:", err.message);
+      db.run("ROLLBACK");
+    } else {
+      console.log("✅ Base de datos eliminada. Ahora está vacía y sin tablas.");
+    }
     db.close();
-  }, 500);
-});
-
-db.on("error", (err) => {
-  console.error("❌ Error en la BD:", err.message);
-  process.exit(1);
+  });
 });
