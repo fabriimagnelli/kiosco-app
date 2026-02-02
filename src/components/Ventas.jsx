@@ -265,7 +265,7 @@ function Ventas() {
                 {clienteSelec && (
                    <div className="mt-2 flex gap-2 animate-in fade-in slide-in-from-top-1">
                       <div className="flex-1">
-                          <label className="text-[10px] font-bold text-slate-400">Entrega / Seña</label>
+                          <label className="text-[10px] font-bold text-slate-400">Entrega</label>
                           <input 
                             type="number" 
                             placeholder="$ 0.00" 

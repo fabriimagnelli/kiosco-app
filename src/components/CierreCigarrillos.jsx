@@ -1,11 +1,22 @@
 import React, { useState, useEffect } from "react";
-import { Cigarette, Save, AlertTriangle, Calculator, DollarSign, ArrowRight } from "lucide-react";
+import { Cigarette, Save, AlertTriangle, Calculator, DollarSign, ArrowRight, Coins, Wallet, Edit2, Check, X } from "lucide-react";
 
 function CierreCigarrillos() {
   const [resumen, setResumen] = useState(null);
-  const [montoContado, setMontoContado] = useState("");
+  
+  // Estado para Billetes (Igual que Cierre General)
+  const [billetes, setBilletes] = useState({
+    10000: "", 2000: "", 1000: "", 500: "", 200: "", 100: "", 50: "", 20: "", 10: ""
+  });
+  const [monedas, setMonedas] = useState("");
+
   const [montoRetiro, setMontoRetiro] = useState("");
   const [observacion, setObservacion] = useState("");
+
+  // Estados para Edición Manual del Inicio
+  const [inicioManual, setInicioManual] = useState(null);
+  const [editandoInicio, setEditandoInicio] = useState(false);
+  const [valorTempInicio, setValorTempInicio] = useState("");
 
   useEffect(() => {
     fetch("http://localhost:3001/api/cierre/cigarrillos")
@@ -14,16 +25,56 @@ function CierreCigarrillos() {
       .catch((err) => console.error(err));
   }, []);
 
-  const realizarCierre = async () => {
-    const contado = parseFloat(montoContado) || 0;
+  // --- LÓGICA DE CONTEO ---
+  const calcularTotalFisico = () => {
+    let total = 0;
+    Object.keys(billetes).forEach(denominacion => {
+      const cantidad = parseFloat(billetes[denominacion]) || 0;
+      total += cantidad * parseFloat(denominacion);
+    });
+    total += parseFloat(monedas) || 0;
+    return total;
+  };
+
+  const handleBilleteChange = (denominacion, valor) => {
+    setBilletes({ ...billetes, [denominacion]: valor });
+  };
+
+  // --- LÓGICA DE EDICIÓN MANUAL ---
+  const activarEdicionInicio = () => {
+    const contado = calcularTotalFisico();
     const retiro = parseFloat(montoRetiro) || 0;
-    const queda = contado - retiro;
+    const calculado = contado - retiro;
+    setValorTempInicio(inicioManual !== null ? inicioManual : calculado);
+    setEditandoInicio(true);
+  };
+
+  const guardarInicioManual = () => {
+    const valor = parseFloat(valorTempInicio);
+    if (!isNaN(valor)) {
+        setInicioManual(valor);
+    }
+    setEditandoInicio(false);
+  };
+
+  const limpiarManual = () => {
+      setInicioManual(null);
+      setEditandoInicio(false);
+  }
+
+  // --- CIERRE ---
+  const realizarCierre = async () => {
+    const contado = calcularTotalFisico();
+    const retiro = parseFloat(montoRetiro) || 0;
+    
+    // Usamos el manual si existe, sino el cálculo automático
+    const queda = inicioManual !== null ? inicioManual : (contado - retiro);
 
     if (queda < 0) {
-        return alert("Error: No puedes retirar más dinero del que hay en la caja.");
+        return alert("Error: El saldo para mañana no puede ser negativo.");
     }
     
-    if (!confirm(`¿Confirmar cierre de CIGARRILLOS?\n\n💵 Contado: $${contado}\n💰 Retiro: $${retiro}\n🛡️ Queda: $${queda}`)) return;
+    if (!confirm(`¿Confirmar cierre de CIGARRILLOS?\n\n💵 Contado: $${contado}\n💰 Retiro: $${retiro}\n🛡️ Queda (Inicio Mañana): $${queda}`)) return;
 
     try {
       const res = await fetch("http://localhost:3001/api/cierres_unificado", {
@@ -34,7 +85,8 @@ function CierreCigarrillos() {
           total_ventas: resumen.ventas,
           total_efectivo_real: contado,
           monto_retiro: retiro, 
-          observacion: observacion
+          observacion: observacion,
+          nuevo_inicio_manual: inicioManual // Enviamos el ajuste manual
         }),
       });
       
@@ -55,13 +107,11 @@ function CierreCigarrillos() {
   const ventasSistema = resumen.ventas || 0;
   const totalEsperado = saldoInicial + ventasSistema;
 
-  // DATOS DEL USUARIO
-  const contado = parseFloat(montoContado) || 0;
+  // CÁLCULOS VISUALES
+  const contado = calcularTotalFisico();
   const retiro = parseFloat(montoRetiro) || 0;
-  
-  // CÁLCULOS
   const diferencia = contado - totalEsperado;
-  const quedaEnCaja = contado - retiro;
+  const quedaEnCaja = inicioManual !== null ? inicioManual : (contado - retiro);
 
   return (
     <div className="flex flex-col lg:flex-row h-full gap-4 p-4 bg-slate-50 overflow-y-auto">
@@ -103,28 +153,48 @@ function CierreCigarrillos() {
         </div>
       </div>
 
-      {/* DERECHA: CONTROL */}
+      {/* DERECHA: CONTROL Y ARQUEO */}
       <div className="flex-1 bg-white p-5 rounded-xl shadow-lg border border-slate-200">
         <h2 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
           <Calculator size={20} className="text-orange-600"/> Arqueo Caja Cigarrillos
         </h2>
         
-        {/* INPUT CONTADO */}
-        <div className="mb-6">
-            <label className="block text-sm font-bold text-slate-700 mb-2">Dinero en Caja (Lo que contaste)</label>
-            <input 
+        {/* 1. GRILLA BILLETES */}
+        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 mb-4">
+          {[10000, 2000, 1000, 500, 200, 100, 50, 20, 10].map((val) => (
+            <div key={val} className="bg-slate-50 p-2 rounded border border-slate-200 text-center">
+              <label className="block text-xs font-bold text-slate-500 mb-1">${val}</label>
+              <input 
                 type="number" 
-                className="w-full p-4 border-2 border-orange-200 rounded-xl text-3xl font-bold text-orange-600 focus:outline-none focus:border-orange-500"
-                placeholder="$ 0.00"
-                value={montoContado}
-                onChange={(e) => setMontoContado(e.target.value)}
-                autoFocus
+                className="w-full text-center font-bold text-slate-800 bg-white border rounded py-1 focus:ring-2 focus:ring-orange-400 outline-none"
+                placeholder="0"
+                value={billetes[val]}
+                onChange={(e) => handleBilleteChange(val, e.target.value)}
+              />
+            </div>
+          ))}
+          <div className="bg-slate-50 p-2 rounded border border-slate-200 text-center col-span-3 sm:col-span-1">
+            <label className="block text-xs font-bold text-slate-500 mb-1 flex justify-center items-center gap-1"><Coins size={10}/> Monedas</label>
+            <input 
+              type="number" 
+              className="w-full text-center font-bold text-slate-800 bg-white border rounded py-1 focus:ring-2 focus:ring-orange-400 outline-none"
+              placeholder="$ Total"
+              value={monedas}
+              onChange={(e) => setMonedas(e.target.value)}
             />
+          </div>
         </div>
 
-        {/* SECCIÓN RETIRO */}
+        {/* TOTAL CONTADO */}
+        <div className="bg-slate-800 text-white p-3 rounded-lg flex justify-between items-center mb-6">
+          <span className="text-sm font-bold uppercase tracking-wider text-slate-300">Total Físico Contado</span>
+          <span className="text-2xl font-bold text-orange-400">$ {contado.toLocaleString()}</span>
+        </div>
+
+        {/* 2. SECCIÓN RETIRO Y EDICIÓN MANUAL */}
         <div className="bg-orange-50 p-4 rounded-xl border border-orange-100 mb-4">
           <div className="flex flex-col md:flex-row gap-4 items-end">
+            {/* RETIRO */}
             <div className="flex-1 w-full">
               <label className="block text-sm font-bold text-orange-800 mb-1 flex items-center gap-1">
                  <DollarSign size={14}/> ¿Cuánto retiras?
@@ -134,16 +204,57 @@ function CierreCigarrillos() {
                 className="w-full p-3 border-2 border-orange-200 rounded-lg text-xl font-bold text-orange-700 focus:outline-none focus:border-orange-500"
                 placeholder="0.00"
                 value={montoRetiro}
-                onChange={(e) => setMontoRetiro(e.target.value)}
+                onChange={(e) => {
+                    setMontoRetiro(e.target.value);
+                    if(inicioManual !== null) setInicioManual(null); // Resetear manual si cambia retiro
+                }}
               />
             </div>
-            <div className="flex-1 w-full bg-white p-3 rounded-lg border border-orange-100 text-right">
-              <span className="block text-xs font-bold text-slate-400 uppercase">Inicio Mañana (Queda)</span>
-              <span className={`text-2xl font-black ${quedaEnCaja < 0 ? 'text-red-500' : 'text-slate-700'}`}>
-                $ {quedaEnCaja.toLocaleString()}
-              </span>
+
+            {/* INICIO MAÑANA (EDITABLE) */}
+            <div className="flex-1 w-full bg-white p-3 rounded-lg border border-orange-100 relative group">
+              <span className="block text-xs font-bold text-slate-400 uppercase mb-1">QUEDA PARA MAÑANA (INICIO)</span>
+              
+              {editandoInicio ? (
+                  <div className="flex items-center gap-2">
+                      <input 
+                        autoFocus
+                        type="number" 
+                        className="w-full p-1 border-b-2 border-orange-500 font-black text-xl text-slate-800 outline-none"
+                        value={valorTempInicio}
+                        onChange={(e) => setValorTempInicio(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && guardarInicioManual()}
+                      />
+                      <button onClick={guardarInicioManual} className="p-1 bg-green-100 text-green-600 rounded hover:bg-green-200"><Check size={18}/></button>
+                      <button onClick={limpiarManual} className="p-1 bg-slate-100 text-slate-500 rounded hover:bg-slate-200" title="Restaurar Automático"><X size={18}/></button>
+                  </div>
+              ) : (
+                  <div className="flex justify-between items-center">
+                      <span className={`text-2xl font-black ${quedaEnCaja < 0 ? 'text-red-500' : 'text-slate-700'}`}>
+                        $ {quedaEnCaja.toLocaleString()}
+                      </span>
+                      <button 
+                        onClick={activarEdicionInicio}
+                        className="p-2 text-slate-400 hover:text-orange-600 hover:bg-orange-50 rounded-full transition-colors"
+                        title="Modificar manualmente"
+                      >
+                        <Edit2 size={18}/>
+                      </button>
+                  </div>
+              )}
+
+              {inicioManual !== null && !editandoInicio && (
+                  <span className="absolute top-2 right-10 text-[10px] bg-yellow-100 text-yellow-700 px-1 rounded border border-yellow-200">
+                      Manual
+                  </span>
+              )}
             </div>
           </div>
+          {quedaEnCaja < 0 && (
+             <p className="text-red-600 text-xs font-bold mt-2 text-center bg-red-100 p-2 rounded">
+                ⚠️ CUIDADO: Estás retirando más de lo que contaste.
+             </p>
+          )}
         </div>
 
         <input 
