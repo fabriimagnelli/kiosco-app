@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Package, Plus, Trash2, Edit, Search, Barcode, DollarSign, Tag, Settings, X } from "lucide-react";
+import { Package, Plus, Trash2, Edit, Search, Barcode, DollarSign, Tag, Settings, Check } from "lucide-react";
 
 function Productos() {
   const [productos, setProductos] = useState([]);
@@ -22,7 +22,6 @@ function Productos() {
   const [categoriasDisponibles, setCategoriasDisponibles] = useState([]);
   const [mostrarGestorCategorias, setMostrarGestorCategorias] = useState(false);
   const [nuevaCategoriaInput, setNuevaCategoriaInput] = useState("");
-  const [usarNuevaCategoria, setUsarNuevaCategoria] = useState(false);
 
   useEffect(() => {
     cargarProductos();
@@ -43,10 +42,27 @@ function Productos() {
       fetch("http://localhost:3001/api/categorias")
         .then(r => r.json())
         .then(data => {
-            // Aseguramos que General esté siempre
             const cats = new Set(["General", ...data]);
             setCategoriasDisponibles([...cats]);
         });
+  };
+
+  // Función para AGREGAR categoría desde el gestor
+  const agregarCategoriaManual = () => {
+      const nueva = nuevaCategoriaInput.trim();
+      if(!nueva) return;
+      
+      // Capitalizar primera letra (opcional, para que se vea bonito)
+      const nombreFormatted = nueva.charAt(0).toUpperCase() + nueva.slice(1);
+
+      // Si no existe, la agregamos a la lista localmente
+      if(!categoriasDisponibles.includes(nombreFormatted)) {
+          setCategoriasDisponibles([...categoriasDisponibles, nombreFormatted]);
+      }
+      
+      // La seleccionamos automáticamente
+      setCategoria(nombreFormatted);
+      setNuevaCategoriaInput(""); // Limpiar input
   };
 
   const eliminarCategoria = async (nombreCat) => {
@@ -58,7 +74,7 @@ function Productos() {
           const data = await res.json();
           if(data.success) {
               cargarCategorias();
-              cargarProductos(); // Actualizar productos que cambiaron de categoría
+              cargarProductos();
               if(categoria === nombreCat) setCategoria("General");
           } else {
               alert(data.error);
@@ -72,19 +88,13 @@ function Productos() {
     e.preventDefault();
     if (!nombre || !precio) return alert("Nombre y Precio son obligatorios");
 
-    // Definir la categoría final
-    let catFinal = categoria;
-    if (usarNuevaCategoria && nuevaCategoriaInput.trim() !== "") {
-        catFinal = nuevaCategoriaInput.trim();
-    }
-
     const prodData = {
       nombre,
       precio: parseFloat(precio),
       costo: parseFloat(costo) || 0,
       stock: parseInt(stock) || 0,
       codigo_barras: codigo,
-      categoria: catFinal
+      categoria: categoria // Enviamos la categoría seleccionada
     };
 
     try {
@@ -111,14 +121,12 @@ function Productos() {
         setStock("");
         setCodigo("");
         setCategoria("General");
-        setNuevaCategoriaInput("");
-        setUsarNuevaCategoria(false);
         
         setModoEdicion(false);
         setIdEdicion(null);
         
         cargarProductos();
-        cargarCategorias(); // Por si creamos una nueva
+        cargarCategorias();
       } else {
         alert("Error al guardar");
       }
@@ -135,13 +143,8 @@ function Productos() {
       setCodigo(p.codigo_barras || "");
       setCategoria(p.categoria || "General");
       
-      setUsarNuevaCategoria(false);
-      setNuevaCategoriaInput("");
-
       setModoEdicion(true);
       setIdEdicion(p.id);
-      
-      // Scroll arriba para ver el form
       window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -268,76 +271,74 @@ function Productos() {
                     </div>
 
                     {/* CATEGORÍA CON GESTOR */}
-                    <div>
+                    <div className="relative">
                         <div className="flex justify-between items-center mb-1">
                             <label className="block text-xs font-bold text-slate-500">Categoría</label>
                             <button 
                                 type="button"
                                 onClick={() => setMostrarGestorCategorias(!mostrarGestorCategorias)}
-                                className="text-xs text-purple-600 hover:underline flex items-center gap-1"
+                                className="text-xs text-purple-600 hover:underline flex items-center gap-1 bg-purple-50 px-2 py-0.5 rounded border border-purple-100"
                             >
-                                <Settings size={12}/> Gestionar
+                                <Settings size={12}/> Gestionar / Agregar
                             </button>
                         </div>
 
-                        {/* GESTOR DE CATEGORÍAS (POPOVER) */}
+                        {/* GESTOR DE CATEGORÍAS (POPOVER MEJORADO) */}
                         {mostrarGestorCategorias && (
-                            <div className="mb-2 p-3 bg-purple-50 rounded-lg border border-purple-100 animate-in fade-in zoom-in duration-200">
-                                <h4 className="text-xs font-bold text-purple-800 mb-2">Mis Categorías</h4>
-                                <div className="max-h-32 overflow-y-auto space-y-1 mb-2">
+                            <div className="mb-2 p-3 bg-white rounded-lg border-2 border-purple-200 shadow-lg animate-in fade-in zoom-in duration-200 absolute w-full z-30 top-7 left-0">
+                                
+                                {/* 1. LISTA DE EXISTENTES */}
+                                <h4 className="text-xs font-bold text-purple-800 mb-2">Categorías Existentes</h4>
+                                <div className="max-h-32 overflow-y-auto space-y-1 mb-3 pr-1 custom-scrollbar">
                                     {categoriasDisponibles.map(cat => (
-                                        <div key={cat} className="flex justify-between items-center bg-white p-1.5 rounded border border-purple-100 text-xs">
-                                            <span>{cat}</span>
+                                        <div key={cat} className="flex justify-between items-center bg-purple-50 p-1.5 rounded border border-purple-100 text-xs">
+                                            <span className="font-medium text-purple-900">{cat}</span>
                                             {cat !== 'General' && (
-                                                <button onClick={() => eliminarCategoria(cat)} className="text-red-400 hover:text-red-600">
-                                                    <Trash2 size={12}/>
+                                                <button 
+                                                    type="button"
+                                                    onClick={() => eliminarCategoria(cat)} 
+                                                    className="text-slate-400 hover:text-red-500 transition-colors"
+                                                    title="Eliminar categoría"
+                                                >
+                                                    <Trash2 size={14}/>
                                                 </button>
                                             )}
                                         </div>
                                     ))}
                                 </div>
-                                <p className="text-[10px] text-slate-500 italic">Al eliminar una categoría, sus productos pasan a "General".</p>
+
+                                {/* 2. AGREGAR NUEVA */}
+                                <div className="pt-2 border-t border-slate-100">
+                                    <label className="block text-[10px] font-bold text-slate-400 mb-1">AGREGAR NUEVA</label>
+                                    <div className="flex gap-2">
+                                        <input 
+                                            type="text"
+                                            className="flex-1 p-1.5 text-sm border border-purple-300 rounded focus:ring-1 focus:ring-purple-500 outline-none"
+                                            placeholder="Nombre..."
+                                            value={nuevaCategoriaInput}
+                                            onChange={e => setNuevaCategoriaInput(e.target.value)}
+                                            onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), agregarCategoriaManual())}
+                                        />
+                                        <button 
+                                            type="button"
+                                            onClick={agregarCategoriaManual}
+                                            className="p-1.5 bg-purple-600 text-white rounded hover:bg-purple-700"
+                                            title="Confirmar"
+                                        >
+                                            <Check size={16}/>
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         )}
 
-                        {!usarNuevaCategoria ? (
-                            <div className="flex gap-2">
-                                <select 
-                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none bg-white"
-                                    value={categoria}
-                                    onChange={e => setCategoria(e.target.value)}
-                                >
-                                    {categoriasDisponibles.map(c => <option key={c} value={c}>{c}</option>)}
-                                </select>
-                                <button 
-                                    type="button"
-                                    onClick={() => setUsarNuevaCategoria(true)}
-                                    className="p-2 bg-slate-100 hover:bg-slate-200 rounded-lg"
-                                    title="Crear Nueva"
-                                >
-                                    <Plus size={20} className="text-slate-600"/>
-                                </button>
-                            </div>
-                        ) : (
-                            <div className="flex gap-2">
-                                <input 
-                                    autoFocus
-                                    type="text"
-                                    className="w-full p-2 border border-purple-300 rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
-                                    placeholder="Nueva Categoría..."
-                                    value={nuevaCategoriaInput}
-                                    onChange={e => setNuevaCategoriaInput(e.target.value)}
-                                />
-                                <button 
-                                    type="button"
-                                    onClick={() => setUsarNuevaCategoria(false)}
-                                    className="p-2 bg-red-100 hover:bg-red-200 rounded-lg text-red-600"
-                                    title="Cancelar"
-                                >
-                                    <X size={20}/>
-                                </button>
-                            </div>
-                        )}
+                        <select 
+                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none bg-white"
+                            value={categoria}
+                            onChange={e => setCategoria(e.target.value)}
+                        >
+                            {categoriasDisponibles.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
                     </div>
 
                     {/* BOTONES ACCIÓN */}
@@ -346,7 +347,7 @@ function Productos() {
                             type="submit"
                             className={`flex-1 py-3 text-white font-bold rounded-lg shadow-md transition-transform active:scale-95 flex justify-center items-center gap-2 ${modoEdicion ? 'bg-purple-600 hover:bg-purple-700' : 'bg-slate-800 hover:bg-slate-900'}`}
                         >
-                            {modoEdicion ? <Save size={18}/> : <Plus size={18}/>}
+                            {modoEdicion ? <Edit size={18}/> : <Plus size={18}/>}
                             {modoEdicion ? 'GUARDAR CAMBIOS' : 'AGREGAR PRODUCTO'}
                         </button>
                         
