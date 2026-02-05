@@ -471,6 +471,69 @@ app.post("/api/gastos", async (req, res) => {
         res.json({ success: true });
     } catch (e) { await dbRun("ROLLBACK"); res.status(500).json({ error: e.message }); }
 });
+
+// --- GESTIÓN DE CONFIGURACIÓN Y CREDENCIALES ---
+
+// Obtener toda la configuración (Datos Kiosco + Credenciales)
+app.get("/api/config", async (req, res) => {
+    try {
+        const configs = await dbAll("SELECT * FROM configuracion");
+        // Convertimos el array de {key, value} a un objeto simple
+        const configObj = {};
+        configs.forEach(c => configObj[c.key] = c.value);
+        
+        // Valores por defecto si no existen
+        if (!configObj.admin_user) configObj.admin_user = "admin";
+        if (!configObj.admin_password) configObj.admin_password = "admin";
+        if (!configObj.kiosco_nombre) configObj.kiosco_nombre = "Mi Kiosco";
+        if (!configObj.kiosco_direccion) configObj.kiosco_direccion = "";
+
+        res.json(configObj);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Guardar configuración
+app.post("/api/config", async (req, res) => {
+    const { admin_user, admin_password, kiosco_nombre, kiosco_direccion, kiosco_telefono } = req.body;
+    try {
+        await dbRun("BEGIN TRANSACTION");
+        // Insert or Replace es útil aquí
+        await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('admin_user', ?)", [admin_user]);
+        await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('admin_password', ?)", [admin_password]);
+        await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('kiosco_nombre', ?)", [kiosco_nombre]);
+        await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('kiosco_direccion', ?)", [kiosco_direccion]);
+        await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('kiosco_telefono', ?)", [kiosco_telefono]);
+        await dbRun("COMMIT");
+        res.json({ success: true });
+    } catch (e) {
+        await dbRun("ROLLBACK");
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Endpoint de Login que verifica contra la DB (Actualización para tu Login)
+app.post("/api/login", async (req, res) => {
+    const { usuario, password } = req.body;
+    try {
+        const dbUser = await dbGet("SELECT value FROM configuracion WHERE key='admin_user'");
+        const dbPass = await dbGet("SELECT value FROM configuracion WHERE key='admin_password'");
+        
+        // Si no existen en DB, usamos los default 'admin'/'admin'
+        const validUser = dbUser ? dbUser.value : 'admin';
+        const validPass = dbPass ? dbPass.value : 'admin';
+
+        if (usuario === validUser && password === validPass) {
+            res.json({ success: true, user: { nombre: validUser } });
+        } else {
+            res.status(401).json({ error: "Credenciales incorrectas" });
+        }
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.delete("/api/gastos/:id", (req, res) => { db.run("DELETE FROM gastos WHERE id=?", [req.params.id], (err) => err ? res.status(500).json({error: err.message}) : res.json({success: true})); });
 
 // SPA FALLBACK

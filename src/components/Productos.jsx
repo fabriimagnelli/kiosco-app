@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { Package, Plus, Trash2, Edit, Search, Barcode, DollarSign, Tag, Settings, Check } from "lucide-react";
+// AGREGUE LA 'X' AQUI ABAJO
+import { Package, Plus, Trash2, Edit, Search, Barcode, DollarSign, Tag, Settings, Check, X } from "lucide-react";
 
 function Productos() {
   const [productos, setProductos] = useState([]);
@@ -181,7 +182,7 @@ function Productos() {
         <div>
             <h1 className="text-3xl font-bold text-slate-800 flex items-center gap-3">
                 <Package className="text-purple-600" size={32}/>
-                Inventario de Productosylkfjdhsfasddng
+                Inventario de Productos
             </h1>
             <p className="text-slate-500 mt-1">Administra tus productos, precios y stock.</p>
         </div>

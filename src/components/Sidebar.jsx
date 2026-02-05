@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { 
   Home, ShoppingCart, Package, Users, Truck, DollarSign, LogOut, Archive, PieChart,
-  FileText, Scale, Cigarette, ShoppingBag, TrendingUp,
+  FileText, Scale, Cigarette, ShoppingBag, TrendingUp, Settings,
   ChevronLeft, ChevronRight 
 } from "lucide-react";
 
@@ -56,8 +56,6 @@ function Sidebar({ isOpen, toggleSidebar }) {
           <Home size={20} className="flex-shrink-0" /> 
           <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Inicio</span>
         </Link>
-
-        {/* APERTURA ELIMINADA, AHORA ES RETIROS */}
 
         <Link to="/ventas" className={`${btnBase} ${isActive("/ventas") ? btnActive : btnInactive}`} title="Ventas">
           <ShoppingCart size={20} className="flex-shrink-0" />
@@ -126,18 +124,28 @@ function Sidebar({ isOpen, toggleSidebar }) {
           <FileText size={20} className="flex-shrink-0" />
           <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Reportes</span>
         </Link>
+        
+        {/* NUEVO BOTÓN DE CONFIGURACIÓN */}
+        <Link to="/configuracion" className={`${btnBase} ${isActive("/configuracion") ? btnActive : btnInactive}`} title="Configuración">
+          <Settings size={20} className="flex-shrink-0" />
+          <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Configuración</span>
+        </Link>
 
       </nav>
 
       <div className="p-4 border-t border-slate-800 bg-slate-900">
-        <div className={`flex items-center gap-3 mb-4 ${isOpen ? "justify-start" : "justify-center"}`}>
+        <div 
+          onClick={() => navigate("/configuracion")}
+          className={`flex items-center gap-3 mb-4 cursor-pointer hover:bg-slate-800 p-2 rounded-lg transition-colors ${isOpen ? "justify-start" : "justify-center"}`}
+          title="Ir a Configuración"
+        >
           <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-slate-300 font-bold text-xs border border-slate-600 flex-shrink-0">
             {usuario ? usuario.charAt(0).toUpperCase() : "U"}
           </div>
           
           <div className={`overflow-hidden transition-all duration-300 ${isOpen ? "opacity-100 w-auto" : "opacity-0 w-0 hidden"}`}>
             <p className="text-white text-sm font-bold truncate">{usuario || "Usuario"}</p>
-            <p className="text-xs text-slate-500">Admin</p>
+            <p className="text-xs text-slate-500">Administrador</p>
           </div>
         </div>
         

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+// CAMBIO 1: Usamos HashRouter en lugar de BrowserRouter
+import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import Sidebar from "./components/Sidebar";
 import Login from "./components/Login";
@@ -16,7 +17,8 @@ import Balance from "./components/Balance";
 import Reportes from "./components/Reportes";   
 import Cierre from "./components/Cierre"; 
 import Promos from "./components/Promos"; 
-import Retiros from "./components/Retiros"; // NUEVO COMPONENTE
+import Retiros from "./components/Retiros"; 
+import Configuracion from "./components/Configuracion"; // Asegurate de tener este import
 
 const SplashScreen = () => (
   <div className="fixed inset-0 bg-slate-900 flex flex-col items-center justify-center z-50">
@@ -75,7 +77,6 @@ function RutasApp() {
         <Routes>
             <Route path="/login" element={!usuario ? <Login /> : <Navigate to="/" />} />
             <Route path="/" element={<RutaProtegida><Inicio /></RutaProtegida>} />
-            {/* RUTA DE APERTURA ELIMINADA */}
             <Route path="/ventas" element={<RutaProtegida><Ventas /></RutaProtegida>} />
             <Route path="/cierre" element={<RutaProtegida><Cierre /></RutaProtegida>} />
             <Route path="/productos" element={<RutaProtegida><Productos /></RutaProtegida>} />
@@ -87,7 +88,8 @@ function RutasApp() {
             <Route path="/gastos" element={<RutaProtegida><Gastos /></RutaProtegida>} />
             <Route path="/balance" element={<RutaProtegida><Balance /></RutaProtegida>} />
             <Route path="/reportes" element={<RutaProtegida><Reportes /></RutaProtegida>} />
-            <Route path="/retiros" element={<RutaProtegida><Retiros /></RutaProtegida>} /> {/* NUEVA RUTA */}
+            <Route path="/retiros" element={<RutaProtegida><Retiros /></RutaProtegida>} />
+            <Route path="/configuracion" element={<RutaProtegida><Configuracion /></RutaProtegida>} />
             <Route path="*" element={<Navigate to="/" />} />
         </Routes>
     );
@@ -96,9 +98,10 @@ function RutasApp() {
 function App() {
   return (
     <AuthProvider>
-      <BrowserRouter>
+      // CAMBIO 2: Aquí usamos HashRouter
+      <HashRouter>
         <RutasApp />
-      </BrowserRouter>
+      </HashRouter>
     </AuthProvider>
   );
 }

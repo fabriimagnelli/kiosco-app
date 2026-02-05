@@ -1,12 +1,11 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  base: './', // <--- OBLIGATORIO para Electron
   build: {
-    // CAMBIO CLAVE: Guardamos el frontend DIRECTAMENTE dentro del servidor
-    outDir: 'server/public', 
+    outDir: 'server/public', // <--- OBLIGATORIO: Guardar en la carpeta pública del server
     emptyOutDir: true
   }
 })

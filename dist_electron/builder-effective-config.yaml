@@ -1,0 +1,19 @@
+directories:
+  output: dist_electron
+  buildResources: build
+appId: com.sacwebagency.kiosco
+productName: SACWare Kiosco
+files:
+  - filter:
+      - dist/**/*
+      - server/**/*
+      - electron-main.js
+      - package.json
+win:
+  target: nsis
+  icon: public/logo.png
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+electronVersion: 24.8.8
