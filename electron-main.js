@@ -81,14 +81,14 @@ autoUpdater.on('update-downloaded', () => {
       process.env.USER_DATA_PATH = app.getPath('userData');
 
       const serverDir = path.join(process.resourcesPath, 'server');
-      const serverPath = path.join(serverDir, 'index.js');
+      const serverPath = path.join(process.resourcesPath, 'server', 'index.js');
 
       console.log("Iniciando servidor desde:", serverPath);
       console.log("Directorio del servidor:", serverDir);
       console.log("¿Existe el archivo?", fs.existsSync(serverPath));
 
       // Cambiar al directorio del servidor antes de requerirlo
-      process.chdir(serverDir);
+      process.env.SERVER_ROOT = path.join(process.resourcesPath, 'server');
 
       // Requerir el servidor
       require(serverPath);

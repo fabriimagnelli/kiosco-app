@@ -12,7 +12,9 @@ app.use(cors());
 app.use(express.json());
 
 // --- CONFIGURACIÓN DE ARCHIVOS ESTÁTICOS ---
-const publicPath = path.join(__dirname, "public");
+const publicPath = process.env.SERVER_ROOT 
+    ? path.join(process.env.SERVER_ROOT, "public") 
+    : path.join(__dirname, "public");
 console.log("Sirviendo frontend desde:", publicPath);
 app.use(express.static(publicPath));
 
