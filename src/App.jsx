@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-// CAMBIO 1: Usamos HashRouter en lugar de BrowserRouter
+// CORRECCIÓN CLAVE: Usamos HashRouter en lugar de BrowserRouter
 import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import Sidebar from "./components/Sidebar";
@@ -18,7 +18,7 @@ import Reportes from "./components/Reportes";
 import Cierre from "./components/Cierre"; 
 import Promos from "./components/Promos"; 
 import Retiros from "./components/Retiros"; 
-import Configuracion from "./components/Configuracion"; // Asegurate de tener este import
+import Configuracion from "./components/Configuracion";
 
 const SplashScreen = () => (
   <div className="fixed inset-0 bg-slate-900 flex flex-col items-center justify-center z-50">
@@ -98,7 +98,7 @@ function RutasApp() {
 function App() {
   return (
     <AuthProvider>
-      // CAMBIO 2: Aquí usamos HashRouter
+      {/* AQUÍ ESTABA EL ERROR: Cambiado BrowserRouter por HashRouter */}
       <HashRouter>
         <RutasApp />
       </HashRouter>

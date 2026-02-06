@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from "react";
-// AGREGUE LA 'X' AQUI ABAJO
-import { Package, Plus, Trash2, Edit, Search, Barcode, DollarSign, Tag, Settings, Check, X } from "lucide-react";
+import { Package, Plus, Trash2, Edit, Search, Barcode, DollarSign, Settings, Check, X } from "lucide-react";
 
 function Productos() {
   const [productos, setProductos] = useState([]);
@@ -87,16 +86,27 @@ function Productos() {
 
   const guardarProducto = async (e) => {
     e.preventDefault();
-    if (!nombre || !precio) return alert("Nombre y Precio son obligatorios");
+    
+    // Validación mejorada
+    if (!nombre || !nombre.trim()) {
+      alert("❌ El nombre del producto es obligatorio");
+      return;
+    }
+    if (!precio || isNaN(parseFloat(precio))) {
+      alert("❌ El precio es obligatorio y debe ser un número");
+      return;
+    }
 
     const prodData = {
-      nombre,
+      nombre: nombre.trim(),
       precio: parseFloat(precio),
       costo: parseFloat(costo) || 0,
       stock: parseInt(stock) || 0,
-      codigo_barras: codigo,
-      categoria: categoria // Enviamos la categoría seleccionada
+      codigo_barras: codigo.trim(),
+      categoria: categoria || "General"
     };
+
+    console.log("📤 Enviando producto:", prodData);
 
     try {
       let url = "http://localhost:3001/api/productos";
@@ -113,7 +123,11 @@ function Productos() {
         body: JSON.stringify(prodData),
       });
       
+      console.log("📊 Respuesta del servidor - Status:", res.status);
+      
       const data = await res.json();
+      console.log("📨 Datos recibidos:", data);
+      
       if (data.id || data.updated) {
         // Reset form
         setNombre("");
@@ -128,11 +142,15 @@ function Productos() {
         
         cargarProductos();
         cargarCategorias();
+        alert(modoEdicion ? "✅ Producto actualizado correctamente" : "✅ Producto agregado correctamente");
       } else {
-        alert("Error al guardar");
+        const errorMsg = data.error || "Error desconocido al guardar el producto";
+        console.error("❌ Error en respuesta del servidor:", data);
+        alert(`❌ Error al cargar el producto:\n${errorMsg}`);
       }
     } catch (error) {
-      console.error(error);
+      console.error("❌ Error en fetch:", error);
+      alert(`❌ Error de conexión:\n${error.message}\n\nAsegúrate que el servidor esté corriendo en http://localhost:3001`);
     }
   };
 

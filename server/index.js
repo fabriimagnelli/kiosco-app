@@ -122,6 +122,9 @@ const initDB = async () => {
         await ensureColumn("ventas", "cierre_id", "INTEGER DEFAULT NULL");
         await ensureColumn("gastos", "cierre_id", "INTEGER DEFAULT NULL");
         await ensureColumn("retiros", "cierre_id", "INTEGER DEFAULT NULL");
+        await ensureColumn("proveedores", "direccion", "TEXT");
+        await ensureColumn("proveedores", "dia_visita", "TEXT");
+        await ensureColumn("proveedores", "rubro", "TEXT");
 
         console.log("DB inicializada.");
     } catch (e) { console.error("Error initDB:", e); }
@@ -228,6 +231,88 @@ app.get("/api/reportes/metodos_pago", (req, res) => {
     });
 });
 
+// BALANCE POR RANGO DE FECHAS
+app.get("/api/balance_rango", async (req, res) => {
+    try {
+        const { desde, hasta } = req.query;
+
+        if (!desde || !hasta) {
+            return res.status(400).json({ error: "Se requieren parámetros 'desde' y 'hasta'" });
+        }
+
+        // INGRESOS: Ventas por categoría y método de pago
+        const ventasKioscoEfvo = await dbGet(
+            `SELECT COALESCE(SUM(precio_total), 0) as total FROM ventas
+             WHERE categoria = 'Kiosco' AND date(fecha) BETWEEN ? AND ?
+             AND (metodo_pago = 'Efectivo' OR pago_efectivo > 0)`,
+            [desde, hasta]
+        );
+
+        const ventasCigarrosEfvo = await dbGet(
+            `SELECT COALESCE(SUM(precio_total), 0) as total FROM ventas
+             WHERE categoria = 'Cigarrillos' AND date(fecha) BETWEEN ? AND ?
+             AND (metodo_pago = 'Efectivo' OR pago_efectivo > 0)`,
+            [desde, hasta]
+        );
+
+        const ventasDigital = await dbGet(
+            `SELECT COALESCE(SUM(precio_total), 0) as total FROM ventas
+             WHERE date(fecha) BETWEEN ? AND ?
+             AND (metodo_pago IN ('Transferencia', 'Debito', 'MercadoPago') OR pago_digital > 0)`,
+            [desde, hasta]
+        );
+
+        const cobrosDeudas = await dbGet(
+            `SELECT COALESCE(SUM(monto), 0) as total FROM fiados
+             WHERE pagado = 1 AND date(fecha) BETWEEN ? AND ?`,
+            [desde, hasta]
+        );
+
+        // EGRESOS
+        const gastosVarios = await dbGet(
+            `SELECT COALESCE(SUM(monto), 0) as total FROM gastos
+             WHERE date(fecha) BETWEEN ? AND ?`,
+            [desde, hasta]
+        );
+
+        const pagosProveedores = await dbGet(
+            `SELECT COALESCE(SUM(monto), 0) as total FROM movimientos_proveedores
+             WHERE date(fecha) BETWEEN ? AND ?`,
+            [desde, hasta]
+        );
+
+        const kiosco_efvo = ventasKioscoEfvo?.total || 0;
+        const cigarros_efvo = ventasCigarrosEfvo?.total || 0;
+        const digital = ventasDigital?.total || 0;
+        const cobros_deuda = cobrosDeudas?.total || 0;
+        const gastos_varios = gastosVarios?.total || 0;
+        const pagos_proveedores = pagosProveedores?.total || 0;
+
+        const total_ingresos = kiosco_efvo + cigarros_efvo + digital + cobros_deuda;
+        const total_egresos = gastos_varios + pagos_proveedores;
+        const balance = total_ingresos - total_egresos;
+
+        res.json({
+            ingresos: {
+                kiosco_efvo,
+                cigarros_efvo,
+                digital,
+                cobros_deuda
+            },
+            total_ingresos,
+            egresos: {
+                gastos_varios,
+                pagos_proveedores
+            },
+            total_egresos,
+            balance
+        });
+    } catch (e) {
+        console.error("Error en /api/balance_rango:", e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // RESUMEN
 app.get("/api/resumen_dia_independiente", async (req, res) => {
     try {
@@ -254,12 +339,20 @@ app.get("/api/retiros", async (req, res) => {
     try {
         const manuales = await dbAll("SELECT id, fecha, descripcion, monto, 'MANUAL' as tipo FROM retiros");
         const cierres = await dbAll(`SELECT id, fecha, CASE WHEN tipo = 'cigarrillos' THEN 'Retiro Caja Cigarrillos' ELSE 'Retiro Caja General' END as descripcion, monto_retiro as monto, 'CIERRE' as tipo, id as cierre_id FROM historial_cierres WHERE monto_retiro > 0`);
-        const historial = [...manuales, ...cierres].sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
-        const total = historial.reduce((acc, item) => acc + item.monto, 0);
+        // Combinar y ordenar por fecha, manteniendo los más recientes primero
+        const historial = [...manuales, ...cierres].sort((a, b) => {
+            const dateA = a.fecha ? new Date(a.fecha).getTime() : 0;
+            const dateB = b.fecha ? new Date(b.fecha).getTime() : 0;
+            return dateB - dateA;
+        });
+        const total = historial.reduce((acc, item) => acc + (item.monto || 0), 0);
         res.json({ historial, total });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
-app.post("/api/retiros", (req, res) => { db.run("INSERT INTO retiros (descripcion, monto) VALUES (?,?)", [req.body.descripcion, req.body.monto], (err) => err ? res.status(500).json({error: err.message}) : res.json({success: true})); });
+app.post("/api/retiros", (req, res) => {
+    const fecha = new Date().toLocaleString('es-AR');
+    db.run("INSERT INTO retiros (descripcion, monto, fecha) VALUES (?,?,?)", [req.body.descripcion, req.body.monto, fecha], (err) => err ? res.status(500).json({error: err.message}) : res.json({success: true}));
+});
 app.delete("/api/retiros/:id", (req, res) => { db.run("DELETE FROM retiros WHERE id=?", [req.params.id], (err) => err ? res.status(500).json({error: err.message}) : res.json({success: true})); });
 
 // CIERRE GENERAL
@@ -273,7 +366,7 @@ app.get("/api/cierre/general", async (req, res) => {
 
         let totalEfvo = 0, totalDig = 0, cobrosEfvo = 0, cobrosDig = 0;
         ventas.forEach(v => {
-            if (v.pago_efectivo > 0 || v.pago_digital > 0) { totalEfvo += v.pago_efectivo; totalDig += v.pago_digital; } 
+            if (v.pago_efectivo > 0 || v.pago_digital > 0) { totalEfvo += v.pago_efectivo; totalDig += v.pago_digital; }
             else {
                 if (v.metodo_pago === 'Efectivo') totalEfvo += v.precio_total;
                 else if (['Transferencia','Debito'].includes(v.metodo_pago)) totalDig += v.precio_total;
@@ -282,8 +375,15 @@ app.get("/api/cierre/general", async (req, res) => {
         });
         cobrosData.forEach(c => { const m = Math.abs(c.monto); if (['Transferencia','Digital'].includes(c.metodo_pago)) cobrosDig += m; else cobrosEfvo += m; });
         let gastosGrales = 0, pagosProv = 0;
-        gastosData.forEach(g => { if (g.metodo_pago === 'Efectivo') { if (g.categoria && g.categoria.toLowerCase().includes('proveedor')) pagosProv += g.monto; else gastosGrales += g.monto; } });
-        
+        gastosData.forEach(g => {
+            // Contar TODOS los gastos sin importar el método de pago (Efectivo, Retiros, Transferencia, etc.)
+            if (g.categoria && g.categoria.toLowerCase().includes('proveedor')) {
+                pagosProv += g.monto;
+            } else {
+                gastosGrales += g.monto;
+            }
+        });
+
         const esperado = saldoInicial + totalEfvo + cobrosEfvo - gastosGrales - pagosProv;
         res.json({ saldo_inicial: saldoInicial, ventas: totalEfvo, cobros: cobrosEfvo, gastos: gastosGrales, proveedores: pagosProv, digital: totalDig + cobrosDig, esperado: esperado });
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -336,17 +436,70 @@ app.post("/api/cierres_unificado", async (req, res) => {
 app.get("/api/promos", (req, res) => {
     db.all("SELECT * FROM promos", [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
-        const promos = rows.map(p => ({ ...p, componentes: p.componentes ? JSON.parse(p.componentes) : [] }));
+        const promos = (rows || []).map(p => {
+            try {
+                return { ...p, componentes: p.componentes ? JSON.parse(p.componentes) : [] };
+            } catch (e) {
+                return { ...p, componentes: [] };
+            }
+        });
         res.json(promos);
     });
 });
 app.post("/api/promos", (req, res) => {
     const { nombre, precio, codigo_barras, componentes } = req.body;
-    db.run("INSERT INTO promos (nombre, precio, codigo_barras, componentes) VALUES (?,?,?,?)", [nombre, precio, codigo_barras, JSON.stringify(componentes)], function(err) { if (err) return res.status(500).json({ error: err.message }); res.json({ id: this.lastID }); });
+
+    // Validación de datos
+    if (!nombre || typeof nombre !== 'string' || nombre.trim() === '') {
+        return res.status(400).json({ error: "El nombre es requerido y debe ser texto" });
+    }
+    if (!precio || isNaN(parseFloat(precio)) || parseFloat(precio) <= 0) {
+        return res.status(400).json({ error: "El precio es requerido y debe ser un número mayor a 0" });
+    }
+    if (!Array.isArray(componentes) || componentes.length === 0) {
+        return res.status(400).json({ error: "Debe agregar al menos un componente/producto" });
+    }
+
+    db.run(
+        "INSERT INTO promos (nombre, precio, codigo_barras, componentes) VALUES (?,?,?,?)",
+        [nombre.trim(), parseFloat(precio), codigo_barras || '', JSON.stringify(componentes)],
+        function(err) {
+            if (err) return res.status(500).json({ error: "Error al guardar: " + err.message });
+            res.json({ success: true, id: this.lastID });
+        }
+    );
 });
 app.put("/api/promos/:id", (req, res) => {
     const { nombre, precio, codigo_barras, componentes } = req.body;
-    db.run("UPDATE promos SET nombre=?, precio=?, codigo_barras=?, componentes=? WHERE id=?", [nombre, precio, codigo_barras, JSON.stringify(componentes), req.params.id], function(err) { if (err) return res.status(500).json({ error: err.message }); res.json({ success: true }); });
+    const id = parseInt(req.params.id);
+
+    // Validación de ID
+    if (isNaN(id) || id <= 0) {
+        return res.status(400).json({ error: "ID de promo inválido" });
+    }
+
+    // Validación de datos
+    if (!nombre || typeof nombre !== 'string' || nombre.trim() === '') {
+        return res.status(400).json({ error: "El nombre es requerido y debe ser texto" });
+    }
+    if (!precio || isNaN(parseFloat(precio)) || parseFloat(precio) <= 0) {
+        return res.status(400).json({ error: "El precio es requerido y debe ser un número mayor a 0" });
+    }
+    if (!Array.isArray(componentes) || componentes.length === 0) {
+        return res.status(400).json({ error: "Debe agregar al menos un componente/producto" });
+    }
+
+    db.run(
+        "UPDATE promos SET nombre=?, precio=?, codigo_barras=?, componentes=? WHERE id=?",
+        [nombre.trim(), parseFloat(precio), codigo_barras || '', JSON.stringify(componentes), id],
+        function(err) {
+            if (err) return res.status(500).json({ error: "Error al actualizar: " + err.message });
+            if (this.changes === 0) {
+                return res.status(404).json({ error: "Promo no encontrada" });
+            }
+            res.json({ success: true });
+        }
+    );
 });
 app.delete("/api/promos/:id", (req, res) => { db.run("DELETE FROM promos WHERE id=?", [req.params.id], function(err) { if (err) return res.status(500).json({ error: err.message }); res.json({ success: true }); }); });
 
@@ -369,7 +522,20 @@ app.delete("/api/fiados/:id", (req, res) => { db.run("DELETE FROM fiados WHERE i
 
 app.get("/api/proveedores", (req, res) => { db.all("SELECT * FROM proveedores ORDER BY nombre", [], (err, rows) => res.json(rows || [])); });
 app.post("/api/proveedores", (req, res) => { db.run("INSERT INTO proveedores (nombre, telefono, direccion, dia_visita, rubro) VALUES (?,?,?,?,?)", [req.body.nombre, req.body.telefono, req.body.direccion, req.body.dia_visita, req.body.rubro], (err) => err ? res.status(500).json({error: err.message}) : res.json({success: true})); });
-app.put("/api/proveedores/:id", (req, res) => { db.run("UPDATE proveedores SET nombre=?, telefono=?, direccion=?, dia_visita=?, rubro=? WHERE id=?", [req.body.nombre, req.body.telefono, req.body.direccion, req.body.dia_visita, req.body.rubro, req.params.id], function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ success: true }); }); });
+app.put("/api/proveedores/:id", (req, res) => {
+  db.run("UPDATE proveedores SET nombre=?, telefono=?, direccion=?, dia_visita=?, rubro=? WHERE id=?",
+    [req.body.nombre, req.body.telefono, req.body.direccion, req.body.dia_visita, req.body.rubro, req.params.id],
+    function (err) {
+      if (err) {
+        res.status(500).json({ error: err.message });
+      } else if (this.changes === 0) {
+        res.status(404).json({ error: "Proveedor no encontrado" });
+      } else {
+        res.json({ success: true });
+      }
+    }
+  );
+});
 app.delete("/api/proveedores/:id", (req, res) => { db.run("DELETE FROM proveedores WHERE id=?", [req.params.id], (err) => err ? res.status(500).json({error: err.message}) : res.json({success: true})); });
 
 app.get("/api/movimientos_todos", (req, res) => { db.all(`SELECT m.*, p.nombre as proveedor_nombre FROM movimientos_proveedores m JOIN proveedores p ON m.proveedor_id = p.id ORDER BY m.fecha DESC`, [], (err, rows) => { if(err) res.status(500).json({error: err.message}); else res.json(rows || []); }); });
@@ -381,12 +547,24 @@ app.post("/api/movimientos_proveedores", async (req, res) => {
         if (req.body.monto < 0) {
             const prov = await dbGet("SELECT nombre FROM proveedores WHERE id = ?", [req.body.proveedor_id]);
             const desc = `Pago Proveedor: ${prov ? prov.nombre : ''}`;
-            if (req.body.metodo_pago === 'Fondo Retiros') await dbRun("INSERT INTO retiros (descripcion, monto) VALUES (?, ?)", [desc, req.body.monto]);
-            else if (!req.body.metodo_pago || req.body.metodo_pago === 'Efectivo') await dbRun("INSERT INTO gastos (descripcion, monto, categoria, metodo_pago) VALUES (?,?,?,?)", [desc, Math.abs(req.body.monto), 'Proveedores', 'Efectivo']);
+            if (req.body.metodo_pago === 'Retiros') {
+                console.log(`[DEBUG] Insertando en retiros: desc="${desc}", monto=${req.body.monto}`);
+                const fecha = new Date().toLocaleString('es-AR');
+                await dbRun("INSERT INTO retiros (descripcion, monto, fecha) VALUES (?, ?, ?)", [desc, req.body.monto, fecha]);
+                await dbRun("INSERT INTO gastos (descripcion, monto, categoria, metodo_pago) VALUES (?,?,?,?)", [desc, Math.abs(req.body.monto), 'Proveedores', 'Retiros']);
+            } else if (!req.body.metodo_pago || req.body.metodo_pago === 'Efectivo') {
+                await dbRun("INSERT INTO gastos (descripcion, monto, categoria, metodo_pago) VALUES (?,?,?,?)", [desc, Math.abs(req.body.monto), 'Proveedores', 'Efectivo']);
+            } else {
+                await dbRun("INSERT INTO gastos (descripcion, monto, categoria, metodo_pago) VALUES (?,?,?,?)", [desc, Math.abs(req.body.monto), 'Proveedores', req.body.metodo_pago]);
+            }
         }
         await dbRun("COMMIT");
         res.json({ success: true });
-    } catch (e) { await dbRun("ROLLBACK"); res.status(500).json({ error: e.message }); }
+    } catch (e) {
+        console.error(`[ERROR] movimientos_proveedores:`, e.message);
+        await dbRun("ROLLBACK");
+        res.status(500).json({ error: e.message });
+    }
 });
 app.delete("/api/movimientos_proveedores/:id", (req, res) => { db.run("DELETE FROM movimientos_proveedores WHERE id=?", [req.params.id], function(err) { if(err) res.status(500).json({error: err.message}); else res.json({deleted: this.changes}); }); });
 
@@ -420,18 +598,55 @@ app.post("/api/ventas", async (req, res) => {
         if (ticket_a_corregir) { await dbRun("DELETE FROM ventas WHERE ticket_id = ?", [ticket_a_corregir]); await dbRun("DELETE FROM fiados WHERE descripcion LIKE ?", [`%Ticket ${ticket_a_corregir}%`]); }
         const ticket_id = await obtenerSiguienteTicket();
         let pEfvo = 0, pDig = 0;
-        if (metodo_pago === 'Mixto') { pEfvo = parseFloat(req.body.pago_efectivo) || 0; pDig = parseFloat(req.body.pago_digital) || 0; } 
+        if (metodo_pago === 'Mixto') { pEfvo = parseFloat(req.body.pago_efectivo) || 0; pDig = parseFloat(req.body.pago_digital) || 0; }
         else if (metodo_pago === 'Efectivo') pEfvo = total;
-        else if (metodo_pago === 'Fiado') { if (metodoAnticipo === 'Efectivo') pEfvo = pagoAnticipado; else pDig = pagoAnticipado; } 
+        else if (metodo_pago === 'Fiado') { if (metodoAnticipo === 'Efectivo') pEfvo = pagoAnticipado; else pDig = pagoAnticipado; }
         else pDig = total;
-        
+
         for (const item of productos) {
-            let tabla = (item.tipo === 'Cigarrillo' || (item.categoria && item.categoria.toLowerCase().includes('cigarrillo'))) ? 'cigarrillos' : (item.tipo === 'Producto' ? 'productos' : null);
-            if (tabla) await dbRun(`UPDATE ${tabla} SET stock = stock - ? WHERE nombre = ?`, [item.cantidad, item.nombre]);
-            
-            let cat = item.tipo || 'General'; if (tabla === 'cigarrillos' || item.tipo === 'Cigarrillo') cat = 'Cigarrillo';
-            await dbRun(`INSERT INTO ventas (ticket_id, producto, cantidad, precio_total, precio_unitario, cliente_id, metodo_pago, categoria, fecha, pago_efectivo, pago_digital, editado) VALUES (?,?,?,?,?,?,?,?, datetime('now', 'localtime'), ?, ?, ?)`, 
-                [ticket_id, item.nombre, item.cantidad, total, item.precio, cliente_id, metodo_pago, cat, pEfvo, pDig, ticket_a_corregir ? 1 : 0]);
+            // Si es una promo, descontar stock de sus componentes
+            if (item.tipo === 'Promo' && item.componentes && Array.isArray(item.componentes) && item.componentes.length > 0) {
+                // Validar stock de cada componente
+                for (const comp of item.componentes) {
+                    const stockActual = await dbGet(
+                        `SELECT stock FROM ${comp.tipo === 'Cigarrillo' ? 'cigarrillos' : 'productos'} WHERE nombre = ?`,
+                        [comp.nombre]
+                    );
+                    const cantidadNecesaria = comp.cantidad * item.cantidad; // cantidad del componente × cantidad de promos
+                    if (!stockActual || stockActual.stock < cantidadNecesaria) {
+                        throw new Error(`No hay suficiente stock de "${comp.nombre}" para esta promo. Requerido: ${cantidadNecesaria} | Disponible: ${stockActual?.stock || 0}`);
+                    }
+                    // Descontar stock por nombre que es más confiable
+                    await dbRun(
+                        `UPDATE ${comp.tipo === 'Cigarrillo' ? 'cigarrillos' : 'productos'} SET stock = stock - ? WHERE nombre = ?`,
+                        [cantidadNecesaria, comp.nombre]
+                    );
+                }
+                // Registrar la promo como venta (sin descontar de tabla promo ya que no tiene stock)
+                let cat = 'Promo';
+                await dbRun(`INSERT INTO ventas (ticket_id, producto, cantidad, precio_total, precio_unitario, cliente_id, metodo_pago, categoria, fecha, pago_efectivo, pago_digital, editado) VALUES (?,?,?,?,?,?,?,?, datetime('now', 'localtime'), ?, ?, ?)`,
+                    [ticket_id, item.nombre, item.cantidad, total, item.precio, cliente_id, metodo_pago, cat, pEfvo, pDig, ticket_a_corregir ? 1 : 0]);
+            } else {
+                // Productos y cigarrillos normales - VALIDAR STOCK ANTES DE DESCONTAR
+                let tabla = (item.tipo === 'Cigarrillo' || (item.categoria && item.categoria.toLowerCase().includes('cigarrillo'))) ? 'cigarrillos' : (item.tipo === 'Producto' ? 'productos' : null);
+
+                if (tabla) {
+                    // VALIDAR STOCK DISPONIBLE
+                    const stockActual = await dbGet(
+                        `SELECT stock FROM ${tabla} WHERE nombre = ?`,
+                        [item.nombre]
+                    );
+                    if (!stockActual || stockActual.stock < item.cantidad) {
+                        throw new Error(`No hay suficiente stock de "${item.nombre}". Requerido: ${item.cantidad} | Disponible: ${stockActual?.stock || 0}`);
+                    }
+                    // DESCONTAR STOCK
+                    await dbRun(`UPDATE ${tabla} SET stock = stock - ? WHERE nombre = ?`, [item.cantidad, item.nombre]);
+                }
+
+                let cat = item.tipo || 'General'; if (tabla === 'cigarrillos' || item.tipo === 'Cigarrillo') cat = 'Cigarrillo';
+                await dbRun(`INSERT INTO ventas (ticket_id, producto, cantidad, precio_total, precio_unitario, cliente_id, metodo_pago, categoria, fecha, pago_efectivo, pago_digital, editado) VALUES (?,?,?,?,?,?,?,?, datetime('now', 'localtime'), ?, ?, ?)`,
+                    [ticket_id, item.nombre, item.cantidad, total, item.precio, cliente_id, metodo_pago, cat, pEfvo, pDig, ticket_a_corregir ? 1 : 0]);
+            }
         }
         if (metodo_pago === 'Fiado') {
              if(!cliente_id) throw new Error("Debe seleccionar un cliente.");
@@ -450,8 +665,28 @@ app.delete("/api/ventas/:ticket_id", async (req, res) => {
         const items = await dbAll("SELECT * FROM ventas WHERE ticket_id = ?", [req.params.ticket_id]);
         if (items.length === 0) { await dbRun("ROLLBACK"); return res.status(404).json({ error: "No encontrada" }); }
         for (const item of items) {
-            let tabla = (item.categoria && item.categoria.toLowerCase().includes('cigarrillo')) ? 'cigarrillos' : (item.categoria !== 'Manual' ? 'productos' : null);
-            if(tabla) await dbRun(`UPDATE ${tabla} SET stock = stock + ? WHERE nombre = ?`, [item.cantidad, item.producto]);
+            // Si es una promo, restaurar stock de componentes
+            if (item.categoria === 'Promo') {
+                const promo = await dbGet("SELECT componentes FROM promos WHERE nombre = ?", [item.producto]);
+                if (promo && promo.componentes) {
+                    try {
+                        const componentes = JSON.parse(promo.componentes);
+                        for (const comp of componentes) {
+                            const cantidadNecesaria = comp.cantidad * item.cantidad;
+                            await dbRun(
+                                `UPDATE ${comp.tipo === 'Cigarrillo' ? 'cigarrillos' : 'productos'} SET stock = stock + ? WHERE nombre = ?`,
+                                [cantidadNecesaria, comp.nombre]
+                            );
+                        }
+                    } catch (e) {
+                        console.error("Error al parsear componentes:", e);
+                    }
+                }
+            } else {
+                // Productos y cigarrillos normales
+                let tabla = (item.categoria && item.categoria.toLowerCase().includes('cigarrillo')) ? 'cigarrillos' : (item.categoria !== 'Manual' ? 'productos' : null);
+                if(tabla) await dbRun(`UPDATE ${tabla} SET stock = stock + ? WHERE nombre = ?`, [item.cantidad, item.producto]);
+            }
         }
         await dbRun("DELETE FROM ventas WHERE ticket_id = ?", [req.params.ticket_id]);
         await dbRun("DELETE FROM fiados WHERE descripcion LIKE ?", [`%Ticket ${req.params.ticket_id}%`]);
@@ -466,7 +701,10 @@ app.post("/api/gastos", async (req, res) => {
     try {
         await dbRun("BEGIN TRANSACTION");
         await dbRun("INSERT INTO gastos (descripcion, monto, categoria, metodo_pago) VALUES (?,?,?,?)", [req.body.descripcion, req.body.monto, req.body.categoria, req.body.metodo_pago || 'Efectivo']);
-        if (req.body.metodo_pago === 'Retiros') await dbRun("INSERT INTO retiros (descripcion, monto) VALUES (?, ?)", [`Gasto: ${req.body.descripcion}`, -Math.abs(req.body.monto)]);
+        if (req.body.metodo_pago === 'Retiros') {
+            const fecha = new Date().toLocaleString('es-AR');
+            await dbRun("INSERT INTO retiros (descripcion, monto, fecha) VALUES (?, ?, ?)", [`Gasto: ${req.body.descripcion}`, -Math.abs(req.body.monto), fecha]);
+        }
         await dbRun("COMMIT");
         res.json({ success: true });
     } catch (e) { await dbRun("ROLLBACK"); res.status(500).json({ error: e.message }); }

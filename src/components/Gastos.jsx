@@ -3,13 +3,15 @@ import { DollarSign, Calendar, Tag, Plus, Trash2, Search, Filter, TrendingDown }
 
 function Gastos() {
   const [gastos, setGastos] = useState([]);
+  const [proveedores, setProveedores] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Estados para el Formulario
   const [descripcion, setDescripcion] = useState("");
   const [monto, setMonto] = useState("");
-  const [categoria, setCategoria] = useState("General"); 
+  const [categoria, setCategoria] = useState("General");
   const [metodoPago, setMetodoPago] = useState("Efectivo");
+  const [proveedorId, setProveedorId] = useState("");
 
   // Estados para Filtros
   const [filtroFecha, setFiltroFecha] = useState("");
@@ -31,6 +33,7 @@ function Gastos() {
 
   useEffect(() => {
     cargarGastos();
+    cargarProveedores();
   }, []);
 
   const cargarGastos = () => {
@@ -43,34 +46,71 @@ function Gastos() {
       .catch((err) => console.error(err));
   };
 
+  const cargarProveedores = () => {
+    fetch("http://localhost:3001/api/proveedores")
+      .then((res) => res.json())
+      .then((data) => setProveedores(data || []))
+      .catch((err) => console.error(err));
+  };
+
   const agregarGasto = async (e) => {
     e.preventDefault();
     if (!descripcion || !monto) return alert("Completa todos los campos");
-
-    const nuevoGasto = {
-      descripcion,
-      monto: parseFloat(monto),
-      categoria,
-      metodo_pago: metodoPago,
-    };
+    if (categoria === "Proveedores" && !proveedorId) return alert("Selecciona un proveedor");
 
     try {
-      const res = await fetch("http://localhost:3001/api/gastos", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(nuevoGasto),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setDescripcion("");
-        setMonto("");
-        setCategoria("General"); 
-        cargarGastos();
+      // Si es pago a proveedor, registrar SOLO en movimientos_proveedores
+      // El backend crea el gasto automáticamente
+      if (categoria === "Proveedores" && proveedorId) {
+        const res = await fetch("http://localhost:3001/api/movimientos_proveedores", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            proveedor_id: parseInt(proveedorId),
+            monto: -parseFloat(monto), // Negativo porque es un pago
+            descripcion: descripcion,
+            metodo_pago: metodoPago
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          setDescripcion("");
+          setMonto("");
+          setCategoria("General");
+          setProveedorId("");
+          cargarGastos();
+          alert("Pago registrado correctamente");
+        } else {
+          alert("Error al registrar el pago");
+        }
       } else {
-        alert("Error al guardar");
+        // Para otros gastos, registrar normalmente en gastos
+        const nuevoGasto = {
+          descripcion,
+          monto: parseFloat(monto),
+          categoria,
+          metodo_pago: metodoPago,
+        };
+
+        const res = await fetch("http://localhost:3001/api/gastos", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(nuevoGasto),
+        });
+        const data = await res.json();
+        if (data.success) {
+          setDescripcion("");
+          setMonto("");
+          setCategoria("General");
+          cargarGastos();
+          alert("Gasto registrado correctamente");
+        } else {
+          alert("Error al guardar");
+        }
       }
     } catch (error) {
       console.error(error);
+      alert("Error al guardar");
     }
   };
 
@@ -187,6 +227,24 @@ function Gastos() {
                             </select>
                         </div>
                     </div>
+
+                    {categoria === "Proveedores" && (
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 mb-1">Proveedor</label>
+                            <select
+                                className="w-full p-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-blue-50 font-medium text-slate-700"
+                                value={proveedorId}
+                                onChange={(e) => setProveedorId(e.target.value)}
+                            >
+                                <option value="">-- Selecciona un proveedor --</option>
+                                {proveedores.map(proveedor => (
+                                    <option key={proveedor.id} value={proveedor.id}>
+                                        {proveedor.nombre}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
 
                     <div>
                         <label className="block text-xs font-bold text-slate-500 mb-1">Método de Pago</label>

@@ -21,6 +21,14 @@ function Proveedores() {
   const [provSeleccionado, setProvSeleccionado] = useState(null);
   const [historialSeleccionado, setHistorialSeleccionado] = useState([]);
 
+  // ESTADOS NUEVA DEUDA
+  const [mostrarFormDeuda, setMostrarFormDeuda] = useState(false);
+  const [montoDeuda, setMontoDeuda] = useState("");
+  const [tipoMovimiento, setTipoMovimiento] = useState("compra"); // "compra" o "pago"
+  const [descripcionDeuda, setDescripcionDeuda] = useState("");
+  const [metodoDudaPago, setMetodoDudaPago] = useState("Efectivo");
+  const [procesandoDeuda, setProcesandoDeuda] = useState(false);
+
   useEffect(() => {
     cargarProveedores();
   }, []);
@@ -67,6 +75,56 @@ function Proveedores() {
       setVerHistorial(false);
       setProvSeleccionado(null);
       setHistorialSeleccionado([]);
+      setMostrarFormDeuda(false);
+      setMontoDeuda("");
+      setTipoMovimiento("compra");
+      setDescripcionDeuda("");
+      setMetodoDudaPago("Efectivo");
+  };
+
+  const registrarDeuda = async (e) => {
+    e.preventDefault();
+    if (!montoDeuda || parseFloat(montoDeuda) <= 0) return alert("Ingresa un monto válido");
+    if (!provSeleccionado) return alert("Error: proveedor no seleccionado");
+
+    setProcesandoDeuda(true);
+    try {
+      // Si es pago, convertir a negativo
+      const monto = tipoMovimiento === "pago" ? -parseFloat(montoDeuda) : parseFloat(montoDeuda);
+      const desc = tipoMovimiento === "pago" ? ("Pago al " + (descripcionDeuda || "proveedor")) : (descripcionDeuda || "Compra");
+
+      const res = await fetch("http://localhost:3001/api/movimientos_proveedores", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          proveedor_id: provSeleccionado.id,
+          monto: monto,
+          descripcion: desc,
+          metodo_pago: metodoDudaPago
+        })
+      });
+
+      const data = await res.json();
+      if (data.success || data.id) {
+        alert(tipoMovimiento === "pago" ? "✅ Pago registrado correctamente" : "✅ Compra registrada correctamente");
+        // Recargar historial
+        fetch(`http://localhost:3001/api/movimientos_proveedores/${provSeleccionado.id}`)
+          .then(res => res.json())
+          .then(data => setHistorialSeleccionado(data));
+        // Limpiar formulario
+        setMontoDeuda("");
+        setTipoMovimiento("compra");
+        setDescripcionDeuda("");
+        setMostrarFormDeuda(false);
+      } else {
+        alert("Error: " + (data.error || "No se pudo registrar la transacción"));
+      }
+    } catch (error) {
+      console.error(error);
+      alert("Error de conexión: " + error.message);
+    } finally {
+      setProcesandoDeuda(false);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -94,11 +152,13 @@ function Proveedores() {
       if (data.success || data.id) {
         cargarProveedores();
         cancelarEdicion();
+        alert(modoEdicion ? "Proveedor actualizado correctamente" : "Proveedor creado correctamente");
       } else {
-        alert("Error al guardar");
+        alert("Error: " + (data.error || "Error al guardar"));
       }
     } catch (error) {
       console.error(error);
+      alert("Error de conexión: " + error.message);
     }
   };
 
@@ -389,14 +449,109 @@ function Proveedores() {
                   </div>
 
                   {/* PIE */}
-                  <div className="p-4 border-t border-slate-100 bg-slate-50 rounded-b-2xl flex justify-end">
-                      <button 
+                  <div className="p-4 border-t border-slate-100 bg-slate-50 rounded-b-2xl flex justify-between items-center gap-2">
+                      <button
+                          onClick={() => setMostrarFormDeuda(!mostrarFormDeuda)}
+                          className="px-6 py-2 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-2"
+                      >
+                          <Plus size={18}/> Registrar Compra
+                      </button>
+                      <button
                           onClick={cerrarDetalles}
                           className="px-6 py-2 bg-slate-800 text-white font-bold rounded-lg hover:bg-slate-900 transition-colors"
                       >
                           Cerrar
                       </button>
                   </div>
+
+                  {/* FORMULARIO NUEVA DEUDA */}
+                  {mostrarFormDeuda && (
+                    <div className="p-6 border-t border-slate-100 bg-indigo-50">
+                      <h3 className="font-bold text-indigo-700 mb-4 flex items-center gap-2">
+                        <Plus size={18}/> {tipoMovimiento === "pago" ? "Registrar Pago" : "Registrar Compra"}
+                      </h3>
+                      <form onSubmit={registrarDeuda} className="space-y-3">
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 mb-1">Tipo de Movimiento</label>
+                          <select
+                            className="w-full p-2 rounded border border-indigo-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
+                            value={tipoMovimiento}
+                            onChange={(e) => setTipoMovimiento(e.target.value)}
+                            disabled={procesandoDeuda}
+                          >
+                            <option value="compra">📦 Compra (Aumenta Deuda)</option>
+                            <option value="pago">💰 Pago (Disminuye Deuda)</option>
+                          </select>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs font-bold text-slate-500 mb-1">Monto *</label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              placeholder="Monto"
+                              className="w-full p-2 rounded border border-indigo-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                              value={montoDeuda}
+                              onChange={(e) => setMontoDeuda(e.target.value)}
+                              disabled={procesandoDeuda}
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-slate-500 mb-1">Método de Pago</label>
+                            <select
+                              className="w-full p-2 rounded border border-indigo-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
+                              value={metodoDudaPago}
+                              onChange={(e) => setMetodoDudaPago(e.target.value)}
+                              disabled={procesandoDeuda}
+                            >
+                              <option value="Efectivo">Efectivo</option>
+                              <option value="Transferencia">Transferencia</option>
+                              <option value="Cheque">Cheque</option>
+                              <option value="Retiros">Retiros</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 mb-1">Descripción (opcional)</label>
+                          <input
+                            type="text"
+                            placeholder={tipoMovimiento === "pago" ? "Ej: Pago parcial, Cancelado..." : "Ej: Bebidas varias, Cigarrillos..."}
+                            className="w-full p-2 rounded border border-indigo-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                            value={descripcionDeuda}
+                            onChange={(e) => setDescripcionDeuda(e.target.value)}
+                            disabled={procesandoDeuda}
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            type="submit"
+                            disabled={procesandoDeuda}
+                            className={`flex-1 py-2 font-bold rounded transition-colors disabled:opacity-50 text-white ${
+                              tipoMovimiento === "pago"
+                                ? "bg-green-600 hover:bg-green-700"
+                                : "bg-indigo-600 hover:bg-indigo-700"
+                            }`}
+                          >
+                            {procesandoDeuda ? "Guardando..." : (tipoMovimiento === "pago" ? "✓ Guardar Pago" : "✓ Guardar Compra")}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setMostrarFormDeuda(false);
+                              setMontoDeuda("");
+                              setTipoMovimiento("compra");
+                              setDescripcionDeuda("");
+                            }}
+                            disabled={procesandoDeuda}
+                            className="px-4 py-2 bg-slate-300 text-slate-700 font-bold rounded hover:bg-slate-400 transition-colors disabled:opacity-50"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  )}
               </div>
           </div>
       )}

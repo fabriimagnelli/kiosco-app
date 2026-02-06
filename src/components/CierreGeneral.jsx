@@ -115,7 +115,7 @@ function CierreGeneral() {
 
   const totalFisico = calcularTotalFisico();
   const esperado = resumen.esperado || 0;
-  const diferencia = totalFisico - esperado;
+  const diferencia = esperado - totalFisico;
   
   // Cálculo visual: Si hay manual usa ese, si no calcula
   const quedaEnCaja = inicioManual !== null ? inicioManual : (totalFisico - (parseFloat(montoRetiro) || 0));

@@ -74,7 +74,7 @@ function Reportes() {
             conteoProductos[nombreProd] = (conteoProductos[nombreProd] || 0) + 1;
         });
 
-        setHistorialVentas(Object.values(agrupado));
+        setHistorialVentas(Object.values(agrupado).sort((a, b) => new Date(b.fecha) - new Date(a.fecha)));
 
         const arrayProductos = Object.keys(conteoProductos).map(key => ({ name: key, value: conteoProductos[key] }));
         setProductosTop(arrayProductos.sort((a, b) => b.value - a.value).slice(0, 5));
@@ -106,7 +106,7 @@ function Reportes() {
   };
 
   const editarVenta = (ticket) => {
-      navigate("/", { state: { ticketAEditar: ticket } });
+      navigate("/ventas", { state: { ticketEditar: ticket.ticket_id } });
   };
 
   const toggleExpand = (id) => {
@@ -162,7 +162,7 @@ function Reportes() {
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                        {[...historialVentas].reverse().map((ticket) => (
+                        {historialVentas.map((ticket) => (
                             <React.Fragment key={ticket.ticket_id}>
                                 {/* FILA PRINCIPAL */}
                                 <tr 

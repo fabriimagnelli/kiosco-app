@@ -1,14 +1,13 @@
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
+const fs = require('fs');
 
 // --- 1. CANDADO DE INSTANCIA ÚNICA ---
-// Si la app ya está corriendo, cerramos esta nueva instancia inmediatamente.
 const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
   app.quit();
 } else {
-  // --- 2. LÓGICA PRINCIPAL ---
   let mainWindow;
 
   function createWindow() {
@@ -16,7 +15,6 @@ if (!gotTheLock) {
       width: 1280,
       height: 800,
       title: "SACWare - Gestión Comercial",
-      icon: path.join(__dirname, 'public/logo.png'), 
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -24,13 +22,21 @@ if (!gotTheLock) {
       autoHideMenuBar: true
     });
 
-    // En producción cargamos directamente el archivo local (MÁS RÁPIDO Y SEGURO QUE LOCALHOST)
-    // En desarrollo usamos Vite
     if (app.isPackaged) {
-      // Intenta cargar desde resources/server/public/index.html
+      // En producción, cargar desde resources/server/public/index.html
       const prodPath = path.join(process.resourcesPath, 'server', 'public', 'index.html');
-      mainWindow.loadFile(prodPath).catch(e => console.error("Fallo al cargar UI:", e));
+      console.log("Ruta de producción:", prodPath);
+      console.log("¿Existe el archivo?", fs.existsSync(prodPath));
+
+      if (fs.existsSync(prodPath)) {
+        mainWindow.loadFile(prodPath).catch(e => console.error("Fallo al cargar UI:", e));
+      } else {
+        // Fallback a localhost si el archivo no existe
+        console.log("Intentando localhost...");
+        mainWindow.loadURL('http://localhost:3001');
+      }
     } else {
+      // En desarrollo usar Vite
       mainWindow.loadURL('http://localhost:5173');
     }
 
@@ -41,25 +47,39 @@ if (!gotTheLock) {
   function startServer() {
     if (!app.isPackaged) return; // En desarrollo ya corres el server aparte
 
-    const serverPath = path.join(process.resourcesPath, 'server', 'index.js');
-    
     try {
-        process.env.IS_ELECTRON = "true";
-        process.env.USER_DATA_PATH = app.getPath('userData'); 
-        
-        console.log("Iniciando servidor interno desde:", serverPath);
-        require(serverPath); 
+      process.env.IS_ELECTRON = "true";
+      process.env.USER_DATA_PATH = app.getPath('userData');
+
+      const serverDir = path.join(process.resourcesPath, 'server');
+      const serverPath = path.join(serverDir, 'index.js');
+
+      console.log("Iniciando servidor desde:", serverPath);
+      console.log("Directorio del servidor:", serverDir);
+      console.log("¿Existe el archivo?", fs.existsSync(serverPath));
+
+      // Cambiar al directorio del servidor antes de requerirlo
+      process.chdir(serverDir);
+
+      // Requerir el servidor
+      require(serverPath);
+
+      console.log("Servidor iniciado correctamente");
+
     } catch (e) {
-        console.error("Error iniciando servidor:", e);
+      console.error("Error iniciando servidor:", e);
+      console.error("Stack:", e.stack);
     }
   }
 
   app.on('ready', () => {
-      startServer();
+    startServer();
+    // Esperar un poquito para que el servidor arranque
+    setTimeout(() => {
       createWindow();
+    }, 1500);
   });
 
-  // Si intentan abrir una segunda instancia, enfocamos la ventana existente
   app.on('second-instance', () => {
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();

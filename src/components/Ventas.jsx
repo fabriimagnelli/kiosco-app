@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Search, ShoppingCart, Trash2, CreditCard, User, AlertTriangle, RefreshCw, Plus } from "lucide-react";
+import { Search, ShoppingCart, Trash2, CreditCard, User, RefreshCw, Plus } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 function Ventas() {
@@ -36,14 +36,19 @@ function Ventas() {
   }, [location.state]);
 
   const cargarDatos = () => {
-    fetch("http://localhost:3001/api/productos").then(r => r.json()).then(p => {
-        fetch("http://localhost:3001/api/cigarrillos").then(r2 => r2.json()).then(c => {
-             const prods = p.map(x => ({...x, tipo: 'Producto'}));
-             const cigs = c.map(x => ({...x, tipo: 'Cigarrillo'}));
-             setProductos([...prods, ...cigs]);
-        });
+    Promise.all([
+      fetch("http://localhost:3001/api/productos").then(r => r.json()),
+      fetch("http://localhost:3001/api/cigarrillos").then(r => r.json()),
+      fetch("http://localhost:3001/api/promos").then(r => r.json()),
+      fetch("http://localhost:3001/api/clientes").then(r => r.json())
+    ]).then(([prods, cigs, promos, clients]) => {
+      const productos = prods.map(x => ({...x, tipo: 'Producto'}));
+      const cigarrillos = cigs.map(x => ({...x, tipo: 'Cigarrillo'}));
+      const promosList = promos.map(x => ({...x, tipo: 'Promo'}));
+
+      setProductos([...productos, ...cigarrillos, ...promosList]);
+      setClientes(clients);
     });
-    fetch("http://localhost:3001/api/clientes").then(r => r.json()).then(setClientes);
   };
 
   const cargarVentaParaEditar = (ticketId) => {
@@ -66,8 +71,37 @@ function Ventas() {
   };
 
   const agregarAlCarrito = (prod) => {
+    // Validar stock para TODOS los productos (no solo promos)
+    if (prod.tipo !== 'Manual' && prod.stock !== '-') {
+      // Si no es un artículo manual y tiene stock definido, validar
+      if (!prod.stock || prod.stock <= 0) {
+        return alert(`❌ No hay stock disponible de "${prod.nombre}".`);
+      }
+    }
+
+    // Validar stock disponible para promos (incluye stock de componentes)
+    if (prod.tipo === 'Promo' && prod.componentes && Array.isArray(prod.componentes) && prod.componentes.length > 0) {
+      for (const comp of prod.componentes) {
+        // Buscar por nombre que es más confiable que ID
+        const productoComponente = productos.find(p =>
+          p.nombre === comp.nombre && p.tipo === comp.tipo
+        );
+
+        if (!productoComponente || productoComponente.stock < comp.cantidad) {
+          return alert(`❌ No hay suficiente stock de "${comp.nombre}" para esta promo.\nRequerido: ${comp.cantidad} | Disponible: ${productoComponente?.stock || 0}`);
+        }
+      }
+    }
+
     const existe = carrito.find(item => item.nombre === prod.nombre);
     if (existe) {
+      // Validar que la cantidad total no exceda el stock
+      if (prod.tipo !== 'Manual' && prod.stock !== '-') {
+        const stock = prod.stock || 0;
+        if (existe.cantidad >= stock) {
+          return alert(`❌ No hay más stock disponible de "${prod.nombre}". Disponible: ${stock}`);
+        }
+      }
       setCarrito(carrito.map(item => item.nombre === prod.nombre ? { ...item, cantidad: item.cantidad + 1 } : item));
     } else {
       setCarrito([...carrito, { ...prod, cantidad: 1 }]);

@@ -20,6 +20,12 @@ function Deudores() {
   const [clienteSeleccionado, setClienteSeleccionado] = useState(null);
   const [historialSeleccionado, setHistorialSeleccionado] = useState([]);
 
+  // ESTADOS PARA PAGAR DEUDA
+  const [montoPago, setMontoPago] = useState("");
+  const [metodoPago, setMetodoPago] = useState("Efectivo");
+  const [descripcionPago, setDescripcionPago] = useState("");
+  const [procesandoPago, setProcesandoPago] = useState(false);
+
   useEffect(() => {
     cargarClientes();
   }, []);
@@ -65,6 +71,54 @@ function Deudores() {
       setVerHistorial(false);
       setClienteSeleccionado(null);
       setHistorialSeleccionado([]);
+      limpiarFormularioPago();
+  };
+
+  const limpiarFormularioPago = () => {
+      setMontoPago("");
+      setMetodoPago("Efectivo");
+      setDescripcionPago("");
+  };
+
+  const registrarPago = async (e) => {
+      e.preventDefault();
+      if (!montoPago || parseFloat(montoPago) <= 0) {
+          return alert("Ingresa un monto válido mayor a 0");
+      }
+
+      setProcesandoPago(true);
+
+      try {
+          const res = await fetch("http://localhost:3001/api/fiados", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                  cliente_id: clienteSeleccionado.id,
+                  monto: -parseFloat(montoPago), // Negativo porque es un pago
+                  descripcion: descripcionPago || "Pago de deuda",
+                  metodo_pago: metodoPago
+              })
+          });
+
+          const data = await res.json();
+          if (data.id || data.success) {
+              alert("Pago registrado correctamente");
+              // Recargar historial y clientes
+              fetch(`http://localhost:3001/api/fiados/${clienteSeleccionado.id}`)
+                  .then(res => res.json())
+                  .then(data => setHistorialSeleccionado(data));
+
+              cargarClientes();
+              limpiarFormularioPago();
+          } else {
+              alert("Error al registrar el pago");
+          }
+      } catch (error) {
+          console.error(error);
+          alert("Error al registrar el pago");
+      } finally {
+          setProcesandoPago(false);
+      }
   };
 
   const handleSubmit = async (e) => {
@@ -343,14 +397,76 @@ function Deudores() {
                       )}
                   </div>
 
-                  {/* PIE MODAL */}
-                  <div className="p-4 border-t border-slate-100 bg-slate-50 rounded-b-2xl flex justify-end">
-                      <button 
-                          onClick={cerrarDetalles}
-                          className="px-6 py-2 bg-slate-800 text-white font-bold rounded-lg hover:bg-slate-900 transition-colors"
-                      >
-                          Cerrar
-                      </button>
+                  {/* PIE MODAL - FORMULARIO DE PAGO */}
+                  <div className="p-6 border-t border-slate-100 bg-gradient-to-r from-slate-50 to-blue-50 rounded-b-2xl space-y-4">
+                      {clienteSeleccionado.total_deuda > 0 && (
+                          <form onSubmit={registrarPago} className="space-y-3">
+                              <div className="grid grid-cols-3 gap-3">
+                                  <div>
+                                      <label className="block text-xs font-bold text-slate-600 mb-2">Monto a Pagar</label>
+                                      <div className="relative">
+                                          <span className="absolute left-3 top-2.5 text-slate-400">$</span>
+                                          <input
+                                              type="number"
+                                              step="0.01"
+                                              min="0"
+                                              placeholder="0.00"
+                                              value={montoPago}
+                                              onChange={(e) => setMontoPago(e.target.value)}
+                                              className="w-full pl-7 p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-green-500 outline-none text-sm"
+                                              disabled={procesandoPago}
+                                          />
+                                      </div>
+                                  </div>
+                                  <div>
+                                      <label className="block text-xs font-bold text-slate-600 mb-2">Método de Pago</label>
+                                      <select
+                                          value={metodoPago}
+                                          onChange={(e) => setMetodoPago(e.target.value)}
+                                          className="w-full p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-green-500 outline-none text-sm"
+                                          disabled={procesandoPago}
+                                      >
+                                          <option value="Efectivo">Efectivo</option>
+                                          <option value="Transferencia">Transferencia</option>
+                                          <option value="Tarjeta">Tarjeta</option>
+                                      </select>
+                                  </div>
+                                  <div>
+                                      <label className="block text-xs font-bold text-slate-600 mb-2">Descripción (Opcional)</label>
+                                      <input
+                                          type="text"
+                                          placeholder="Ej: Pago parcial"
+                                          value={descripcionPago}
+                                          onChange={(e) => setDescripcionPago(e.target.value)}
+                                          className="w-full p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-green-500 outline-none text-sm"
+                                          disabled={procesandoPago}
+                                      />
+                                  </div>
+                              </div>
+                              <div className="flex justify-between items-center gap-3">
+                                  <div className="text-sm text-slate-600">
+                                      {montoPago && <span className="font-bold text-green-600">Pago: ${parseFloat(montoPago || 0).toFixed(2)} | Nuevo Saldo: ${(clienteSeleccionado.total_deuda - parseFloat(montoPago || 0)).toFixed(2)}</span>}
+                                  </div>
+                                  <div className="flex gap-2">
+                                      <button
+                                          type="submit"
+                                          disabled={procesandoPago || !montoPago}
+                                          className="px-4 py-2 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                      >
+                                          ✓ Registrar Pago
+                                      </button>
+                                  </div>
+                              </div>
+                          </form>
+                      )}
+                      <div className="flex justify-end">
+                          <button
+                              onClick={cerrarDetalles}
+                              className="px-6 py-2 bg-slate-800 text-white font-bold rounded-lg hover:bg-slate-900 transition-colors"
+                          >
+                              Cerrar
+                          </button>
+                      </div>
                   </div>
               </div>
           </div>

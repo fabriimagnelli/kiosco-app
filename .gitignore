@@ -21,8 +21,10 @@ server/kiosco.db
 .env
 
 #la carpeta electron
-node_modules/
-dist/
-dist-electron/
-*.exe
 *.asar
+node_modules/
+dist_electron/
+dist/
+*.zip
+*.exe
+*.dll

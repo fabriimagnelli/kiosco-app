@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { DollarSign, ShoppingCart, TrendingDown, AlertTriangle, TrendingUp, Award, PieChart as PieIcon, Trash2, Download, RefreshCw, X } from "lucide-react";
+import { DollarSign, ShoppingCart, TrendingDown, AlertTriangle, TrendingUp, Award, PieChart as PieIcon, Download, RefreshCw, X } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Legend } from "recharts";
 
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
@@ -77,26 +77,6 @@ function Inicio() {
     } catch (error) {
         alert("Error de conexión.");
         setUpdating(false);
-    }
-  };
-
-  const handleFactoryReset = async () => {
-    if (confirm("⚠️ ¡ADVERTENCIA DE SEGURIDAD!\n\nEstás a punto de borrar TODO el historial de movimientos (Ventas, Caja, Gastos, Retiros).\n\nLos Productos, Clientes y Proveedores NO se borrarán.\n\n¿Estás 100% seguro de que quieres limpiar el sistema?")) {
-        const confirm2 = prompt("Escribe 'BORRAR' para confirmar la limpieza:");
-        if (confirm2 === "BORRAR") {
-            try {
-                const res = await fetch("http://localhost:3001/api/system/reset-transactions", { method: "DELETE" });
-                const data = await res.json();
-                if (data.success) {
-                    alert("Sistema limpiado correctamente. Se recargará la página.");
-                    window.location.reload();
-                } else {
-                    alert("Error: " + data.error);
-                }
-            } catch (error) {
-                alert("Error de conexión al intentar borrar.");
-            }
-        }
     }
   };
 
@@ -228,17 +208,6 @@ function Inicio() {
         </div>
       </div>
 
-      {/* ZONA DE ADMINISTRACIÓN */}
-      <div className="mt-8 border-t border-slate-200 pt-6">
-          <h3 className="text-slate-500 text-sm font-bold uppercase mb-4">Administración del Sistema</h3>
-          <button 
-              onClick={handleFactoryReset}
-              className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-4 py-3 rounded-xl flex items-center gap-3 transition-colors font-medium w-full md:w-auto justify-center"
-          >
-              <Trash2 size={20} />
-              Limpiar Datos de Prueba (Mantener Productos)
-          </button>
-      </div>
     </div>
   );
 }

@@ -1,19 +1,29 @@
 import React, { useState, useEffect } from "react";
-import { TrendingUp, FileText } from "lucide-react";
+import { TrendingUp, FileText, RefreshCw } from "lucide-react";
 import jsPDF from "jspdf";
 import "jspdf-autotable";
 
 function Retiros() {
   const [historial, setHistorial] = useState([]);
   const [totalAcumulado, setTotalAcumulado] = useState(0);
+  const [cargando, setCargando] = useState(false);
+
+  const cargarRetiros = async () => {
+    setCargando(true);
+    try {
+      const res = await fetch("http://localhost:3001/api/retiros");
+      const data = await res.json();
+      setHistorial(data.historial || []);
+      setTotalAcumulado(data.total || 0);
+    } catch (error) {
+      console.error("Error cargando retiros:", error);
+    } finally {
+      setCargando(false);
+    }
+  };
 
   useEffect(() => {
-    fetch("http://localhost:3001/api/retiros")
-      .then(res => res.json())
-      .then(data => {
-        setHistorial(data.historial);
-        setTotalAcumulado(data.total);
-      });
+    cargarRetiros();
   }, []);
 
   const descargarPDF = (item) => {
@@ -79,8 +89,16 @@ function Retiros() {
 
       {/* TABLA HISTORIAL */}
       <div className="flex-1 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
-        <div className="p-4 bg-slate-50 border-b border-slate-200">
+        <div className="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
           <h3 className="font-bold text-slate-700">Movimientos de Retiros</h3>
+          <button
+            onClick={cargarRetiros}
+            disabled={cargando}
+            className="p-2 text-slate-600 hover:text-slate-900 transition-colors disabled:opacity-50"
+            title="Refrescar datos"
+          >
+            <RefreshCw size={20} className={cargando ? "animate-spin" : ""} />
+          </button>
         </div>
         <div className="flex-1 overflow-y-auto">
           <table className="w-full text-left">

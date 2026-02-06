@@ -35,7 +35,7 @@ function Promos() {
       setPromos(dataPromos);
 
       // Unificar productos para el buscador
-      const listaProd = dataProd.map(p => ({ ...p, tipo: "General" }));
+      const listaProd = dataProd.map(p => ({ ...p, tipo: "Producto" }));
       const listaCig = dataCig.map(c => ({ ...c, tipo: "Cigarrillo" }));
       setProductosDisponibles([...listaProd, ...listaCig]);
 
@@ -71,28 +71,16 @@ function Promos() {
   };
 
   const editarPromo = (promo) => {
-    // Reconstruimos los componentes completos buscando en productosDisponibles
-    // Esto es necesario para que aparezcan los nombres en la lista de la derecha del modal
-    const componentesCompletos = promo.componentes.map(comp => {
-        // La DB guarda 'producto' o 'cigarrillo', el frontend usa 'General' o 'Cigarrillo'
-        const tipoFrontend = comp.tipo_producto === 'cigarrillo' ? 'Cigarrillo' : 'General';
-        
-        const original = productosDisponibles.find(p => p.id === comp.producto_id && p.tipo === tipoFrontend);
-        
-        return {
-            ...original, // Trae nombre, precio, etc.
-            id: comp.producto_id,
-            tipo: tipoFrontend,
-            cantidad: comp.cantidad
-        };
-    }).filter(c => c.nombre); // Filtrar si por error no se encuentra el producto original
-
+    // Los componentes se guardan directamente con id, nombre, tipo, cantidad
+    // Solo necesitamos enviar los componentes tal como están
     setNuevaPromo({
         id: promo.id,
         nombre: promo.nombre,
         precio: promo.precio,
         codigo_barras: promo.codigo_barras || "",
-        componentes: componentesCompletos
+        componentes: promo.componentes && promo.componentes.length > 0
+          ? promo.componentes
+          : []
     });
     setMostrarModal(true);
   };
@@ -104,10 +92,10 @@ function Promos() {
     }
 
     try {
-      const url = nuevaPromo.id 
-        ? `http://localhost:3001/api/promos/${nuevaPromo.id}` 
+      const url = nuevaPromo.id
+        ? `http://localhost:3001/api/promos/${nuevaPromo.id}`
         : "http://localhost:3001/api/promos";
-        
+
       const method = nuevaPromo.id ? "PUT" : "POST";
 
       const res = await fetch(url, {
@@ -116,16 +104,19 @@ function Promos() {
         body: JSON.stringify(nuevaPromo)
       });
 
+      const data = await res.json();
+
       if (res.ok) {
         alert(nuevaPromo.id ? "✅ Promo actualizada" : "✅ Promo creada");
         setMostrarModal(false);
         setNuevaPromo({ id: null, nombre: "", precio: "", codigo_barras: "", componentes: [] });
         cargarDatos();
       } else {
-        alert("Error al guardar promo");
+        alert("Error: " + (data.error || "Error al guardar promo"));
       }
     } catch (error) {
       console.error(error);
+      alert("Error: " + error.message);
     }
   };
 
