@@ -4,12 +4,8 @@ directories:
   output: dist_electron
 files:
   - "**/*"
+  - "server/**/*"
   - "!dist_electron/*"
-extraResources:
-  - from: server/
-    to: server/
-    filter:
-      - "**/*"
 win:
   target:
     - nsis
