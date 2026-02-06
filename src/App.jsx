@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, Component } from "react";
 // CORRECCIÓN CLAVE: Usamos HashRouter en lugar de BrowserRouter
 import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
@@ -95,14 +95,44 @@ function RutasApp() {
     );
 }
 
+// Error Boundary para evitar pantallas en blanco por errores inesperados
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, errorInfo) {
+    console.error("Error capturado por ErrorBoundary:", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="fixed inset-0 bg-slate-900 flex flex-col items-center justify-center text-white p-8">
+          <h1 className="text-2xl font-bold mb-4">Ocurrió un error inesperado</h1>
+          <p className="text-slate-400 mb-6 text-center max-w-md">{this.state.error?.message || "Error desconocido"}</p>
+          <button onClick={() => { this.setState({ hasError: false, error: null }); window.location.hash = "#/login"; window.location.reload(); }}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-xl transition-all">
+            Reiniciar Aplicación
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function App() {
   return (
-    <AuthProvider>
-      {/* AQUÍ ESTABA EL ERROR: Cambiado BrowserRouter por HashRouter */}
-      <HashRouter>
-        <RutasApp />
-      </HashRouter>
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <HashRouter>
+          <RutasApp />
+        </HashRouter>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
 

@@ -1,30 +1,36 @@
 import React, { useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { User, Lock, ArrowRight } from "lucide-react";
-import { Navigate, Outlet } from "react-router-dom";
-
-// --- COMPONENTE DE SEGURIDAD ---
-export const RutaProtegida = () => {
-  const { user } = useAuth();
-  if (!user) return <Navigate to="/login" replace />;
-  return <Outlet />;
-};
+import { Navigate } from "react-router-dom";
 
 // --- PANTALLA DE LOGIN ---
 function Login() {
   const [usuario, setUsuario] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const { login, user } = useAuth();
+  const [cargandoLogin, setCargandoLogin] = useState(false);
+  const { login, usuario: usuarioAuth } = useAuth();
 
-  if (user) return <Navigate to="/" replace />;
+  if (usuarioAuth) return <Navigate to="/" replace />;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
-    const resultado = await login(usuario, password);
-    if (!resultado.success) {
-      setError(resultado.message);
+    if (!usuario.trim() || !password.trim()) {
+      setError("Complete ambos campos");
+      return;
+    }
+    setCargandoLogin(true);
+    try {
+      const resultado = await login(usuario, password);
+      if (!resultado.success) {
+        setError(resultado.message || "Error al iniciar sesión");
+      }
+    } catch (err) {
+      setError("Error inesperado. Intente nuevamente.");
+      console.error("Error login:", err);
+    } finally {
+      setCargandoLogin(false);
     }
   };
 
@@ -79,8 +85,11 @@ function Login() {
                 </div>
             )}
 
-            <button className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-lg shadow-blue-600/30 transition-all flex justify-center items-center gap-2 active:scale-95">
-                Ingresar al Sistema <ArrowRight size={20} />
+            <button 
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-lg shadow-blue-600/30 transition-all flex justify-center items-center gap-2 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed"
+                disabled={cargandoLogin}
+            >
+                {cargandoLogin ? "Ingresando..." : "Ingresar al Sistema"} {!cargandoLogin && <ArrowRight size={20} />}
             </button>
         </form>
 

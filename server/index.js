@@ -781,4 +781,37 @@ app.get(/.*/, (req, res) => {
     res.sendFile(path.join(publicPath, 'index.html')); 
 });
 
-app.listen(port, () => { console.log(`Servidor corriendo en http://localhost:${port}`); });
+const server = app.listen(port, () => { console.log(`Servidor corriendo en http://localhost:${port}`); });
+
+server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+        console.log(`Puerto ${port} en uso. Intentando liberar...`);
+        // Intentar matar el proceso anterior y reintentar
+        const killCmd = process.platform === 'win32' 
+            ? `netstat -ano | findstr :${port}` 
+            : `lsof -ti:${port}`;
+        exec(killCmd, (error, stdout) => {
+            if (!error && stdout.trim()) {
+                const lines = stdout.trim().split('\n');
+                const pids = [...new Set(lines.map(l => l.trim().split(/\s+/).pop()).filter(p => p && /^\d+$/.test(p)))];
+                pids.forEach(pid => {
+                    try {
+                        if (process.platform === 'win32') {
+                            exec(`taskkill /PID ${pid} /F`, () => {});
+                        } else {
+                            process.kill(parseInt(pid), 'SIGTERM');
+                        }
+                    } catch(e) {}
+                });
+                // Reintentar después de matar
+                setTimeout(() => {
+                    app.listen(port, () => console.log(`Servidor corriendo en http://localhost:${port} (reintento)`));
+                }, 1500);
+            } else {
+                console.error(`No se pudo liberar el puerto ${port}. ¿Hay otra instancia abierta?`);
+            }
+        });
+    } else {
+        console.error('Error del servidor:', err);
+    }
+});

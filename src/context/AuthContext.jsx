@@ -8,22 +8,40 @@ export const useAuth = () => {
 
 export const AuthProvider = ({ children }) => {
   const [usuario, setUsuario] = useState(null);
-  // AGREGAMOS ESTADO DE CARGA (IMPORTANTE)
   const [cargando, setCargando] = useState(true);
 
   useEffect(() => {
-    // Revisar si hay sesión guardada al iniciar
     const usuarioGuardado = localStorage.getItem("usuario_kiosco");
     if (usuarioGuardado) {
-      setUsuario(usuarioGuardado);
+      try {
+        setUsuario(JSON.parse(usuarioGuardado));
+      } catch {
+        setUsuario(usuarioGuardado);
+      }
     }
-    // Una vez revisado, terminamos la carga
     setCargando(false);
   }, []);
 
-  const login = (user) => {
-    setUsuario(user);
-    localStorage.setItem("usuario_kiosco", user);
+  const login = async (nombreUsuario, password) => {
+    try {
+      const res = await fetch("http://localhost:3001/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ usuario: nombreUsuario, password }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        const userData = data.user?.nombre || nombreUsuario;
+        setUsuario(userData);
+        localStorage.setItem("usuario_kiosco", JSON.stringify(userData));
+        return { success: true };
+      } else {
+        return { success: false, message: data.error || "Credenciales incorrectas" };
+      }
+    } catch (error) {
+      console.error("Error de conexión al servidor:", error);
+      return { success: false, message: "No se pudo conectar al servidor. Verifique que esté en ejecución." };
+    }
   };
 
   const logout = () => {
@@ -35,7 +53,7 @@ export const AuthProvider = ({ children }) => {
     usuario,
     login,
     logout,
-    cargando // Exportamos el estado de carga
+    cargando
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
