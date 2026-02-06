@@ -3,8 +3,8 @@ productName: SACWare Kiosco
 directories:
   output: dist_electron
 files:
-  - electron-main.js
-  - package.json
+  - "**/*"
+  - "!dist_electron/*"
 extraResources:
   - from: server/
     to: server/

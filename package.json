@@ -14,9 +14,13 @@
     "dist:win": "npm run build && electron-builder --win",
     "dist:portable": "npm run build && electron-packager . SACWare-Kiosco --platform=win32 --arch=x64 --out=dist_electron --overwrite --asar --extra-resource=server",
     "lint": "eslint .",
-    "preview": "vite preview",
-    "postinstall": "electron-builder install-app-deps",
-    "electron:build": "vite build && electron-builder"
+      "preview": "vite preview",
+      "postinstall": "electron-builder install-app-deps",
+      "electron:build": "vite build && electron-builder"
+    },
+    "repository": {
+    "type": "git",
+    "url": "https://github.com/fabriimagnelli/kiosco-app.git"
   },
   "build": {
     "appId": "com.sacwebagency.kiosco",
@@ -44,6 +48,14 @@
       ],
       "icon": "build/icon.ico"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "fabriimagnelli",
+        "repo": "kiosco-app"
+      }
+    ],
+
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
