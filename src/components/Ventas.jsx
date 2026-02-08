@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { Search, ShoppingCart, Trash2, CreditCard, User, RefreshCw, Plus } from "lucide-react";
+import { Search, ShoppingCart, Trash2, CreditCard, User, RefreshCw, Plus, Printer } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { apiFetch } from "../lib/api";
+import jsPDF from "jspdf";
 
 function Ventas() {
   const location = useLocation();
@@ -24,6 +26,9 @@ function Ventas() {
 
   // Estado para Edición
   const [ticketEditando, setTicketEditando] = useState(null);
+  
+  // Descuento
+  const [descuento, setDescuento] = useState("");
 
   useEffect(() => {
     cargarDatos();
@@ -38,10 +43,10 @@ function Ventas() {
   const cargarDatos = async () => {
     try {
       const [prodsRes, cigsRes, promosRes, clientsRes] = await Promise.all([
-        fetch("http://localhost:3001/api/productos").then(r => r.json()).catch(() => []),
-        fetch("http://localhost:3001/api/cigarrillos").then(r => r.json()).catch(() => []),
-        fetch("http://localhost:3001/api/promos").then(r => r.json()).catch(() => []),
-        fetch("http://localhost:3001/api/clientes").then(r => r.json()).catch(() => [])
+        apiFetch("/api/productos").then(r => r.json()).catch(() => []),
+        apiFetch("/api/cigarrillos").then(r => r.json()).catch(() => []),
+        apiFetch("/api/promos").then(r => r.json()).catch(() => []),
+        apiFetch("/api/clientes").then(r => r.json()).catch(() => [])
       ]);
 
       const prods = Array.isArray(prodsRes) ? prodsRes : [];
@@ -61,7 +66,7 @@ function Ventas() {
   };
 
   const cargarVentaParaEditar = (ticketId) => {
-    fetch(`http://localhost:3001/api/ventas/${ticketId}`)
+    apiFetch(`/api/ventas/${ticketId}`)
         .then(res => res.json())
         .then(items => {
             if(items.length > 0) {
@@ -141,6 +146,86 @@ function Ventas() {
     setCarrito(nuevo);
   };
 
+  const generarTicketPDF = (ticketId, items, metodoPago, totalVenta, descuentoTotal = 0) => {
+    try {
+      // Ticket térmico 80mm (~226pt de ancho)
+      const anchoMM = 80;
+      const doc = new jsPDF({ unit: "mm", format: [anchoMM, 200] });
+      let y = 10;
+      const margen = 5;
+      const ancho = anchoMM - margen * 2;
+
+      // ENCABEZADO
+      doc.setFontSize(14);
+      doc.setFont("helvetica", "bold");
+      doc.text("KIOSCO", anchoMM / 2, y, { align: "center" });
+      y += 6;
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "normal");
+      doc.text(new Date().toLocaleString("es-AR"), anchoMM / 2, y, { align: "center" });
+      y += 4;
+      doc.text(`Ticket #${ticketId}`, anchoMM / 2, y, { align: "center" });
+      y += 5;
+
+      // Línea separadora
+      doc.setDrawColor(0);
+      doc.setLineWidth(0.3);
+      doc.line(margen, y, anchoMM - margen, y);
+      y += 4;
+
+      // PRODUCTOS
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "bold");
+      doc.text("Cant.", margen, y);
+      doc.text("Producto", margen + 10, y);
+      doc.text("Subtot.", anchoMM - margen, y, { align: "right" });
+      y += 4;
+      doc.setFont("helvetica", "normal");
+
+      items.forEach((item) => {
+        const subtotal = item.precio * item.cantidad;
+        doc.text(`${item.cantidad}`, margen, y);
+        const nombre = item.nombre.length > 22 ? item.nombre.substring(0, 22) + "..." : item.nombre;
+        doc.text(nombre, margen + 10, y);
+        doc.text(`$${subtotal.toFixed(0)}`, anchoMM - margen, y, { align: "right" });
+        y += 4;
+      });
+
+      y += 2;
+      doc.line(margen, y, anchoMM - margen, y);
+      y += 5;
+
+      // DESCUENTO (si hay)
+      if (descuentoTotal > 0) {
+        doc.setFont("helvetica", "normal");
+        doc.text("Descuento:", margen, y);
+        doc.text(`-$${descuentoTotal.toFixed(0)}`, anchoMM - margen, y, { align: "right" });
+        y += 5;
+      }
+
+      // TOTAL
+      doc.setFontSize(12);
+      doc.setFont("helvetica", "bold");
+      doc.text("TOTAL:", margen, y);
+      doc.text(`$${totalVenta.toFixed(0)}`, anchoMM - margen, y, { align: "right" });
+      y += 6;
+
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "normal");
+      doc.text(`Pago: ${metodoPago}`, anchoMM / 2, y, { align: "center" });
+      y += 6;
+      doc.text("¡Gracias por su compra!", anchoMM / 2, y, { align: "center" });
+
+      // Ajustar altura del documento
+      const alturaFinal = y + 10;
+      doc.internal.pageSize.height = alturaFinal;
+
+      doc.save(`ticket_${ticketId}.pdf`);
+    } catch (e) {
+      console.error("Error generando PDF:", e);
+    }
+  };
+
   const confirmarVenta = async () => {
     if (carrito.length === 0) return alert("El carrito está vacío");
 
@@ -155,14 +240,15 @@ function Ventas() {
       cliente_id: clienteSelec || null,
       pago_anticipado: pagoAnticipado || 0,
       metodo_anticipo: metodoAnticipo,
-      ticket_a_corregir: ticketEditando
+      ticket_a_corregir: ticketEditando,
+      descuento: descuentoNum
     };
 
     if (ticketEditando) {
         if(!confirm(`ESTÁS EDITANDO EL TICKET #${ticketEditando}\n\n¿Continuar?`)) return;
     }
 
-    const res = await fetch("http://localhost:3001/api/ventas", {
+    const res = await apiFetch("/api/ventas", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -170,12 +256,17 @@ function Ventas() {
 
     const data = await res.json();
     if (data.success) {
+      // Generar ticket PDF
+      const ticketNum = data.ticket_id || ticketEditando || "?";
+      generarTicketPDF(ticketNum, carrito, metodo, total, descuentoNum);
+
       alert(ticketEditando ? "Venta corregida." : "Venta registrada!");
       setCarrito([]);
       setTicketEditando(null);
       setClienteSelec("");
       setPagoAnticipado("");
-      setMetodo("Efectivo"); // Resetear método
+      setDescuento("");
+      setMetodo("Efectivo");
       navigate("/ventas", { state: {} });
     } else {
       alert("Error: " + data.error);
@@ -187,7 +278,9 @@ function Ventas() {
     (p.codigo_barras && p.codigo_barras.includes(busqueda))
   );
 
-  const total = carrito.reduce((acc, item) => acc + (item.precio * item.cantidad), 0);
+  const subtotal = carrito.reduce((acc, item) => acc + (item.precio * item.cantidad), 0);
+  const descuentoNum = parseFloat(descuento) || 0;
+  const total = Math.max(0, subtotal - descuentoNum);
 
   return (
     <div className="flex flex-col lg:flex-row h-full bg-slate-100 p-4 gap-4 overflow-hidden">
@@ -352,8 +445,29 @@ function Ventas() {
                 </select>
             </div>
 
+            {/* DESCUENTO */}
+            <div>
+                <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1 mb-1">
+                    Descuento ($)
+                </label>
+                <input
+                    type="number"
+                    placeholder="0"
+                    min="0"
+                    className="w-full p-2 border rounded-lg text-sm bg-white"
+                    value={descuento}
+                    onChange={e => setDescuento(e.target.value)}
+                />
+            </div>
+
             <div className="flex justify-between items-center pt-2">
-                <span className="text-slate-500 font-bold">Total</span>
+                {descuentoNum > 0 && (
+                  <div className="flex flex-col">
+                    <span className="text-xs text-slate-400 line-through">$ {subtotal}</span>
+                    <span className="text-xs text-green-600 font-bold">-$ {descuentoNum} desc.</span>
+                  </div>
+                )}
+                <span className="text-slate-500 font-bold">{descuentoNum <= 0 ? "Total" : ""}</span>
                 <span className="text-3xl font-black text-slate-800">$ {total}</span>
             </div>
 

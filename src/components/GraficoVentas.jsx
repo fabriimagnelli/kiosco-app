@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { apiFetch } from '../lib/api';
 
 const GraficoVentas = () => {
   const [data, setData] = useState([]);
 
   useEffect(() => {
     // Pedimos los datos al backend
-    fetch('http://localhost:3001/reportes/ventas_semana')
+    apiFetch('/reportes/ventas_semana')
       .then(res => res.json())
       .then(resultados => {
         // Transformamos los datos para que el gráfico los entienda

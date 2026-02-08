@@ -1,6 +1,6 @@
 import React, { useState, useEffect, Component } from "react";
 // CORRECCIÓN CLAVE: Usamos HashRouter en lugar de BrowserRouter
-import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
+import { HashRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import Sidebar from "./components/Sidebar";
 import Login from "./components/Login";
@@ -38,10 +38,39 @@ const Layout = ({ children }) => {
     const saved = localStorage.getItem("sidebarOpen");
     return saved !== null ? JSON.parse(saved) : true;
   });
+  const navigate = useNavigate();
 
   useEffect(() => {
     localStorage.setItem("sidebarOpen", JSON.stringify(sidebarOpen));
   }, [sidebarOpen]);
+
+  // Atajos de teclado globales
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // No activar si el foco está en un input/textarea/select
+      const tag = document.activeElement?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      const atajos = {
+        F1: "/",
+        F2: "/ventas",
+        F3: "/cierre",
+        F4: "/productos",
+        F5: "/stock",
+        F6: "/reportes",
+        F7: "/gastos",
+        F8: "/configuracion"
+      };
+
+      if (atajos[e.key]) {
+        e.preventDefault();
+        navigate(atajos[e.key]);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [navigate]);
 
   return (
     <div className="flex h-screen bg-slate-100 overflow-hidden font-sans text-slate-900">

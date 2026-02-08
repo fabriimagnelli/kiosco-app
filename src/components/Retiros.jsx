@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { TrendingUp, FileText, RefreshCw } from "lucide-react";
 import jsPDF from "jspdf";
 import "jspdf-autotable";
+import { apiFetch } from "../lib/api";
 
 function Retiros() {
   const [historial, setHistorial] = useState([]);
@@ -11,7 +12,7 @@ function Retiros() {
   const cargarRetiros = async () => {
     setCargando(true);
     try {
-      const res = await fetch("http://localhost:3001/api/retiros");
+      const res = await apiFetch("/api/retiros");
       const data = await res.json();
       setHistorial(data.historial || []);
       setTotalAcumulado(data.total || 0);

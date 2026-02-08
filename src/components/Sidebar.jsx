@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 
 function Sidebar({ isOpen, toggleSidebar }) {
-  const { logout, usuario } = useAuth();
+  const { logout, usuario, rol } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -52,19 +52,22 @@ function Sidebar({ isOpen, toggleSidebar }) {
         
         {isOpen && <p className="text-[10px] font-bold text-slate-600 uppercase mb-2 mt-2 px-2 fade-in">Caja</p>}
         
-        <Link to="/" className={`${btnBase} ${isActive("/") ? btnActive : btnInactive}`} title="Inicio">
+        <Link to="/" className={`${btnBase} ${isActive("/") ? btnActive : btnInactive}`} title="Inicio (F1)">
           <Home size={20} className="flex-shrink-0" /> 
           <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Inicio</span>
+          {isOpen && <span className="ml-auto text-[10px] bg-slate-700/50 px-1.5 py-0.5 rounded text-slate-400">F1</span>}
         </Link>
 
-        <Link to="/ventas" className={`${btnBase} ${isActive("/ventas") ? btnActive : btnInactive}`} title="Ventas">
+        <Link to="/ventas" className={`${btnBase} ${isActive("/ventas") ? btnActive : btnInactive}`} title="Ventas (F2)">
           <ShoppingCart size={20} className="flex-shrink-0" />
           <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Ventas</span>
+          {isOpen && <span className="ml-auto text-[10px] bg-slate-700/50 px-1.5 py-0.5 rounded text-slate-400">F2</span>}
         </Link>
 
-        <Link to="/cierre" className={`${btnBase} ${isActive("/cierre") ? btnActive : btnInactive}`} title="Cierre">
+        <Link to="/cierre" className={`${btnBase} ${isActive("/cierre") ? btnActive : btnInactive}`} title="Cierre (F3)">
           <Archive size={20} className="flex-shrink-0" />
           <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Cierre</span>
+          {isOpen && <span className="ml-auto text-[10px] bg-slate-700/50 px-1.5 py-0.5 rounded text-slate-400">F3</span>}
         </Link>
 
         <div className={`my-2 border-t border-slate-800 mx-auto ${isOpen ? "w-full" : "w-10"}`}></div>
@@ -76,9 +79,10 @@ function Sidebar({ isOpen, toggleSidebar }) {
           <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Retiros</span>
         </Link>
 
-        <Link to="/stock" className={`${btnBase} ${isActive("/stock") ? btnActive : btnInactive}`} title="Stock">
+        <Link to="/stock" className={`${btnBase} ${isActive("/stock") ? btnActive : btnInactive}`} title="Stock (F5)">
           <PieChart size={20} className="flex-shrink-0" />
           <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Stock</span>
+          {isOpen && <span className="ml-auto text-[10px] bg-slate-700/50 px-1.5 py-0.5 rounded text-slate-400">F5</span>}
         </Link>
 
         <Link to="/promos" className={`${btnBase} ${isActive("/promos") ? btnActive : btnInactive}`} title="Promos y Combos">
@@ -86,9 +90,10 @@ function Sidebar({ isOpen, toggleSidebar }) {
           <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Promos</span>
         </Link>
 
-        <Link to="/productos" className={`${btnBase} ${isActive("/productos") ? btnActive : btnInactive}`} title="Productos">
+        <Link to="/productos" className={`${btnBase} ${isActive("/productos") ? btnActive : btnInactive}`} title="Productos (F4)">
           <Package size={20} className="flex-shrink-0" />
           <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Productos</span>
+          {isOpen && <span className="ml-auto text-[10px] bg-slate-700/50 px-1.5 py-0.5 rounded text-slate-400">F4</span>}
         </Link>
 
         <Link to="/cigarrillos" className={`${btnBase} ${isActive("/cigarrillos") ? btnActive : btnInactive}`} title="Cigarrillos">
@@ -110,9 +115,10 @@ function Sidebar({ isOpen, toggleSidebar }) {
           <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Proveedores</span>
         </Link>
 
-        <Link to="/gastos" className={`${btnBase} ${isActive("/gastos") ? btnActive : btnInactive}`} title="Gastos">
+        <Link to="/gastos" className={`${btnBase} ${isActive("/gastos") ? btnActive : btnInactive}`} title="Gastos (F7)">
           <DollarSign size={20} className="flex-shrink-0" />
           <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Gastos</span>
+          {isOpen && <span className="ml-auto text-[10px] bg-slate-700/50 px-1.5 py-0.5 rounded text-slate-400">F7</span>}
         </Link>
 
         <Link to="/balance" className={`${btnBase} ${isActive("/balance") ? btnActive : btnInactive}`} title="Balance">
@@ -120,15 +126,17 @@ function Sidebar({ isOpen, toggleSidebar }) {
           <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Balance</span>
         </Link>
 
-        <Link to="/reportes" className={`${btnBase} ${isActive("/reportes") ? btnActive : btnInactive}`} title="Reportes">
+        <Link to="/reportes" className={`${btnBase} ${isActive("/reportes") ? btnActive : btnInactive}`} title="Reportes (F6)">
           <FileText size={20} className="flex-shrink-0" />
           <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Reportes</span>
+          {isOpen && <span className="ml-auto text-[10px] bg-slate-700/50 px-1.5 py-0.5 rounded text-slate-400">F6</span>}
         </Link>
         
         {/* NUEVO BOTÓN DE CONFIGURACIÓN */}
-        <Link to="/configuracion" className={`${btnBase} ${isActive("/configuracion") ? btnActive : btnInactive}`} title="Configuración">
+        <Link to="/configuracion" className={`${btnBase} ${isActive("/configuracion") ? btnActive : btnInactive}`} title="Configuración (F8)">
           <Settings size={20} className="flex-shrink-0" />
           <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Configuración</span>
+          {isOpen && <span className="ml-auto text-[10px] bg-slate-700/50 px-1.5 py-0.5 rounded text-slate-400">F8</span>}
         </Link>
 
       </nav>
@@ -145,7 +153,7 @@ function Sidebar({ isOpen, toggleSidebar }) {
           
           <div className={`overflow-hidden transition-all duration-300 ${isOpen ? "opacity-100 w-auto" : "opacity-0 w-0 hidden"}`}>
             <p className="text-white text-sm font-bold truncate">{usuario || "Usuario"}</p>
-            <p className="text-xs text-slate-500">Administrador</p>
+            <p className="text-xs text-slate-500">{rol === 'admin' ? 'Administrador' : rol === 'supervisor' ? 'Supervisor' : 'Cajero'}</p>
           </div>
         </div>
         

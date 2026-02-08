@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Cigarette, Save, AlertTriangle, Calculator, DollarSign, ArrowRight, Coins, Wallet, Edit2, Check, X } from "lucide-react";
+import { apiFetch } from "../lib/api";
 
 function CierreCigarrillos() {
   const [resumen, setResumen] = useState(null);
@@ -19,7 +20,7 @@ function CierreCigarrillos() {
   const [valorTempInicio, setValorTempInicio] = useState("");
 
   useEffect(() => {
-    fetch("http://localhost:3001/api/cierre/cigarrillos")
+    apiFetch("/api/cierre/cigarrillos")
       .then((res) => res.json())
       .then((data) => setResumen(data))
       .catch((err) => console.error(err));
@@ -77,7 +78,7 @@ function CierreCigarrillos() {
     if (!confirm(`¿Confirmar cierre de cigarrillos?\n\nContado: $${contado}\nRetiro: $${retiro}\nQueda (Inicio Mañana): $${queda}`)) return;
 
     try {
-      const res = await fetch("http://localhost:3001/api/cierres_unificado", {
+      const res = await apiFetch("/api/cierres_unificado", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { DollarSign, ShoppingCart, TrendingDown, AlertTriangle, TrendingUp, Award, PieChart as PieIcon, Download, RefreshCw, X } from "lucide-react";
+import { apiFetch } from "../lib/api";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Legend } from "recharts";
 
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
@@ -28,22 +29,22 @@ function Inicio() {
   const [updating, setUpdating] = useState(false);
 
   useEffect(() => {
-    fetch("http://localhost:3001/api/dashboard")
+    apiFetch("/api/dashboard")
       .then((res) => res.json())
       .then(setDashboard)
       .catch((err) => console.error("Error Dashboard:", err));
 
-    fetch("http://localhost:3001/api/reportes/ventas_semana")
+    apiFetch("/api/reportes/ventas_semana")
       .then((res) => res.json())
       .then(setVentasSemana)
       .catch((err) => console.error("Error Ventas Semana:", err));
     
-    fetch("http://localhost:3001/api/reportes/productos_top")
+    apiFetch("/api/reportes/productos_top")
       .then((res) => res.json())
       .then(setProductosTop)
       .catch((err) => console.error("Error Top Productos:", err));
 
-    fetch("http://localhost:3001/api/reportes/metodos_pago")
+    apiFetch("/api/reportes/metodos_pago")
       .then((res) => res.json())
       .then(setMetodosPago)
       .catch((err) => console.error("Error Metodos Pago:", err));
@@ -53,10 +54,10 @@ function Inicio() {
 
   const checkVersionSystem = async () => {
     try {
-        const resVer = await fetch("http://localhost:3001/api/system/version");
+        const resVer = await apiFetch("/api/system/version");
         const dataVer = await resVer.json();
         setCurrentVersion(dataVer.version || "1.0.0");
-        const resCheck = await fetch("http://localhost:3001/api/system/check-update");
+        const resCheck = await apiFetch("/api/system/check-update");
         const dataCheck = await resCheck.json();
         if (dataCheck.updateAvailable) setShowUpdateModal(true);
     } catch (error) { console.error("Error updates:", error); }
@@ -65,7 +66,7 @@ function Inicio() {
   const handleUpdate = async () => {
     setUpdating(true);
     try {
-        const res = await fetch("http://localhost:3001/api/system/update", { method: "POST" });
+        const res = await apiFetch("/api/system/update", { method: "POST" });
         const data = await res.json();
         if (data.success) {
             alert(`Actualizado a ${data.new_version}. Recargando...`);

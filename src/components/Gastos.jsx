@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { DollarSign, Calendar, Tag, Plus, Trash2, Search, Filter, TrendingDown } from "lucide-react";
+import { apiFetch } from "../lib/api";
 
 function Gastos() {
   const [gastos, setGastos] = useState([]);
@@ -37,7 +38,7 @@ function Gastos() {
   }, []);
 
   const cargarGastos = () => {
-    fetch("http://localhost:3001/api/gastos")
+    apiFetch("/api/gastos")
       .then((res) => res.json())
       .then((data) => {
         setGastos(data);
@@ -47,7 +48,7 @@ function Gastos() {
   };
 
   const cargarProveedores = () => {
-    fetch("http://localhost:3001/api/proveedores")
+    apiFetch("/api/proveedores")
       .then((res) => res.json())
       .then((data) => setProveedores(data || []))
       .catch((err) => console.error(err));
@@ -62,7 +63,7 @@ function Gastos() {
       // Si es pago a proveedor, registrar SOLO en movimientos_proveedores
       // El backend crea el gasto automáticamente
       if (categoria === "Proveedores" && proveedorId) {
-        const res = await fetch("http://localhost:3001/api/movimientos_proveedores", {
+        const res = await apiFetch("/api/movimientos_proveedores", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -92,7 +93,7 @@ function Gastos() {
           metodo_pago: metodoPago,
         };
 
-        const res = await fetch("http://localhost:3001/api/gastos", {
+        const res = await apiFetch("/api/gastos", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(nuevoGasto),
@@ -117,7 +118,7 @@ function Gastos() {
   const eliminarGasto = async (id) => {
     if (!confirm("¿Eliminar este gasto?")) return;
     try {
-      await fetch(`http://localhost:3001/api/gastos/${id}`, { method: "DELETE" });
+      await apiFetch(`/api/gastos/${id}`, { method: "DELETE" });
       cargarGastos();
     } catch (error) {
       console.error(error);

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Trash2, Save, Search, X, ShoppingBag, Pencil } from "lucide-react";
+import { apiFetch } from "../lib/api";
 
 function Promos() {
   const [promos, setPromos] = useState([]);
@@ -23,9 +24,9 @@ function Promos() {
   const cargarDatos = async () => {
     try {
       const [resPromos, resProd, resCig] = await Promise.all([
-        fetch("http://localhost:3001/api/promos"),
-        fetch("http://localhost:3001/api/productos"),
-        fetch("http://localhost:3001/api/cigarrillos")
+        apiFetch("/api/promos"),
+        apiFetch("/api/productos"),
+        apiFetch("/api/cigarrillos")
       ]);
       
       const dataPromos = await resPromos.json();
@@ -93,12 +94,12 @@ function Promos() {
 
     try {
       const url = nuevaPromo.id
-        ? `http://localhost:3001/api/promos/${nuevaPromo.id}`
-        : "http://localhost:3001/api/promos";
+        ? `/api/promos/${nuevaPromo.id}`
+        : "/api/promos";
 
       const method = nuevaPromo.id ? "PUT" : "POST";
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method: method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(nuevaPromo)
@@ -122,7 +123,7 @@ function Promos() {
 
   const eliminarPromo = async (id) => {
     if(!window.confirm("¿Borrar esta promo?")) return;
-    await fetch(`http://localhost:3001/api/promos/${id}`, { method: "DELETE" });
+    await apiFetch(`/api/promos/${id}`, { method: "DELETE" });
     cargarDatos();
   };
 

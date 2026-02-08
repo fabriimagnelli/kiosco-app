@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { User, Plus, Search, Trash2, Edit2, Phone, MapPin, Mail, Save, X, Eye, FileText, Calendar } from "lucide-react";
+import { apiFetch } from "../lib/api";
 
 function Deudores() {
   const [clientes, setClientes] = useState([]);
@@ -31,7 +32,7 @@ function Deudores() {
   }, []);
 
   const cargarClientes = () => {
-    fetch("http://localhost:3001/api/clientes")
+    apiFetch("/api/clientes")
       .then((res) => res.json())
       .then((data) => setClientes(data))
       .catch((err) => console.error(err));
@@ -58,7 +59,7 @@ function Deudores() {
   const verDetalles = (cliente) => {
       setClienteSeleccionado(cliente);
       // Fetch historial
-      fetch(`http://localhost:3001/api/fiados/${cliente.id}`)
+      apiFetch(`/api/fiados/${cliente.id}`)
           .then(res => res.json())
           .then(data => {
               setHistorialSeleccionado(data);
@@ -89,7 +90,7 @@ function Deudores() {
       setProcesandoPago(true);
 
       try {
-          const res = await fetch("http://localhost:3001/api/fiados", {
+          const res = await apiFetch("/api/fiados", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -104,7 +105,7 @@ function Deudores() {
           if (data.id || data.success) {
               alert("Pago registrado correctamente");
               // Recargar historial y clientes
-              fetch(`http://localhost:3001/api/fiados/${clienteSeleccionado.id}`)
+              apiFetch(`/api/fiados/${clienteSeleccionado.id}`)
                   .then(res => res.json())
                   .then(data => setHistorialSeleccionado(data));
 
@@ -128,15 +129,15 @@ function Deudores() {
     const clienteData = { nombre, telefono, direccion, email };
 
     try {
-        let url = "http://localhost:3001/api/clientes";
+        let url = "/api/clientes";
         let method = "POST";
 
         if (modoEdicion) {
-            url = `http://localhost:3001/api/clientes/${idEdicion}`;
+            url = `/api/clientes/${idEdicion}`;
             method = "PUT";
         }
 
-        const res = await fetch(url, {
+        const res = await apiFetch(url, {
             method: method,
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(clienteData),
@@ -157,7 +158,7 @@ function Deudores() {
   const eliminarCliente = async (id) => {
     if (!confirm("¿Eliminar este cliente? Se borrará su historial.")) return;
     try {
-      await fetch(`http://localhost:3001/api/clientes/${id}`, { method: "DELETE" });
+      await apiFetch(`/api/clientes/${id}`, { method: "DELETE" });
       cargarClientes();
     } catch (error) {
       console.error(error);

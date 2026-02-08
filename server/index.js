@@ -4,9 +4,16 @@ const sqlite3 = require("sqlite3").verbose();
 const path = require("path");
 const fs = require("fs");
 const { exec } = require("child_process");
+const crypto = require("crypto");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
 
 const app = express();
 const port = 3001;
+
+// Secreto JWT — se regenera en cada inicio del servidor (sesiones expiran al reiniciar)
+const JWT_SECRET = crypto.randomBytes(64).toString("hex");
+const JWT_EXPIRATION = "24h";
 
 app.use(cors());
 app.use(express.json());
@@ -93,6 +100,7 @@ const initDB = async () => {
         await dbRun(`CREATE TABLE IF NOT EXISTS retiros (id INTEGER PRIMARY KEY AUTOINCREMENT, descripcion TEXT, monto REAL NOT NULL, fecha DATETIME DEFAULT CURRENT_TIMESTAMP, cierre_id INTEGER DEFAULT NULL)`);
         await dbRun(`CREATE TABLE IF NOT EXISTS historial_cierres (id INTEGER PRIMARY KEY AUTOINCREMENT, fecha DATETIME DEFAULT CURRENT_TIMESTAMP, tipo TEXT DEFAULT 'General', total_ventas REAL, total_gastos REAL, total_efectivo_real REAL, monto_retiro REAL, observacion TEXT)`);
         await dbRun(`CREATE TABLE IF NOT EXISTS promos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, precio REAL NOT NULL, codigo_barras TEXT, componentes TEXT)`);
+        await dbRun(`CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL UNIQUE, password TEXT NOT NULL, rol TEXT DEFAULT 'cajero', activo INTEGER DEFAULT 1)`);
         
         await dbRun(`CREATE TABLE IF NOT EXISTS configuracion (key TEXT PRIMARY KEY, value TEXT)`);
         const version = await dbGet("SELECT value FROM configuracion WHERE key = 'sistema_version'");
@@ -133,12 +141,60 @@ const initDB = async () => {
         await ensureColumn("clientes", "telefono", "TEXT");
         await ensureColumn("clientes", "direccion", "TEXT");
         await ensureColumn("clientes", "email", "TEXT");
+        await ensureColumn("productos", "stock_minimo", "INTEGER DEFAULT 5");
+        await ensureColumn("cigarrillos", "stock_minimo", "INTEGER DEFAULT 5");
+        await ensureColumn("ventas", "descuento", "REAL DEFAULT 0");
+
+        // Migración: asegurar que la tabla usuarios tenga la estructura correcta
+        try {
+            await dbGet("SELECT nombre FROM usuarios LIMIT 1");
+        } catch (e) {
+            // La tabla existe pero no tiene la columna 'nombre' — recrearla
+            console.log("[MIGRACIÓN] Recreando tabla usuarios con estructura correcta...");
+            await dbRun("DROP TABLE IF EXISTS usuarios");
+            await dbRun(`CREATE TABLE usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL UNIQUE, password TEXT NOT NULL, rol TEXT DEFAULT 'cajero', activo INTEGER DEFAULT 1)`);
+        }
 
         console.log("DB inicializada.");
+
+        // --- Migración: hashear contraseña si está en texto plano ---
+        try {
+            const passRow = await dbGet("SELECT value FROM configuracion WHERE key='admin_password'");
+            if (passRow && passRow.value && !passRow.value.startsWith("$2a$") && !passRow.value.startsWith("$2b$")) {
+                const hashed = await bcrypt.hash(passRow.value, 10);
+                await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('admin_password', ?)", [hashed]);
+                console.log("[SEGURIDAD] Contraseña admin migrada a bcrypt.");
+            }
+        } catch (migErr) {
+            console.error("Error migrando contraseña:", migErr);
+        }
+
     } catch (e) { console.error("Error initDB:", e); }
 };
 
 initDB();
+
+// --- MIDDLEWARE DE AUTENTICACIÓN JWT ---
+const authMiddleware = (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({ error: "Token de autenticación requerido" });
+    }
+    try {
+        const token = authHeader.split(" ")[1];
+        const decoded = jwt.verify(token, JWT_SECRET);
+        req.user = decoded;
+        next();
+    } catch (e) {
+        return res.status(401).json({ error: "Token inválido o expirado. Inicie sesión nuevamente." });
+    }
+};
+
+// Proteger todas las rutas /api excepto /api/login
+app.use("/api", (req, res, next) => {
+    if (req.path === "/login") return next();
+    authMiddleware(req, res, next);
+});
 
 // --- RUTAS API ---
 
@@ -213,8 +269,8 @@ app.get("/api/dashboard", async (req, res) => {
     try {
         const ventasHoy = await dbGet("SELECT SUM(precio_total) as total, COUNT(DISTINCT ticket_id) as tickets FROM ventas WHERE date(fecha) = date('now', 'localtime')");
         const gastosHoy = await dbGet("SELECT SUM(monto) as total FROM gastos WHERE date(fecha) = date('now', 'localtime')");
-        const prodBajo = await dbAll("SELECT nombre, stock FROM productos WHERE stock <= 5");
-        const cigBajo = await dbAll("SELECT nombre, stock FROM cigarrillos WHERE stock <= 5");
+        const prodBajo = await dbAll("SELECT nombre, stock, stock_minimo FROM productos WHERE stock <= COALESCE(stock_minimo, 5)");
+        const cigBajo = await dbAll("SELECT nombre, stock, stock_minimo FROM cigarrillos WHERE stock <= COALESCE(stock_minimo, 5)");
         res.json({ ventas_hoy: ventasHoy.total || 0, tickets_hoy: ventasHoy.tickets || 0, gastos_hoy: gastosHoy.total || 0, bajo_stock: [...prodBajo, ...cigBajo] });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -577,8 +633,8 @@ app.post("/api/movimientos_proveedores", async (req, res) => {
 app.delete("/api/movimientos_proveedores/:id", (req, res) => { db.run("DELETE FROM movimientos_proveedores WHERE id=?", [req.params.id], function(err) { if(err) res.status(500).json({error: err.message}); else res.json({deleted: this.changes}); }); });
 
 app.get("/api/productos", (req, res) => { db.all("SELECT * FROM productos ORDER BY nombre", [], (err, rows) => { if (err) res.status(500).json({ error: err.message }); else res.json(rows); }); });
-app.post("/api/productos", (req, res) => { db.run("INSERT INTO productos (nombre, precio, costo, stock, codigo_barras, categoria) VALUES (?,?,?,?,?,?)", [req.body.nombre, req.body.precio, req.body.costo, req.body.stock, req.body.codigo_barras, req.body.categoria || 'General'], function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ id: this.lastID }); }); });
-app.put("/api/productos/:id", (req, res) => { db.run("UPDATE productos SET nombre=?, precio=?, costo=?, stock=?, codigo_barras=?, categoria=? WHERE id=?", [req.body.nombre, req.body.precio, req.body.costo, req.body.stock, req.body.codigo_barras, req.body.categoria, req.params.id], function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ updated: this.changes }); }); });
+app.post("/api/productos", (req, res) => { db.run("INSERT INTO productos (nombre, precio, costo, stock, codigo_barras, categoria, stock_minimo) VALUES (?,?,?,?,?,?,?)", [req.body.nombre, req.body.precio, req.body.costo, req.body.stock, req.body.codigo_barras, req.body.categoria || 'General', req.body.stock_minimo || 5], function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ id: this.lastID }); }); });
+app.put("/api/productos/:id", (req, res) => { db.run("UPDATE productos SET nombre=?, precio=?, costo=?, stock=?, codigo_barras=?, categoria=?, stock_minimo=? WHERE id=?", [req.body.nombre, req.body.precio, req.body.costo, req.body.stock, req.body.codigo_barras, req.body.categoria, req.body.stock_minimo || 5, req.params.id], function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ updated: this.changes }); }); });
 app.delete("/api/productos/:id", (req, res) => { db.run("DELETE FROM productos WHERE id=?", req.params.id, function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ deleted: this.changes }); }); });
 
 app.get("/api/categorias", (req, res) => { db.all("SELECT DISTINCT categoria FROM productos WHERE categoria IS NOT NULL AND categoria != '' ORDER BY categoria", [], (err, rows) => { if(err) return res.status(500).json({error: err.message}); res.json(rows.map(r => r.categoria)); }); });
@@ -591,16 +647,18 @@ app.delete("/api/categorias/:nombre", (req, res) => {
 });
 
 app.get("/api/cigarrillos", (req, res) => { db.all("SELECT * FROM cigarrillos ORDER BY nombre", [], (err, rows) => { if (err) res.status(500).json({ error: err.message }); else res.json(rows); }); });
-app.post("/api/cigarrillos", (req, res) => { db.run("INSERT INTO cigarrillos (nombre, precio, precio_qr, costo, stock, codigo_barras) VALUES (?,?,?,?,?,?)", [req.body.nombre, req.body.precio, req.body.precio_qr || req.body.precio, req.body.costo || 0, req.body.stock, req.body.codigo_barras || ''], function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ id: this.lastID }); }); });
-app.put("/api/cigarrillos/:id", (req, res) => { db.run("UPDATE cigarrillos SET nombre=?, precio=?, precio_qr=?, costo=?, stock=?, codigo_barras=? WHERE id=?", [req.body.nombre, req.body.precio, req.body.precio_qr || req.body.precio, req.body.costo || 0, req.body.stock, req.body.codigo_barras || '', req.params.id], function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ updated: this.changes }); }); });
+app.post("/api/cigarrillos", (req, res) => { db.run("INSERT INTO cigarrillos (nombre, precio, precio_qr, costo, stock, codigo_barras, stock_minimo) VALUES (?,?,?,?,?,?,?)", [req.body.nombre, req.body.precio, req.body.precio_qr || req.body.precio, req.body.costo || 0, req.body.stock, req.body.codigo_barras || '', req.body.stock_minimo || 5], function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ id: this.lastID }); }); });
+app.put("/api/cigarrillos/:id", (req, res) => { db.run("UPDATE cigarrillos SET nombre=?, precio=?, precio_qr=?, costo=?, stock=?, codigo_barras=?, stock_minimo=? WHERE id=?", [req.body.nombre, req.body.precio, req.body.precio_qr || req.body.precio, req.body.costo || 0, req.body.stock, req.body.codigo_barras || '', req.body.stock_minimo || 5, req.params.id], function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ updated: this.changes }); }); });
 app.delete("/api/cigarrillos/:id", (req, res) => { db.run("DELETE FROM cigarrillos WHERE id=?", req.params.id, function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ deleted: this.changes }); }); });
 
 app.post("/api/ventas", async (req, res) => {
     const { productos, metodo_pago, ticket_a_corregir, cliente_id } = req.body;
     const pagoAnticipado = parseFloat(req.body.pago_anticipado) || 0;
     const metodoAnticipo = req.body.metodo_anticipo || 'Efectivo';
+    const descuento = parseFloat(req.body.descuento) || 0;
     if (!productos || productos.length === 0) return res.status(400).json({ error: "No hay productos" });
-    const total = productos.reduce((acc, p) => acc + (p.precio * p.cantidad), 0);
+    const subtotal = productos.reduce((acc, p) => acc + (p.precio * p.cantidad), 0);
+    const total = Math.max(0, subtotal - descuento);
     try {
         await dbRun("BEGIN TRANSACTION");
         if (ticket_a_corregir) { await dbRun("DELETE FROM ventas WHERE ticket_id = ?", [ticket_a_corregir]); await dbRun("DELETE FROM fiados WHERE descripcion LIKE ?", [`%Ticket ${ticket_a_corregir}%`]); }
@@ -724,15 +782,15 @@ app.post("/api/gastos", async (req, res) => {
 app.get("/api/config", async (req, res) => {
     try {
         const configs = await dbAll("SELECT * FROM configuracion");
-        // Convertimos el array de {key, value} a un objeto simple
         const configObj = {};
         configs.forEach(c => configObj[c.key] = c.value);
         
-        // Valores por defecto si no existen
         if (!configObj.admin_user) configObj.admin_user = "admin";
-        if (!configObj.admin_password) configObj.admin_password = "admin";
         if (!configObj.kiosco_nombre) configObj.kiosco_nombre = "Mi Kiosco";
         if (!configObj.kiosco_direccion) configObj.kiosco_direccion = "";
+
+        // NO devolver el hash de la contraseña al frontend
+        configObj.admin_password = "";
 
         res.json(configObj);
     } catch (e) {
@@ -745,9 +803,14 @@ app.post("/api/config", async (req, res) => {
     const { admin_user, admin_password, kiosco_nombre, kiosco_direccion, kiosco_telefono } = req.body;
     try {
         await dbRun("BEGIN TRANSACTION");
-        // Insert or Replace es útil aquí
         await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('admin_user', ?)", [admin_user]);
-        await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('admin_password', ?)", [admin_password]);
+        
+        // Solo actualizar contraseña si el usuario escribió una nueva
+        if (admin_password && admin_password.trim() !== "") {
+            const hashedPassword = await bcrypt.hash(admin_password, 10);
+            await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('admin_password', ?)", [hashedPassword]);
+        }
+        
         await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('kiosco_nombre', ?)", [kiosco_nombre]);
         await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('kiosco_direccion', ?)", [kiosco_direccion]);
         await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('kiosco_telefono', ?)", [kiosco_telefono]);
@@ -759,28 +822,248 @@ app.post("/api/config", async (req, res) => {
     }
 });
 
-// Endpoint de Login que verifica contra la DB (Actualización para tu Login)
+// Endpoint de Login — verifica usuarios table primero, luego config legacy
 app.post("/api/login", async (req, res) => {
     const { usuario, password } = req.body;
     try {
+        // 1. Buscar en tabla usuarios
+        const userRow = await dbGet("SELECT * FROM usuarios WHERE nombre = ? AND activo = 1", [usuario]);
+        if (userRow) {
+            let ok = false;
+            if (userRow.password.startsWith("$2a$") || userRow.password.startsWith("$2b$")) {
+                ok = await bcrypt.compare(password, userRow.password);
+            } else {
+                ok = password === userRow.password;
+                if (ok) {
+                    const hashed = await bcrypt.hash(password, 10);
+                    await dbRun("UPDATE usuarios SET password = ? WHERE id = ?", [hashed, userRow.id]);
+                }
+            }
+            if (ok) {
+                const token = jwt.sign({ usuario: userRow.nombre, rol: userRow.rol, id: userRow.id }, JWT_SECRET, { expiresIn: JWT_EXPIRATION });
+                return res.json({ success: true, user: { nombre: userRow.nombre, rol: userRow.rol }, token });
+            }
+            return res.status(401).json({ error: "Credenciales incorrectas" });
+        }
+
+        // 2. Fallback: admin legacy en configuracion
         const dbUser = await dbGet("SELECT value FROM configuracion WHERE key='admin_user'");
         const dbPass = await dbGet("SELECT value FROM configuracion WHERE key='admin_password'");
         
-        // Si no existen en DB, usamos los default 'admin'/'admin'
         const validUser = dbUser ? dbUser.value : 'admin';
-        const validPass = dbPass ? dbPass.value : 'admin';
+        const storedPass = dbPass ? dbPass.value : null;
 
-        if (usuario === validUser && password === validPass) {
-            res.json({ success: true, user: { nombre: validUser } });
+        if (usuario !== validUser) {
+            return res.status(401).json({ error: "Credenciales incorrectas" });
+        }
+
+        let passwordValida = false;
+        if (storedPass) {
+            if (storedPass.startsWith("$2a$") || storedPass.startsWith("$2b$")) {
+                // Contraseña hasheada — comparar con bcrypt
+                passwordValida = await bcrypt.compare(password, storedPass);
+            } else {
+                // Contraseña legacy en texto plano — comparar directamente y migrar
+                passwordValida = password === storedPass;
+                if (passwordValida) {
+                    const hashed = await bcrypt.hash(password, 10);
+                    await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('admin_password', ?)", [hashed]);
+                    console.log("[SEGURIDAD] Contraseña migrada a bcrypt durante login.");
+                }
+            }
+        } else {
+            // Sin contraseña en DB — default 'admin'
+            passwordValida = password === 'admin';
+            if (passwordValida) {
+                const hashed = await bcrypt.hash('admin', 10);
+                await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('admin_password', ?)", [hashed]);
+            }
+        }
+
+        if (passwordValida) {
+            // Generar token JWT
+            const token = jwt.sign(
+                { usuario: validUser, rol: "admin" },
+                JWT_SECRET,
+                { expiresIn: JWT_EXPIRATION }
+            );
+            res.json({ success: true, user: { nombre: validUser }, token });
         } else {
             res.status(401).json({ error: "Credenciales incorrectas" });
         }
     } catch (e) {
+        console.error("Error en login:", e);
         res.status(500).json({ error: e.message });
     }
 });
 
 app.delete("/api/gastos/:id", (req, res) => { db.run("DELETE FROM gastos WHERE id=?", [req.params.id], (err) => err ? res.status(500).json({error: err.message}) : res.json({success: true})); });
+
+// --- GESTIÓN DE USUARIOS ---
+app.get("/api/usuarios", async (req, res) => {
+    try {
+        const usuarios = await dbAll("SELECT id, nombre, rol, activo FROM usuarios ORDER BY nombre");
+        res.json(usuarios || []);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/usuarios", async (req, res) => {
+    const { nombre, password, rol } = req.body;
+    if (!nombre || !password) return res.status(400).json({ error: "Nombre y contraseña son obligatorios" });
+    try {
+        const hashed = await bcrypt.hash(password, 10);
+        await dbRun("INSERT INTO usuarios (nombre, password, rol) VALUES (?,?,?)", [nombre.trim(), hashed, rol || 'cajero']);
+        res.json({ success: true });
+    } catch (e) {
+        if (e.message.includes("UNIQUE")) return res.status(400).json({ error: "Ya existe un usuario con ese nombre" });
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.put("/api/usuarios/:id", async (req, res) => {
+    const { nombre, password, rol, activo } = req.body;
+    try {
+        if (password) {
+            const hashed = await bcrypt.hash(password, 10);
+            await dbRun("UPDATE usuarios SET nombre=?, password=?, rol=?, activo=? WHERE id=?", [nombre, hashed, rol, activo ?? 1, req.params.id]);
+        } else {
+            await dbRun("UPDATE usuarios SET nombre=?, rol=?, activo=? WHERE id=?", [nombre, rol, activo ?? 1, req.params.id]);
+        }
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete("/api/usuarios/:id", async (req, res) => {
+    try {
+        await dbRun("DELETE FROM usuarios WHERE id=?", [req.params.id]);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// --- BACKUP DE BASE DE DATOS ---
+app.get("/api/backup", async (req, res) => {
+    try {
+        const backupDir = path.join(path.dirname(dbPath), "backups");
+        if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+        const fecha = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        const backupFile = path.join(backupDir, `kiosco_backup_${fecha}.db`);
+        fs.copyFileSync(dbPath, backupFile);
+        // Mantener solo los últimos 10 backups
+        const backups = fs.readdirSync(backupDir).filter(f => f.endsWith(".db")).sort();
+        while (backups.length > 10) {
+            fs.unlinkSync(path.join(backupDir, backups.shift()));
+        }
+        res.json({ success: true, file: backupFile, fecha });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/api/backup/list", async (req, res) => {
+    try {
+        const backupDir = path.join(path.dirname(dbPath), "backups");
+        if (!fs.existsSync(backupDir)) return res.json([]);
+        const backups = fs.readdirSync(backupDir).filter(f => f.endsWith(".db")).sort().reverse().map(f => {
+            const stats = fs.statSync(path.join(backupDir, f));
+            return { nombre: f, tamaño: (stats.size / 1024).toFixed(1) + " KB", fecha: stats.mtime };
+        });
+        res.json(backups);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/backup/restore", async (req, res) => {
+    try {
+        const { nombre } = req.body;
+        const backupDir = path.join(path.dirname(dbPath), "backups");
+        const backupFile = path.join(backupDir, nombre);
+        if (!fs.existsSync(backupFile)) return res.status(404).json({ error: "Backup no encontrado" });
+        // Hacer backup del actual antes de restaurar
+        const fecha = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        fs.copyFileSync(dbPath, path.join(backupDir, `pre_restore_${fecha}.db`));
+        fs.copyFileSync(backupFile, dbPath);
+        res.json({ success: true, message: "Base de datos restaurada. Reinicie la aplicación." });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Backup automático al iniciar el servidor
+(() => {
+    try {
+        if (fs.existsSync(dbPath)) {
+            const backupDir = path.join(path.dirname(dbPath), "backups");
+            if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+            const fecha = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+            fs.copyFileSync(dbPath, path.join(backupDir, `auto_${fecha}.db`));
+            // Limpiar backups viejos (máx 10)
+            const backups = fs.readdirSync(backupDir).filter(f => f.endsWith(".db")).sort();
+            while (backups.length > 10) fs.unlinkSync(path.join(backupDir, backups.shift()));
+            console.log("[BACKUP] Backup automático realizado.");
+        }
+    } catch (e) { console.error("[BACKUP] Error:", e.message); }
+})();
+
+// --- HISTORIAL DE CIERRES ---
+app.get("/api/historial_cierres", async (req, res) => {
+    try {
+        const cierres = await dbAll("SELECT * FROM historial_cierres ORDER BY fecha DESC");
+        res.json(cierres || []);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// --- RENTABILIDAD ---
+app.get("/api/reportes/rentabilidad", async (req, res) => {
+    try {
+        const productos = await dbAll(`
+            SELECT p.nombre, p.precio, p.costo, p.categoria, p.stock,
+                   COALESCE(SUM(v.cantidad), 0) as total_vendido,
+                   COALESCE(SUM(v.precio_total), 0) as ingresos_totales
+            FROM productos p
+            LEFT JOIN ventas v ON v.producto = p.nombre
+            GROUP BY p.id
+            ORDER BY (COALESCE(SUM(v.cantidad), 0) * (p.precio - p.costo)) DESC
+        `);
+        const cigarrillos = await dbAll(`
+            SELECT c.nombre, c.precio, c.costo, 'Cigarrillos' as categoria, c.stock,
+                   COALESCE(SUM(v.cantidad), 0) as total_vendido,
+                   COALESCE(SUM(v.precio_total), 0) as ingresos_totales
+            FROM cigarrillos c
+            LEFT JOIN ventas v ON v.producto = c.nombre
+            GROUP BY c.id
+            ORDER BY (COALESCE(SUM(v.cantidad), 0) * (c.precio - c.costo)) DESC
+        `);
+        const todos = [...productos, ...cigarrillos].map(p => ({
+            ...p,
+            margen: p.precio - p.costo,
+            margen_pct: p.costo > 0 ? (((p.precio - p.costo) / p.costo) * 100).toFixed(1) : 0,
+            ganancia_total: (p.precio - p.costo) * p.total_vendido
+        }));
+        const totalIngresos = todos.reduce((s, p) => s + p.ingresos_totales, 0);
+        const totalGanancia = todos.reduce((s, p) => s + p.ganancia_total, 0);
+        res.json({ productos: todos, totalIngresos, totalGanancia });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// --- IMPORTAR PRODUCTOS CSV ---
+app.post("/api/productos/importar", async (req, res) => {
+    const { productos: items } = req.body;
+    if (!items || !Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "No hay productos para importar" });
+    let insertados = 0, actualizados = 0, errores = 0;
+    try {
+        await dbRun("BEGIN TRANSACTION");
+        for (const item of items) {
+            if (!item.nombre || !item.precio) { errores++; continue; }
+            const existe = await dbGet("SELECT id FROM productos WHERE nombre = ? OR (codigo_barras IS NOT NULL AND codigo_barras != '' AND codigo_barras = ?)", [item.nombre, item.codigo_barras || '']);
+            if (existe) {
+                await dbRun("UPDATE productos SET precio=?, costo=?, stock=?, codigo_barras=?, categoria=? WHERE id=?",
+                    [parseFloat(item.precio), parseFloat(item.costo) || 0, parseInt(item.stock) || 0, item.codigo_barras || '', item.categoria || 'General', existe.id]);
+                actualizados++;
+            } else {
+                await dbRun("INSERT INTO productos (nombre, precio, costo, stock, codigo_barras, categoria) VALUES (?,?,?,?,?,?)",
+                    [item.nombre, parseFloat(item.precio), parseFloat(item.costo) || 0, parseInt(item.stock) || 0, item.codigo_barras || '', item.categoria || 'General']);
+                insertados++;
+            }
+        }
+        await dbRun("COMMIT");
+        res.json({ success: true, insertados, actualizados, errores });
+    } catch (e) { await dbRun("ROLLBACK"); res.status(500).json({ error: e.message }); }
+});
 
 // SPA FALLBACK
 app.get(/.*/, (req, res) => { 

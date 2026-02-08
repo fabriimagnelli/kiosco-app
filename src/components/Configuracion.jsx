@@ -1,13 +1,24 @@
 import React, { useState, useEffect } from "react";
-import { Settings, Save, User, Key, Building2, Phone, MapPin, LogOut, Eye, EyeOff } from "lucide-react";
+import { Settings, Save, User, Key, Building2, Phone, MapPin, LogOut, Eye, EyeOff, Database, Download, RotateCcw, Loader2, CheckCircle, AlertTriangle, Users, Plus, Trash2, Shield } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
+import { apiFetch } from "../lib/api";
 
 function Configuracion() {
-  const { logout } = useAuth();
+  const { logout, rol: rolActual } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [mostrarPassword, setMostrarPassword] = useState(false);
+
+  // Backup states
+  const [backups, setBackups] = useState([]);
+  const [backupLoading, setBackupLoading] = useState(false);
+  const [backupMsg, setBackupMsg] = useState(null);
+
+  // User management states
+  const [usuarios, setUsuarios] = useState([]);
+  const [nuevoUser, setNuevoUser] = useState({ nombre: "", password: "", rol: "cajero" });
+  const [userLoading, setUserLoading] = useState(false);
 
   // Estados de datos
   const [datos, setDatos] = useState({
@@ -20,11 +31,99 @@ function Configuracion() {
 
   useEffect(() => {
     cargarConfiguracion();
+    cargarBackups();
+    if (rolActual === "admin") cargarUsuarios();
   }, []);
+
+  const cargarBackups = async () => {
+    try {
+      const res = await apiFetch("/api/backup/list");
+      const data = await res.json();
+      setBackups(Array.isArray(data) ? data : []);
+    } catch (e) { console.error("Error backups:", e); }
+  };
+
+  const crearBackup = async () => {
+    setBackupLoading(true);
+    setBackupMsg(null);
+    try {
+      const res = await apiFetch("/api/backup");
+      const data = await res.json();
+      if (data.success) {
+        setBackupMsg({ tipo: "ok", texto: "Backup creado correctamente" });
+        cargarBackups();
+      } else { setBackupMsg({ tipo: "err", texto: data.error }); }
+    } catch (e) { setBackupMsg({ tipo: "err", texto: "Error de conexión" }); }
+    finally { setBackupLoading(false); }
+  };
+
+  const restaurarBackup = async (archivo) => {
+    if (!confirm(`¿Restaurar la base de datos desde "${archivo}"?\nEsto reemplazará TODOS los datos actuales.`)) return;
+    setBackupLoading(true);
+    try {
+      const res = await apiFetch("/api/backup/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archivo })
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert("Base de datos restaurada. La app se recargará.");
+        window.location.reload();
+      } else { alert("Error: " + data.error); }
+    } catch (e) { alert("Error de conexión"); }
+    finally { setBackupLoading(false); }
+  };
+
+  const cargarUsuarios = async () => {
+    try {
+      const res = await apiFetch("/api/usuarios");
+      const data = await res.json();
+      setUsuarios(Array.isArray(data) ? data : []);
+    } catch (e) { console.error(e); }
+  };
+
+  const crearUsuario = async (e) => {
+    e.preventDefault();
+    if (!nuevoUser.nombre || !nuevoUser.password) return alert("Nombre y contraseña son obligatorios");
+    setUserLoading(true);
+    try {
+      const res = await apiFetch("/api/usuarios", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(nuevoUser)
+      });
+      const data = await res.json();
+      if (data.success) {
+        setNuevoUser({ nombre: "", password: "", rol: "cajero" });
+        cargarUsuarios();
+      } else { alert("Error: " + data.error); }
+    } catch (e) { alert("Error de conexión"); }
+    finally { setUserLoading(false); }
+  };
+
+  const eliminarUsuario = async (id, nombre) => {
+    if (!confirm(`¿Eliminar el usuario "${nombre}"?`)) return;
+    try {
+      await apiFetch(`/api/usuarios/${id}`, { method: "DELETE" });
+      cargarUsuarios();
+    } catch (e) { console.error(e); }
+  };
+
+  const toggleUsuarioActivo = async (user) => {
+    try {
+      await apiFetch(`/api/usuarios/${user.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...user, activo: user.activo ? 0 : 1 })
+      });
+      cargarUsuarios();
+    } catch (e) { console.error(e); }
+  };
 
   const cargarConfiguracion = async () => {
     try {
-      const res = await fetch("http://localhost:3001/api/config");
+      const res = await apiFetch("/api/config");
       const data = await res.json();
       setDatos(data);
     } catch (error) {
@@ -40,7 +139,7 @@ function Configuracion() {
     e.preventDefault();
     setLoading(true);
     try {
-      const res = await fetch("http://localhost:3001/api/config", {
+      const res = await apiFetch("/api/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(datos)
@@ -144,7 +243,8 @@ function Configuracion() {
                         />
                     </div>
                     <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">Contraseña</label>
+                        <label className="block text-xs font-bold text-slate-500 mb-1">Nueva Contraseña</label>
+                        <p className="text-xs text-slate-400 mb-1">Dejar vacío para mantener la actual</p>
                         <div className="relative">
                             <Key size={16} className="absolute left-3 top-3 text-slate-400"/>
                             <input 
@@ -152,6 +252,7 @@ function Configuracion() {
                                 name="admin_password"
                                 value={datos.admin_password}
                                 onChange={handleChange}
+                                placeholder="••••••••"
                                 className="w-full pl-9 pr-10 p-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none bg-slate-50"
                             />
                             <button 
@@ -192,7 +293,116 @@ function Configuracion() {
                 </button>
             </div>
 
-            {/* SECCIÓN "ZONA DE PELIGRO" ELIMINADA POR SOLICITUD DEL USUARIO */}
+            {/* TARJETA BACKUPS */}
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                <h3 className="font-bold text-slate-700 mb-2 flex items-center gap-2">
+                    <Database size={20} className="text-blue-500"/> Respaldo de Datos
+                </h3>
+                <p className="text-sm text-slate-500 mb-4">El sistema crea backups automáticos al iniciar. También puedes crear uno manual.</p>
+                
+                {backupMsg && (
+                  <div className={`mb-3 p-2 rounded-lg text-sm flex items-center gap-2 ${backupMsg.tipo === "ok" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
+                    {backupMsg.tipo === "ok" ? <CheckCircle size={16}/> : <AlertTriangle size={16}/>}
+                    {backupMsg.texto}
+                  </div>
+                )}
+
+                <button 
+                    onClick={crearBackup}
+                    disabled={backupLoading}
+                    className="w-full bg-blue-600 text-white py-2.5 rounded-lg font-bold hover:bg-blue-700 transition-colors flex justify-center items-center gap-2 mb-4 disabled:opacity-60"
+                >
+                    {backupLoading ? <Loader2 size={18} className="animate-spin"/> : <Download size={18}/>}
+                    {backupLoading ? "Procesando..." : "Crear Backup Manual"}
+                </button>
+
+                {backups.length > 0 && (
+                  <div>
+                    <p className="text-xs font-bold text-slate-500 mb-2">Backups disponibles ({backups.length})</p>
+                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                      {backups.map((b, i) => (
+                        <div key={i} className="flex items-center justify-between bg-slate-50 p-2 rounded-lg border border-slate-100 text-xs">
+                          <span className="text-slate-600 truncate flex-1 mr-2" title={b}>{b}</span>
+                          <button
+                            onClick={() => restaurarBackup(b)}
+                            className="text-orange-600 hover:text-orange-800 font-bold flex items-center gap-1 flex-shrink-0"
+                          >
+                            <RotateCcw size={14}/> Restaurar
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+            </div>
+
+            {/* TARJETA GESTIÓN DE USUARIOS (Solo Admin) */}
+            {rolActual === "admin" && (
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                <h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
+                    <Users size={20} className="text-purple-500"/> Gestión de Usuarios
+                </h3>
+
+                {/* Formulario nuevo usuario */}
+                <form onSubmit={crearUsuario} className="space-y-2 mb-4">
+                  <input 
+                    placeholder="Nombre de usuario"
+                    className="w-full p-2 border rounded-lg text-sm focus:ring-2 focus:ring-purple-500 outline-none"
+                    value={nuevoUser.nombre}
+                    onChange={e => setNuevoUser({...nuevoUser, nombre: e.target.value})}
+                  />
+                  <input 
+                    type="password"
+                    placeholder="Contraseña"
+                    className="w-full p-2 border rounded-lg text-sm focus:ring-2 focus:ring-purple-500 outline-none"
+                    value={nuevoUser.password}
+                    onChange={e => setNuevoUser({...nuevoUser, password: e.target.value})}
+                  />
+                  <select
+                    className="w-full p-2 border rounded-lg text-sm bg-white"
+                    value={nuevoUser.rol}
+                    onChange={e => setNuevoUser({...nuevoUser, rol: e.target.value})}
+                  >
+                    <option value="cajero">Cajero</option>
+                    <option value="supervisor">Supervisor</option>
+                    <option value="admin">Administrador</option>
+                  </select>
+                  <button 
+                    type="submit" 
+                    disabled={userLoading}
+                    className="w-full bg-purple-600 text-white py-2 rounded-lg font-bold hover:bg-purple-700 flex justify-center items-center gap-2 text-sm"
+                  >
+                    <Plus size={16}/> Crear Usuario
+                  </button>
+                </form>
+
+                {/* Lista de usuarios */}
+                {usuarios.length > 0 && (
+                  <div className="space-y-1 max-h-48 overflow-y-auto">
+                    {usuarios.map(u => (
+                      <div key={u.id} className={`flex items-center justify-between p-2 rounded-lg border text-sm ${u.activo ? 'bg-slate-50 border-slate-100' : 'bg-red-50 border-red-100 opacity-60'}`}>
+                        <div className="flex items-center gap-2">
+                          <Shield size={14} className={u.rol === 'admin' ? 'text-red-500' : u.rol === 'supervisor' ? 'text-yellow-500' : 'text-blue-500'}/>
+                          <span className="font-medium text-slate-700">{u.nombre}</span>
+                          <span className="text-[10px] bg-slate-200 px-1.5 py-0.5 rounded uppercase">{u.rol}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button 
+                            onClick={() => toggleUsuarioActivo(u)} 
+                            className={`text-[10px] px-2 py-1 rounded font-bold ${u.activo ? 'text-orange-600 hover:bg-orange-50' : 'text-green-600 hover:bg-green-50'}`}
+                          >
+                            {u.activo ? "Desactivar" : "Activar"}
+                          </button>
+                          <button onClick={() => eliminarUsuario(u.id, u.nombre)} className="text-red-400 hover:text-red-600 p-1">
+                            <Trash2 size={14}/>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+            </div>
+            )}
 
         </div>
 

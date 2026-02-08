@@ -3,9 +3,10 @@ import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell 
 } from "recharts";
 import { 
-    FileText, TrendingUp, ShoppingBag, Edit, MoreVertical, Trash2, ChevronDown, ChevronUp, User, AlertCircle, Wallet 
+    FileText, TrendingUp, ShoppingBag, Edit, MoreVertical, Trash2, ChevronDown, ChevronUp, User, AlertCircle, Wallet, DollarSign 
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { apiFetch } from "../lib/api";
 
 function Reportes() {
   const navigate = useNavigate();
@@ -18,13 +19,23 @@ function Reportes() {
   
   const [ticketExpandido, setTicketExpandido] = useState(null);
   const [menuAbierto, setMenuAbierto] = useState(null);
+  const [rentabilidad, setRentabilidad] = useState([]);
 
   useEffect(() => {
     cargarHistorial();
   }, []);
 
+  useEffect(() => {
+    if (activeTab === "rentabilidad") {
+      apiFetch("/api/reportes/rentabilidad")
+        .then(r => r.json())
+        .then(data => setRentabilidad(Array.isArray(data) ? data : []))
+        .catch(err => console.error(err));
+    }
+  }, [activeTab]);
+
   const cargarHistorial = () => {
-    fetch("http://localhost:3001/api/ventas/historial")
+    apiFetch("/api/ventas/historial")
       .then(r => r.json())
       .then(data => {
         const agrupado = {};
@@ -91,7 +102,7 @@ function Reportes() {
   const eliminarVenta = async (ticket_id) => {
       if(!confirm(`¿Estás seguro de eliminar el Ticket #${ticket_id}? Se devolverá el stock.`)) return;
       try {
-          const res = await fetch(`http://localhost:3001/api/ventas/${ticket_id}`, { method: "DELETE" });
+          const res = await apiFetch(`/api/ventas/${ticket_id}`, { method: "DELETE" });
           const data = await res.json();
           if(data.success) {
               cargarHistorial();
@@ -139,6 +150,12 @@ function Reportes() {
                 className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === "graficos" ? "bg-blue-100 text-blue-700 shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}
             >
                 Gráficos
+            </button>
+            <button 
+                onClick={() => setActiveTab("rentabilidad")}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === "rentabilidad" ? "bg-green-100 text-green-700 shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}
+            >
+                Rentabilidad
             </button>
         </div>
       </div>
@@ -303,7 +320,7 @@ function Reportes() {
                 )}
             </div>
         </div>
-      ) : (
+      ) : activeTab === "graficos" ? (
         <div className="overflow-y-auto max-h-[calc(100vh-200px)] p-1">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-10">
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 md:col-span-2">
@@ -349,7 +366,72 @@ function Reportes() {
                 </div>
             </div>
         </div>
-      )}
+      ) : activeTab === "rentabilidad" ? (
+        <div className="overflow-y-auto max-h-[calc(100vh-200px)] p-1">
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-in fade-in">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+              <h3 className="font-bold text-slate-700 text-lg flex items-center gap-2">
+                <DollarSign size={20} className="text-green-600"/> Rentabilidad por Producto
+              </h3>
+              <span className="text-sm text-slate-400">{rentabilidad.length} productos con ventas</span>
+            </div>
+            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-380px)]">
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-slate-50 text-slate-600 font-semibold text-xs uppercase tracking-wider sticky top-0 z-10">
+                  <tr>
+                    <th className="p-4 border-b border-slate-100 bg-slate-50">Producto</th>
+                    <th className="p-4 border-b border-slate-100 bg-slate-50 text-right">P. Venta</th>
+                    <th className="p-4 border-b border-slate-100 bg-slate-50 text-right">Costo</th>
+                    <th className="p-4 border-b border-slate-100 bg-slate-50 text-center">Uds Vendidas</th>
+                    <th className="p-4 border-b border-slate-100 bg-slate-50 text-right">Ganancia Unit.</th>
+                    <th className="p-4 border-b border-slate-100 bg-slate-50 text-right">Margen %</th>
+                    <th className="p-4 border-b border-slate-100 bg-slate-50 text-right">Ganancia Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-sm">
+                  {rentabilidad.length === 0 ? (
+                    <tr><td colSpan="7" className="p-12 text-center text-slate-400">No hay datos de ventas con costos registrados.</td></tr>
+                  ) : (
+                    rentabilidad.map((p, i) => (
+                      <tr key={i} className="hover:bg-slate-50 transition-colors">
+                        <td className="p-4 font-bold text-slate-700">{p.nombre}</td>
+                        <td className="p-4 text-right text-slate-600">${p.precio?.toFixed(2)}</td>
+                        <td className="p-4 text-right text-slate-500">${p.costo?.toFixed(2)}</td>
+                        <td className="p-4 text-center font-medium text-blue-600">{p.total_vendido}</td>
+                        <td className="p-4 text-right">
+                          <span className={`font-bold ${p.ganancia_unitaria > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                            ${p.ganancia_unitaria?.toFixed(2)}
+                          </span>
+                        </td>
+                        <td className="p-4 text-right">
+                          <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                            p.margen > 30 ? 'bg-green-100 text-green-700' : 
+                            p.margen > 15 ? 'bg-yellow-100 text-yellow-700' : 
+                            'bg-red-100 text-red-700'}`}>
+                            {p.margen?.toFixed(1)}%
+                          </span>
+                        </td>
+                        <td className="p-4 text-right font-bold text-slate-800">${p.ganancia_total?.toFixed(2)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+                {rentabilidad.length > 0 && (
+                  <tfoot className="bg-slate-50 border-t-2 border-slate-200">
+                    <tr className="font-bold text-sm">
+                      <td colSpan="3" className="p-4 text-slate-600">TOTALES</td>
+                      <td className="p-4 text-center text-blue-700">{rentabilidad.reduce((a, p) => a + p.total_vendido, 0)}</td>
+                      <td className="p-4"></td>
+                      <td className="p-4"></td>
+                      <td className="p-4 text-right text-green-700 text-lg">${rentabilidad.reduce((a, p) => a + p.ganancia_total, 0).toFixed(2)}</td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
     </div>
   );

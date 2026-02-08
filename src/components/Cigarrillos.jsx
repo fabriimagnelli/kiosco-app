@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Search, Plus, Edit, Trash2, X, Cigarette, DollarSign } from "lucide-react";
+import { apiFetch } from "../lib/api";
 
 function Cigarrillos() {
   const [cigarrillos, setCigarrillos] = useState([]);
@@ -23,7 +24,7 @@ function Cigarrillos() {
 
   const cargarDatos = async () => {
     try {
-      const res = await fetch("http://localhost:3001/api/cigarrillos");
+      const res = await apiFetch("/api/cigarrillos");
       if (res.ok) {
         const data = await res.json();
         setCigarrillos(data);
@@ -59,15 +60,15 @@ function Cigarrillos() {
     console.log("📤 Enviando cigarrillo:", cigData);
 
     try {
-      let url = "http://localhost:3001/api/cigarrillos";
+      let url = "/api/cigarrillos";
       let method = "POST";
 
       if (modoEdicion) {
-        url = `http://localhost:3001/api/cigarrillos/${idEdicion}`;
+        url = `/api/cigarrillos/${idEdicion}`;
         method = "PUT";
       }
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method: method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(cigData),
@@ -98,7 +99,7 @@ function Cigarrillos() {
       }
     } catch (error) {
       console.error("❌ Error en fetch:", error);
-      alert(`❌ Error de conexión:\n${error.message}\n\nAsegúrate que el servidor esté corriendo en http://localhost:3001`);
+      alert(`❌ Error de conexión:\n${error.message}\n\nAsegúrate que el servidor esté corriendo`);
     }
   };
 
@@ -127,7 +128,7 @@ function Cigarrillos() {
   const eliminarCigarrillo = async (id) => {
     if (!confirm("¿Eliminar este cigarrillo?")) return;
     try {
-      await fetch(`http://localhost:3001/api/cigarrillos/${id}`, { method: "DELETE" });
+      await apiFetch(`/api/cigarrillos/${id}`, { method: "DELETE" });
       cargarDatos();
     } catch (error) {
       console.error(error);

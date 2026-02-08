@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { apiFetch } from "../lib/api";
 
 function Balance() {
   // Fechas por defecto: Primer día del mes hasta hoy
@@ -17,7 +18,7 @@ function Balance() {
     setDatos(null); // Limpiar datos previos para evitar errores visuales
 
     // CORRECCIÓN: Agregado /api/ a la URL
-    fetch(`http://localhost:3001/api/balance_rango?desde=${desde}&hasta=${hasta}`)
+    apiFetch(`/api/balance_rango?desde=${desde}&hasta=${hasta}`)
       .then(res => {
         if (!res.ok) throw new Error("Error en el servidor");
         return res.json();

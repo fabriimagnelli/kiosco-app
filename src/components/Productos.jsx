@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { Package, Plus, Trash2, Edit, Search, Barcode, DollarSign, Settings, Check, X } from "lucide-react";
+import { Package, Plus, Trash2, Edit, Search, Barcode, DollarSign, Settings, Check, X, Upload, FileSpreadsheet } from "lucide-react";
+import { apiFetch } from "../lib/api";
 
 function Productos() {
   const [productos, setProductos] = useState([]);
@@ -17,11 +18,17 @@ function Productos() {
   // Estado para MODO EDICIÓN
   const [modoEdicion, setModoEdicion] = useState(false);
   const [idEdicion, setIdEdicion] = useState(null);
+  const [stockMinimo, setStockMinimo] = useState("5");
 
   // Estados GESTIÓN CATEGORÍAS
   const [categoriasDisponibles, setCategoriasDisponibles] = useState([]);
   const [mostrarGestorCategorias, setMostrarGestorCategorias] = useState(false);
   const [nuevaCategoriaInput, setNuevaCategoriaInput] = useState("");
+
+  // CSV Import
+  const [mostrarCSV, setMostrarCSV] = useState(false);
+  const [csvPreview, setCsvPreview] = useState([]);
+  const [csvImporting, setCsvImporting] = useState(false);
 
   useEffect(() => {
     cargarProductos();
@@ -29,7 +36,7 @@ function Productos() {
   }, []);
 
   const cargarProductos = () => {
-    fetch("http://localhost:3001/api/productos")
+    apiFetch("/api/productos")
       .then((res) => res.json())
       .then((data) => {
         setProductos(data);
@@ -39,7 +46,7 @@ function Productos() {
   };
 
   const cargarCategorias = () => {
-      fetch("http://localhost:3001/api/categorias")
+      apiFetch("/api/categorias")
         .then(r => r.json())
         .then(data => {
             const cats = new Set(["General", ...data]);
@@ -70,7 +77,7 @@ function Productos() {
       if(!confirm(`¿Eliminar la categoría "${nombreCat}"? Los productos pasarán a "General".`)) return;
 
       try {
-          const res = await fetch(`http://localhost:3001/api/categorias/${nombreCat}`, { method: "DELETE" });
+          const res = await apiFetch(`/api/categorias/${nombreCat}`, { method: "DELETE" });
           const data = await res.json();
           if(data.success) {
               cargarCategorias();
@@ -103,21 +110,22 @@ function Productos() {
       costo: parseFloat(costo) || 0,
       stock: parseInt(stock) || 0,
       codigo_barras: codigo.trim(),
-      categoria: categoria || "General"
+      categoria: categoria || "General",
+      stock_minimo: parseInt(stockMinimo) || 5
     };
 
     console.log("Enviando producto:", prodData);
 
     try {
-      let url = "http://localhost:3001/api/productos";
+      let url = "/api/productos";
       let method = "POST";
 
       if (modoEdicion) {
-          url = `http://localhost:3001/api/productos/${idEdicion}`;
+          url = `/api/productos/${idEdicion}`;
           method = "PUT";
       }
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method: method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(prodData),
@@ -136,6 +144,7 @@ function Productos() {
         setStock("");
         setCodigo("");
         setCategoria("General");
+        setStockMinimo("5");
         
         setModoEdicion(false);
         setIdEdicion(null);
@@ -150,7 +159,7 @@ function Productos() {
       }
     } catch (error) {
       console.error("Error en fetch:", error);
-      alert(`Error de conexión:\n${error.message}\n\nAsegúrate que el servidor esté corriendo en http://localhost:3001`);
+      alert(`Error de conexión:\n${error.message}\n\nAsegúrate que el servidor esté corriendo`);
     }
   };
 
@@ -161,6 +170,7 @@ function Productos() {
       setStock(p.stock);
       setCodigo(p.codigo_barras || "");
       setCategoria(p.categoria || "General");
+      setStockMinimo(p.stock_minimo ?? 5);
       
       setModoEdicion(true);
       setIdEdicion(p.id);
@@ -176,12 +186,13 @@ function Productos() {
       setStock("");
       setCodigo("");
       setCategoria("General");
+      setStockMinimo("5");
   };
 
   const eliminarProducto = async (id) => {
     if (!confirm("¿Eliminar este producto?")) return;
     try {
-      await fetch(`http://localhost:3001/api/productos/${id}`, { method: "DELETE" });
+      await apiFetch(`/api/productos/${id}`, { method: "DELETE" });
       cargarProductos();
     } catch (error) {
       console.error(error);
@@ -193,6 +204,60 @@ function Productos() {
     (p.codigo_barras && p.codigo_barras.includes(busqueda))
   );
 
+  const handleCSVFile = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target.result;
+      const lines = text.split("\n").filter(l => l.trim());
+      if (lines.length < 2) return alert("El CSV debe tener al menos un encabezado y una fila de datos.");
+      // Detectar separador (coma o punto y coma)
+      const sep = lines[0].includes(";") ? ";" : ",";
+      const headers = lines[0].split(sep).map(h => h.trim().toLowerCase().replace(/"/g, ""));
+      const rows = [];
+      for (let i = 1; i < lines.length; i++) {
+        const vals = lines[i].split(sep).map(v => v.trim().replace(/"/g, ""));
+        const obj = {};
+        headers.forEach((h, idx) => { obj[h] = vals[idx] || ""; });
+        // Mapear campos esperados
+        rows.push({
+          nombre: obj.nombre || obj.producto || obj.name || "",
+          precio: parseFloat(obj.precio || obj.price || 0),
+          costo: parseFloat(obj.costo || obj.cost || 0),
+          stock: parseInt(obj.stock || obj.cantidad || 0),
+          codigo_barras: obj.codigo_barras || obj.codigo || obj.barcode || "",
+          categoria: obj.categoria || obj.category || "General"
+        });
+      }
+      setCsvPreview(rows.filter(r => r.nombre));
+      setMostrarCSV(true);
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  const importarCSV = async () => {
+    if (csvPreview.length === 0) return;
+    setCsvImporting(true);
+    try {
+      const res = await apiFetch("/api/productos/importar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productos: csvPreview })
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(`Se importaron ${data.importados} productos correctamente.`);
+        cargarProductos();
+        cargarCategorias();
+        setMostrarCSV(false);
+        setCsvPreview([]);
+      } else { alert("Error: " + data.error); }
+    } catch (e) { alert("Error de conexión"); }
+    finally { setCsvImporting(false); }
+  };
+
   return (
     <div className="p-6 space-y-6 animate-in fade-in duration-500">
       
@@ -203,6 +268,12 @@ function Productos() {
                 Inventario de Productos
             </h1>
             <p className="text-slate-500 mt-1">Administra tus productos, precios y stock.</p>
+        </div>
+        <div>
+          <label className="bg-green-600 text-white px-4 py-2.5 rounded-lg font-bold flex items-center gap-2 hover:bg-green-700 cursor-pointer shadow-md transition-all">
+            <Upload size={18}/> Importar CSV
+            <input type="file" accept=".csv,.txt" className="hidden" onChange={handleCSVFile}/>
+          </label>
         </div>
       </div>
 
@@ -287,6 +358,19 @@ function Productos() {
                                 />
                             </div>
                         </div>
+                    </div>
+
+                    {/* STOCK MÍNIMO */}
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-1">Stock Mínimo (Alerta)</label>
+                        <input 
+                            type="number"
+                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-orange-400 outline-none"
+                            placeholder="5"
+                            value={stockMinimo}
+                            onChange={e => setStockMinimo(e.target.value)}
+                        />
+                        <p className="text-[10px] text-slate-400 mt-1">Se alertará cuando el stock sea igual o menor a este valor</p>
                     </div>
 
                     {/* CATEGORÍA CON GESTOR */}
@@ -426,7 +510,7 @@ function Productos() {
                                             </div>
                                         </td>
                                         <td className="p-4 text-center">
-                                            <span className={`px-2 py-1 rounded font-bold text-xs ${prod.stock <= 5 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+                                            <span className={`px-2 py-1 rounded font-bold text-xs ${prod.stock <= (prod.stock_minimo ?? 5) ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
                                                 {prod.stock} u.
                                             </span>
                                         </td>
@@ -459,6 +543,55 @@ function Productos() {
         </div>
 
       </div>
+
+      {/* MODAL CSV PREVIEW */}
+      {mostrarCSV && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+            <div className="bg-green-600 p-4 flex justify-between items-center text-white">
+              <h3 className="font-bold text-lg flex items-center gap-2"><FileSpreadsheet size={20}/> Vista Previa CSV</h3>
+              <button onClick={() => { setMostrarCSV(false); setCsvPreview([]); }} className="hover:bg-green-700 p-1 rounded"><X size={20}/></button>
+            </div>
+            <div className="p-3 bg-green-50 border-b border-green-100 text-green-800 text-xs">
+              Se encontraron {csvPreview.length} productos para importar. Formato esperado: nombre, precio, costo, stock, codigo_barras, categoria
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              <table className="w-full text-left text-sm border-collapse">
+                <thead className="bg-slate-50 text-slate-600 text-xs uppercase sticky top-0">
+                  <tr>
+                    <th className="p-2 border-b">Nombre</th>
+                    <th className="p-2 border-b text-right">Precio</th>
+                    <th className="p-2 border-b text-right">Costo</th>
+                    <th className="p-2 border-b text-center">Stock</th>
+                    <th className="p-2 border-b">Categoría</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {csvPreview.map((p, i) => (
+                    <tr key={i} className="hover:bg-slate-50">
+                      <td className="p-2 font-medium text-slate-700">{p.nombre}</td>
+                      <td className="p-2 text-right">${p.precio}</td>
+                      <td className="p-2 text-right text-slate-500">${p.costo}</td>
+                      <td className="p-2 text-center">{p.stock}</td>
+                      <td className="p-2 text-slate-500">{p.categoria}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="p-4 bg-slate-50 border-t flex gap-3">
+              <button onClick={() => { setMostrarCSV(false); setCsvPreview([]); }} className="flex-1 py-3 rounded-xl font-bold text-slate-500 hover:bg-slate-200">Cancelar</button>
+              <button
+                onClick={importarCSV}
+                disabled={csvImporting}
+                className="flex-[2] bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-bold shadow-lg flex justify-center items-center gap-2 disabled:opacity-60"
+              >
+                <Upload size={18}/> {csvImporting ? "Importando..." : `Importar ${csvPreview.length} Productos`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

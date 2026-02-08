@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Truck, Plus, Search, Trash2, Edit2, Phone, MapPin, Calendar, Tag, Save, X, Eye } from "lucide-react";
+import { apiFetch } from "../lib/api";
 
 function Proveedores() {
   const [proveedores, setProveedores] = useState([]);
@@ -34,7 +35,7 @@ function Proveedores() {
   }, []);
 
   const cargarProveedores = () => {
-    fetch("http://localhost:3001/api/proveedores")
+    apiFetch("/api/proveedores")
       .then((res) => res.json())
       .then((data) => setProveedores(data))
       .catch((err) => console.error(err));
@@ -62,7 +63,7 @@ function Proveedores() {
 
   const verDetalles = (prov) => {
       setProvSeleccionado(prov);
-      fetch(`http://localhost:3001/api/movimientos_proveedores/${prov.id}`)
+      apiFetch(`/api/movimientos_proveedores/${prov.id}`)
           .then(res => res.json())
           .then(data => {
               setHistorialSeleccionado(data);
@@ -93,7 +94,7 @@ function Proveedores() {
       const monto = tipoMovimiento === "pago" ? -parseFloat(montoDeuda) : parseFloat(montoDeuda);
       const desc = tipoMovimiento === "pago" ? ("Pago al " + (descripcionDeuda || "proveedor")) : (descripcionDeuda || "Compra");
 
-      const res = await fetch("http://localhost:3001/api/movimientos_proveedores", {
+      const res = await apiFetch("/api/movimientos_proveedores", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -108,7 +109,7 @@ function Proveedores() {
       if (data.success || data.id) {
         alert(tipoMovimiento === "pago" ? "Pago registrado correctamente" : "Compra registrada correctamente");
         // Recargar historial
-        fetch(`http://localhost:3001/api/movimientos_proveedores/${provSeleccionado.id}`)
+        apiFetch(`/api/movimientos_proveedores/${provSeleccionado.id}`)
           .then(res => res.json())
           .then(data => setHistorialSeleccionado(data));
         // Limpiar formulario
@@ -134,15 +135,15 @@ function Proveedores() {
     const provData = { nombre, telefono, direccion, dia_visita: diaVisita, rubro };
 
     try {
-      let url = "http://localhost:3001/api/proveedores";
+      let url = "/api/proveedores";
       let method = "POST";
 
       if (modoEdicion) {
-          url = `http://localhost:3001/api/proveedores/${idEdicion}`;
+          url = `/api/proveedores/${idEdicion}`;
           method = "PUT";
       }
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method: method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(provData),
@@ -165,7 +166,7 @@ function Proveedores() {
   const eliminarProveedor = async (id) => {
     if (!confirm("¿Eliminar este proveedor?")) return;
     try {
-      await fetch(`http://localhost:3001/api/proveedores/${id}`, { method: "DELETE" });
+      await apiFetch(`/api/proveedores/${id}`, { method: "DELETE" });
       cargarProveedores();
     } catch (error) {
       console.error(error);

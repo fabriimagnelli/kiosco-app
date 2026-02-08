@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Search, AlertTriangle, Download, Copy, Package, Cigarette, TrendingUp, CheckCircle, X } from "lucide-react";
+import { apiFetch } from "../lib/api";
 
 function Stock() {
   const [productos, setProductos] = useState([]);
@@ -16,8 +17,8 @@ function Stock() {
       try {
         // CORRECCIÓN: Se agregó '/api' a las rutas para coincidir con el servidor
         const [resProd, resCig] = await Promise.all([
-            fetch("http://localhost:3001/api/productos"),
-            fetch("http://localhost:3001/api/cigarrillos")
+            apiFetch("/api/productos"),
+            apiFetch("/api/cigarrillos")
         ]);
 
         if (!resProd.ok || !resCig.ok) {
@@ -44,7 +45,7 @@ function Stock() {
 
   // CÁLCULOS
   const totalItems = itemsUnificados.length;
-  const itemsBajoStock = itemsUnificados.filter(i => i.stock <= 5);
+  const itemsBajoStock = itemsUnificados.filter(i => i.stock <= (i.stock_minimo ?? 5));
   const valorTotalVenta = itemsUnificados.reduce((acc, item) => acc + (item.precio * item.stock), 0);
 
   // FILTRADO
@@ -52,7 +53,7 @@ function Stock() {
     const coincideTexto = item.nombre.toLowerCase().includes(busqueda.toLowerCase());
     if (!coincideTexto) return false;
 
-    if (filtro === "bajo") return item.stock <= 5;
+    if (filtro === "bajo") return item.stock <= (item.stock_minimo ?? 5);
     if (filtro === "general") return item.tipo === "General";
     if (filtro === "cigarrillos") return item.tipo === "Cigarrillo";
     return true;
@@ -160,7 +161,7 @@ function Stock() {
                                 <td className="p-4 text-center">
                                     <span className={`px-3 py-1 rounded-full font-bold text-xs ${
                                         item.stock <= 0 ? "bg-red-100 text-red-700" :
-                                        item.stock <= 5 ? "bg-orange-100 text-orange-700" :
+                                        item.stock <= (item.stock_minimo ?? 5) ? "bg-orange-100 text-orange-700" :
                                         "bg-blue-50 text-blue-700"
                                     }`}>
                                         {item.stock} un.
@@ -188,7 +189,7 @@ function Stock() {
                 
                 <div className="p-4 bg-yellow-50 border-b border-yellow-100 text-yellow-800 text-xs flex gap-2">
                     <AlertTriangle size={16}/>
-                    <p>Estos productos tienen 5 unidades o menos. ¡Es hora de comprar!</p>
+                    <p>Estos productos están por debajo de su stock mínimo configurado. ¡Es hora de comprar!</p>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">

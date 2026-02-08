@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { LockOpen, DollarSign, Save } from "lucide-react";
-import { useNavigate } from "react-router-dom"; // <--- 1. Importamos useNavigate
+import { useNavigate } from "react-router-dom";
+import { apiFetch } from "../lib/api";
 
 function Apertura() {
   const [monto, setMonto] = useState("");
@@ -12,7 +13,7 @@ function Apertura() {
     if (!monto) return alert("Ingresa un monto válido");
 
     // <--- 3. CORREGIDO: Agregamos "/api" a la URL para coincidir con el servidor
-    fetch("http://localhost:3001/api/apertura", { 
+    apiFetch("/api/apertura", { 
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ monto, observacion }),

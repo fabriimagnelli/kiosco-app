@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Calculator, Save, AlertTriangle, Wallet, Coins, ArrowRight, ArrowDown, Edit2, Check, X } from "lucide-react";
+import { apiFetch } from "../lib/api";
 
 function CierreGeneral() {
   const [resumen, setResumen] = useState(null);
@@ -20,7 +21,7 @@ function CierreGeneral() {
   const [valorTempInicio, setValorTempInicio] = useState("");
 
   useEffect(() => {
-    fetch("http://localhost:3001/api/cierre/general")
+    apiFetch("/api/cierre/general")
       .then((res) => res.json())
       .then((data) => setResumen(data))
       .catch((err) => console.error("Error fetching cierre general:", err));
@@ -87,7 +88,7 @@ function CierreGeneral() {
     `)) return;
 
     try {
-      const res = await fetch("http://localhost:3001/api/cierres_unificado", {
+      const res = await apiFetch("/api/cierres_unificado", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
