@@ -94,7 +94,7 @@ function Balance() {
 
   return (
     <div className="p-6 h-full flex flex-col overflow-y-auto">
-      <h2 className="text-3xl font-bold text-gray-800 mb-6">📅 Balance por Período</h2>
+      <h2 className="text-3xl font-bold text-gray-800 mb-6">Balance por Período</h2>
 
       {/* FILTROS DE FECHA */}
       <div className="bg-white p-6 rounded-lg shadow-md flex gap-4 items-end mb-6">
@@ -127,7 +127,7 @@ function Balance() {
                     <div className="space-y-2 text-sm">
                         <div className="flex justify-between"><span>Ventas Kiosco</span> <span className="font-bold">$ {datos.ingresos.kiosco_efvo?.toLocaleString()}</span></div>
                         <div className="flex justify-between"><span>Ventas Cigarros</span> <span className="font-bold">$ {datos.ingresos.cigarros_efvo?.toLocaleString()}</span></div>
-                        <div className="flex justify-between"><span>Digitales (MP)</span> <span className="font-bold">$ {datos.ingresos.digital?.toLocaleString()}</span></div>
+                        <div className="flex justify-between"><span>Digitales</span> <span className="font-bold">$ {datos.ingresos.digital?.toLocaleString()}</span></div>
                         <div className="flex justify-between"><span>Cobro Deudas</span> <span className="font-bold">$ {datos.ingresos.cobros_deuda?.toLocaleString()}</span></div>
                         <hr className="border-green-200"/>
                         <div className="flex justify-between text-lg font-bold text-green-700"><span>TOTAL</span> <span>$ {datos.total_ingresos?.toLocaleString()}</span></div>
@@ -159,7 +159,7 @@ function Balance() {
                 onClick={generarPDF}
                 className="w-full bg-gray-800 hover:bg-black text-white py-4 rounded-lg font-bold text-xl flex justify-center items-center gap-2 shadow-lg"
             >
-                📄 Descargar Reporte PDF Detallado
+                Descargar Reporte PDF Detallado
             </button>
         </div>
       )}

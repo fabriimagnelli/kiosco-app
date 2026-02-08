@@ -75,15 +75,15 @@ function CierreGeneral() {
     const baseManana = inicioManual !== null ? inicioManual : (totalFisico - retiro);
 
     if (baseManana < 0) {
-      return alert("⛔ Error Crítico: El saldo para mañana no puede ser negativo.");
+      return alert("Error Crítico: El saldo para mañana no puede ser negativo.");
     }
 
     if (!confirm(`
       ¿CONFIRMAR CIERRE?
       -------------------------
-      💵 Total Contado: $${totalFisico}
-      💰 Se retira: $${retiro}
-      🛡️ INICIO MAÑANA: $${baseManana} ${inicioManual !== null ? '(Modificado Manualmente)' : ''}
+      Total Contado: $${totalFisico}
+      Se retira: $${retiro}
+      Inicio Mañana: $${baseManana} ${inicioManual !== null ? '(Modificado Manualmente)' : ''}
     `)) return;
 
     try {
@@ -103,7 +103,7 @@ function CierreGeneral() {
       
       const data = await res.json();
       if (data.success) {
-        alert("✅ Cierre exitoso.");
+        alert("Cierre exitoso.");
         window.location.reload();
       } else {
         alert("Error: " + data.error);
@@ -127,16 +127,16 @@ function CierreGeneral() {
       <div className="w-full lg:w-1/3 space-y-4">
         <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
           <h2 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
-            <Calculator size={18} className="text-blue-600"/> Resumen Sistema (Kiosco)
+            <Calculator size={18} className="text-blue-600"/> Resumen General
           </h2>
           <div className="space-y-2 text-sm">
-            <div className="flex justify-between"><span>Inicial (Apertura):</span> <span className="font-bold">$ {resumen.saldo_inicial?.toLocaleString()}</span></div>
+            <div className="flex justify-between"><span>Inicial:</span> <span className="font-bold">$ {resumen.saldo_inicial?.toLocaleString()}</span></div>
             <div className="flex justify-between text-green-600">
-                <span className="flex items-center gap-1"><ArrowRight size={12}/> Ventas Efvo:</span> 
+                <span className="flex items-center gap-1"><ArrowRight size={12}/> Ventas Efectivo:</span> 
                 <span className="font-bold">+ $ {resumen.ventas?.toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-green-600">
-                <span className="flex items-center gap-1"><ArrowRight size={12}/> Cobros Efvo:</span> 
+                <span className="flex items-center gap-1"><ArrowRight size={12}/> Cobros Efectivo:</span> 
                 <span className="font-bold">+ $ {resumen.cobros?.toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-red-500">
@@ -268,7 +268,7 @@ function CierreGeneral() {
           </div>
           {quedaEnCaja < 0 && (
              <p className="text-red-600 text-xs font-bold mt-2 text-center bg-red-100 p-2 rounded">
-                ⚠️ CUIDADO: Estás retirando más de lo que contaste.
+                CUIDADO: Estás retirando más de lo que contaste.
              </p>
           )}
         </div>

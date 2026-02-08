@@ -203,7 +203,7 @@ function Inicio() {
                             <span className="text-red-600 font-bold text-xs bg-red-100 px-2 py-1 rounded-full">Quedan {item.stock}</span>
                         </div>
                     ))
-                ) : <div className="flex flex-col items-center justify-center h-40 text-green-600 gap-2"><Award size={32}/><p>¡Stock Saludable!</p></div>}
+                ) : <div className="flex flex-col items-center justify-center h-40 text-green-600 gap-2"><Award size={32}/><p>Stock Correcto</p></div>}
             </div>
         </div>
       </div>

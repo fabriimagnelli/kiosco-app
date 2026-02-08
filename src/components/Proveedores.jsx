@@ -106,7 +106,7 @@ function Proveedores() {
 
       const data = await res.json();
       if (data.success || data.id) {
-        alert(tipoMovimiento === "pago" ? "✅ Pago registrado correctamente" : "✅ Compra registrada correctamente");
+        alert(tipoMovimiento === "pago" ? "Pago registrado correctamente" : "Compra registrada correctamente");
         // Recargar historial
         fetch(`http://localhost:3001/api/movimientos_proveedores/${provSeleccionado.id}`)
           .then(res => res.json())
@@ -257,6 +257,7 @@ function Proveedores() {
                                 <option value="Jueves">Jueves</option>
                                 <option value="Viernes">Viernes</option>
                                 <option value="Sábado">Sábado</option>
+                                <option value="Sábado">Domingo</option>
                             </select>
                         </div>
                     </div>
@@ -479,8 +480,8 @@ function Proveedores() {
                             onChange={(e) => setTipoMovimiento(e.target.value)}
                             disabled={procesandoDeuda}
                           >
-                            <option value="compra">📦 Compra (Aumenta Deuda)</option>
-                            <option value="pago">💰 Pago (Disminuye Deuda)</option>
+                            <option value="compra">Compra</option>
+                            <option value="pago">Pago</option>
                           </select>
                         </div>
                         <div className="grid grid-cols-2 gap-3">
@@ -533,7 +534,7 @@ function Proveedores() {
                                 : "bg-indigo-600 hover:bg-indigo-700"
                             }`}
                           >
-                            {procesandoDeuda ? "Guardando..." : (tipoMovimiento === "pago" ? "✓ Guardar Pago" : "✓ Guardar Compra")}
+                            {procesandoDeuda ? "Guardando..." : (tipoMovimiento === "pago" ? "Guardar Pago" : "Guardar Compra")}
                           </button>
                           <button
                             type="button"

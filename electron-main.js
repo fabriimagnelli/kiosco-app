@@ -53,6 +53,11 @@ if (!gotTheLock) {
       if (!mainWindow.isVisible()) mainWindow.show();
     });
 
+    // FIX: Restaurar foco al webContents tras diálogos nativos (alert/confirm)
+    mainWindow.on('focus', () => {
+      mainWindow.webContents.focus();
+    });
+
     mainWindow.webContents.on('did-fail-load', (_event, _code, desc) => {
       console.log("did-fail-load:", desc, "- reintentando...");
       setTimeout(loadApp, 1500);

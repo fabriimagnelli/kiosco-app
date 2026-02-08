@@ -149,14 +149,6 @@ function Sidebar({ isOpen, toggleSidebar }) {
           </div>
         </div>
         
-        <button 
-          onClick={handleLogout}
-          className="w-full flex items-center justify-center gap-2 p-3 rounded-xl bg-red-600/10 text-red-500 hover:bg-red-600 hover:text-white transition-all font-medium text-sm"
-          title="Cerrar Sesión"
-        >
-          <LogOut size={18} /> 
-          <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Salir</span>
-        </button>
       </div>
 
     </div>

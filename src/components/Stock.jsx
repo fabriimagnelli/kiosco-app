@@ -63,7 +63,7 @@ function Stock() {
     const texto = itemsBajoStock.map(i => `- ${i.nombre} (Quedan: ${i.stock})`).join("\n");
     const mensaje = `*LISTA DE REPOSICIÓN - KIOSCO*\n\n${texto}`;
     navigator.clipboard.writeText(mensaje);
-    alert("✅ Lista copiada al portapapeles. ¡Pegala en WhatsApp!");
+    alert("Lista copiada al portapapeles.");
   };
 
   return (
@@ -120,7 +120,7 @@ function Stock() {
                         filtro === f ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
                     }`}
                 >
-                    {f === "bajo" ? "⚠️ Bajo Stock" : f}
+                    {f === "bajo" ? "Bajo Stock" : f}
                 </button>
             ))}
         </div>

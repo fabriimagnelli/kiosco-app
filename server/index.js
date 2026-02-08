@@ -81,7 +81,7 @@ const garantizarCajaDiaria = async () => {
 const initDB = async () => {
     try {
         await dbRun(`CREATE TABLE IF NOT EXISTS productos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, precio REAL NOT NULL, costo REAL DEFAULT 0, stock INTEGER DEFAULT 0, codigo_barras TEXT, categoria TEXT DEFAULT 'General')`);
-        await dbRun(`CREATE TABLE IF NOT EXISTS cigarrillos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, precio REAL NOT NULL, costo REAL DEFAULT 0, stock INTEGER DEFAULT 0, pack TEXT DEFAULT '20')`);
+        await dbRun(`CREATE TABLE IF NOT EXISTS cigarrillos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, precio REAL NOT NULL, precio_qr REAL DEFAULT 0, costo REAL DEFAULT 0, stock INTEGER DEFAULT 0, codigo_barras TEXT, pack TEXT DEFAULT '20')`);
         await dbRun(`CREATE TABLE IF NOT EXISTS ventas (id INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id INTEGER, producto TEXT, cantidad INTEGER, precio_total REAL, precio_unitario REAL DEFAULT 0, cliente_id INTEGER DEFAULT NULL, metodo_pago TEXT, categoria TEXT, fecha DATETIME DEFAULT CURRENT_TIMESTAMP, pago_efectivo REAL DEFAULT 0, pago_digital REAL DEFAULT 0, editado INTEGER DEFAULT 0, cierre_id INTEGER DEFAULT NULL)`);
         await dbRun(`CREATE TABLE IF NOT EXISTS fiados (id INTEGER PRIMARY KEY AUTOINCREMENT, cliente TEXT NOT NULL, cliente_id INTEGER, monto REAL NOT NULL, fecha DATETIME DEFAULT CURRENT_TIMESTAMP, descripcion TEXT, pagado INTEGER DEFAULT 0, metodo_pago TEXT DEFAULT 'Efectivo', cierre_id INTEGER DEFAULT NULL)`);
         await dbRun(`CREATE TABLE IF NOT EXISTS clientes (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, telefono TEXT, direccion TEXT, email TEXT)`);
@@ -110,6 +110,9 @@ const initDB = async () => {
         await ensureColumn("productos", "costo", "REAL DEFAULT 0");
         await ensureColumn("productos", "categoria", "TEXT DEFAULT 'General'");
         await ensureColumn("cigarrillos", "costo", "REAL DEFAULT 0");
+        await ensureColumn("cigarrillos", "precio_qr", "REAL DEFAULT 0");
+        await ensureColumn("cigarrillos", "codigo_barras", "TEXT");
+        await ensureColumn("cigarrillos", "pack", "TEXT DEFAULT '20'");
         await ensureColumn("ventas", "precio_unitario", "REAL DEFAULT 0");
         await ensureColumn("ventas", "cliente_id", "INTEGER DEFAULT NULL");
         await ensureColumn("ventas", "pago_efectivo", "REAL DEFAULT 0");
@@ -127,6 +130,9 @@ const initDB = async () => {
         await ensureColumn("proveedores", "direccion", "TEXT");
         await ensureColumn("proveedores", "dia_visita", "TEXT");
         await ensureColumn("proveedores", "rubro", "TEXT");
+        await ensureColumn("clientes", "telefono", "TEXT");
+        await ensureColumn("clientes", "direccion", "TEXT");
+        await ensureColumn("clientes", "email", "TEXT");
 
         console.log("DB inicializada.");
     } catch (e) { console.error("Error initDB:", e); }
@@ -585,8 +591,8 @@ app.delete("/api/categorias/:nombre", (req, res) => {
 });
 
 app.get("/api/cigarrillos", (req, res) => { db.all("SELECT * FROM cigarrillos ORDER BY nombre", [], (err, rows) => { if (err) res.status(500).json({ error: err.message }); else res.json(rows); }); });
-app.post("/api/cigarrillos", (req, res) => { db.run("INSERT INTO cigarrillos (nombre, precio, costo, stock, pack) VALUES (?,?,?,?,?)", [req.body.nombre, req.body.precio, req.body.costo, req.body.stock, req.body.pack], function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ id: this.lastID }); }); });
-app.put("/api/cigarrillos/:id", (req, res) => { db.run("UPDATE cigarrillos SET nombre=?, precio=?, costo=?, stock=?, pack=? WHERE id=?", [req.body.nombre, req.body.precio, req.body.costo, req.body.stock, req.body.pack, req.params.id], function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ updated: this.changes }); }); });
+app.post("/api/cigarrillos", (req, res) => { db.run("INSERT INTO cigarrillos (nombre, precio, precio_qr, costo, stock, codigo_barras) VALUES (?,?,?,?,?,?)", [req.body.nombre, req.body.precio, req.body.precio_qr || req.body.precio, req.body.costo || 0, req.body.stock, req.body.codigo_barras || ''], function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ id: this.lastID }); }); });
+app.put("/api/cigarrillos/:id", (req, res) => { db.run("UPDATE cigarrillos SET nombre=?, precio=?, precio_qr=?, costo=?, stock=?, codigo_barras=? WHERE id=?", [req.body.nombre, req.body.precio, req.body.precio_qr || req.body.precio, req.body.costo || 0, req.body.stock, req.body.codigo_barras || '', req.params.id], function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ updated: this.changes }); }); });
 app.delete("/api/cigarrillos/:id", (req, res) => { db.run("DELETE FROM cigarrillos WHERE id=?", req.params.id, function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ deleted: this.changes }); }); });
 
 app.post("/api/ventas", async (req, res) => {

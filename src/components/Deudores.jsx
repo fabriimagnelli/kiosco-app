@@ -427,6 +427,7 @@ function Deudores() {
                                           disabled={procesandoPago}
                                       >
                                           <option value="Efectivo">Efectivo</option>
+                                          <option value="Tarjeta">Mercado Pago</option>
                                           <option value="Transferencia">Transferencia</option>
                                           <option value="Tarjeta">Tarjeta</option>
                                       </select>
@@ -453,7 +454,7 @@ function Deudores() {
                                           disabled={procesandoPago || !montoPago}
                                           className="px-4 py-2 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                                       >
-                                          ✓ Registrar Pago
+                                          Registrar Pago
                                       </button>
                                   </div>
                               </div>

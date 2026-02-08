@@ -1,6 +1,6 @@
 {
   "name": "sacware-kiosco",
-  "version": "1.0.7",
+  "version": "1.1.1",
   "description": "Sistema de Gestión Comercial para Kioscos",
   "private": true,
   "main": "electron-main.js",

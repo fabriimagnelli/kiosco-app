@@ -22,7 +22,7 @@ function Apertura() {
         return res.json();
     })
     .then(() => {
-      alert("✅ Caja abierta con éxito. ¡Buen día!");
+      alert("Caja abierta con éxito.");
       setMonto("");
       setObservacion("");
       
@@ -44,7 +44,7 @@ function Apertura() {
                 <LockOpen size={48} />
             </div>
             <h2 className="text-2xl font-bold text-slate-800">Apertura de Caja</h2>
-            <p className="text-slate-500 text-sm text-center">Ingresa el dinero inicial (cambio) para comenzar el turno.</p>
+            <p className="text-slate-500 text-sm text-center">Ingresa el monto inicial para comenzar el turno.</p>
         </div>
 
         <form onSubmit={abrirCaja} className="space-y-5">
@@ -63,7 +63,7 @@ function Apertura() {
             </div>
 
             <div>
-                <label className="block text-slate-600 text-sm font-semibold mb-2">Observación (Opcional)</label>
+                <label className="block text-slate-600 text-sm font-semibold mb-2">Observación</label>
                 <input 
                     type="text" 
                     placeholder="Ej: Billetes chicos, Turno Mañana..." 

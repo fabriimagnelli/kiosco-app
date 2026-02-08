@@ -35,20 +35,29 @@ function Ventas() {
     }
   }, [location.state]);
 
-  const cargarDatos = () => {
-    Promise.all([
-      fetch("http://localhost:3001/api/productos").then(r => r.json()),
-      fetch("http://localhost:3001/api/cigarrillos").then(r => r.json()),
-      fetch("http://localhost:3001/api/promos").then(r => r.json()),
-      fetch("http://localhost:3001/api/clientes").then(r => r.json())
-    ]).then(([prods, cigs, promos, clients]) => {
+  const cargarDatos = async () => {
+    try {
+      const [prodsRes, cigsRes, promosRes, clientsRes] = await Promise.all([
+        fetch("http://localhost:3001/api/productos").then(r => r.json()).catch(() => []),
+        fetch("http://localhost:3001/api/cigarrillos").then(r => r.json()).catch(() => []),
+        fetch("http://localhost:3001/api/promos").then(r => r.json()).catch(() => []),
+        fetch("http://localhost:3001/api/clientes").then(r => r.json()).catch(() => [])
+      ]);
+
+      const prods = Array.isArray(prodsRes) ? prodsRes : [];
+      const cigs = Array.isArray(cigsRes) ? cigsRes : [];
+      const promos = Array.isArray(promosRes) ? promosRes : [];
+      const clients = Array.isArray(clientsRes) ? clientsRes : [];
+
       const productos = prods.map(x => ({...x, tipo: 'Producto'}));
       const cigarrillos = cigs.map(x => ({...x, tipo: 'Cigarrillo'}));
       const promosList = promos.map(x => ({...x, tipo: 'Promo'}));
 
       setProductos([...productos, ...cigarrillos, ...promosList]);
       setClientes(clients);
-    });
+    } catch(err) {
+      console.error("Error cargando datos:", err);
+    }
   };
 
   const cargarVentaParaEditar = (ticketId) => {
@@ -75,7 +84,7 @@ function Ventas() {
     if (prod.tipo !== 'Manual' && prod.stock !== '-') {
       // Si no es un artículo manual y tiene stock definido, validar
       if (!prod.stock || prod.stock <= 0) {
-        return alert(`❌ No hay stock disponible de "${prod.nombre}".`);
+        return alert(`No hay stock disponible de "${prod.nombre}".`);
       }
     }
 
@@ -88,7 +97,7 @@ function Ventas() {
         );
 
         if (!productoComponente || productoComponente.stock < comp.cantidad) {
-          return alert(`❌ No hay suficiente stock de "${comp.nombre}" para esta promo.\nRequerido: ${comp.cantidad} | Disponible: ${productoComponente?.stock || 0}`);
+          return alert(`No hay suficiente stock de "${comp.nombre}" para esta promo.\nRequerido: ${comp.cantidad} | Disponible: ${productoComponente?.stock || 0}`);
         }
       }
     }
@@ -99,7 +108,7 @@ function Ventas() {
       if (prod.tipo !== 'Manual' && prod.stock !== '-') {
         const stock = prod.stock || 0;
         if (existe.cantidad >= stock) {
-          return alert(`❌ No hay más stock disponible de "${prod.nombre}". Disponible: ${stock}`);
+          return alert(`No hay más stock disponible de "${prod.nombre}". Disponible: ${stock}`);
         }
       }
       setCarrito(carrito.map(item => item.nombre === prod.nombre ? { ...item, cantidad: item.cantidad + 1 } : item));
@@ -137,7 +146,7 @@ function Ventas() {
 
     // VALIDACIÓN IMPORTANTE: Si es fiado, DEBE haber cliente
     if (metodo === "Fiado" && !clienteSelec) {
-        return alert("⚠️ Para fiar, debes seleccionar un CLIENTE obligatoriamente.");
+        return alert("Para fiar, debes seleccionar un CLIENTE obligatoriamente.");
     }
 
     let body = {
@@ -150,7 +159,7 @@ function Ventas() {
     };
 
     if (ticketEditando) {
-        if(!confirm(`⚠️ ESTÁS EDITANDO EL TICKET #${ticketEditando}\n\n¿Continuar?`)) return;
+        if(!confirm(`ESTÁS EDITANDO EL TICKET #${ticketEditando}\n\n¿Continuar?`)) return;
     }
 
     const res = await fetch("http://localhost:3001/api/ventas", {
@@ -161,7 +170,7 @@ function Ventas() {
 
     const data = await res.json();
     if (data.success) {
-      alert(ticketEditando ? "✅ Venta corregida." : "✅ Venta registrada!");
+      alert(ticketEditando ? "Venta corregida." : "Venta registrada!");
       setCarrito([]);
       setTicketEditando(null);
       setClienteSelec("");
@@ -227,12 +236,12 @@ function Ventas() {
             </button>
         </form>
         
-        <div className="flex-1 overflow-y-auto grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 pb-2">
-          {productosFiltrados.slice(0, 50).map((prod, i) => (
+        <div className="flex-1 overflow-y-auto grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 pb-2 content-start">
+          {productosFiltrados.slice(0, busqueda ? 100 : 50).map((prod, i) => (
              <button 
                key={i} 
                onClick={() => agregarAlCarrito(prod)}
-               className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 hover:border-blue-400 hover:shadow-md transition-all flex flex-col justify-between text-left group"
+               className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 hover:border-blue-400 hover:shadow-md transition-all flex flex-col justify-between text-left group h-fit"
              >
                <div>
                  <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${prod.tipo === 'Cigarrillo' ? 'bg-orange-100 text-orange-600' : 'bg-blue-100 text-blue-600'}`}>
@@ -316,7 +325,9 @@ function Ventas() {
                             onChange={e => setMetodoAnticipo(e.target.value)}
                           >
                             <option value="Efectivo">Efectivo</option>
+                            <option value="Transferencia">Mercado Pago</option>
                             <option value="Transferencia">Transferencia</option>
+                            <option value="Transferencia">Targetas</option>
                           </select>
                       </div>
                    </div>
@@ -335,10 +346,9 @@ function Ventas() {
                 >
                     <option value="Efectivo">Efectivo</option>
                     <option value="Mercado Pago">Mercado Pago</option>
-                    <option value="Débito">Tarjeta Débito</option>
-                    <option value="Crédito">Tarjeta Crédito</option>
+                    <option value="Débito">Tarjetas</option>
                     <option value="Transferencia">Transferencia</option>
-                    <option value="Fiado" className="font-bold text-red-600">Cuenta Corriente (Fiado)</option>
+                    <option value="Fiado" className="font-bold text-red-600">Cuenta Corriente</option>
                 </select>
             </div>
 

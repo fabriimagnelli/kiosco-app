@@ -94,7 +94,7 @@ function Login() {
         </form>
 
         <p className="text-center text-xs text-slate-400 mt-8">
-            SACWare v1.0
+            SACWare v{__APP_VERSION__}
         </p>
       </div>
     </div>

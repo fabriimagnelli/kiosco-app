@@ -107,7 +107,7 @@ function Promos() {
       const data = await res.json();
 
       if (res.ok) {
-        alert(nuevaPromo.id ? "✅ Promo actualizada" : "✅ Promo creada");
+        alert(nuevaPromo.id ? "Promo actualizada" : "Promo creada");
         setMostrarModal(false);
         setNuevaPromo({ id: null, nombre: "", precio: "", codigo_barras: "", componentes: [] });
         cargarDatos();

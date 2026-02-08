@@ -96,7 +96,7 @@ function Configuracion() {
                             value={datos.kiosco_nombre}
                             onChange={handleChange}
                             className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
-                            placeholder="Ej: Kiosco Pepe"
+                            placeholder="Ej: Kiosco Centro"
                         />
                     </div>
                     <div>
@@ -108,12 +108,12 @@ function Configuracion() {
                                 value={datos.kiosco_direccion}
                                 onChange={handleChange}
                                 className="w-full pl-9 p-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
-                                placeholder="Calle Falsa 123"
+                                placeholder="Calle Alpes 123"
                             />
                         </div>
                     </div>
                     <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">Teléfono (Opcional)</label>
+                        <label className="block text-xs font-bold text-slate-500 mb-1">Teléfono</label>
                         <div className="relative">
                             <Phone size={16} className="absolute left-3 top-3 text-slate-400"/>
                             <input 
@@ -121,7 +121,7 @@ function Configuracion() {
                                 value={datos.kiosco_telefono}
                                 onChange={handleChange}
                                 className="w-full pl-9 p-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
-                                placeholder="Para mostrar en tickets..."
+                                placeholder="959-1114"
                             />
                         </div>
                     </div>

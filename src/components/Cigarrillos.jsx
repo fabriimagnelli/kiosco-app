@@ -124,6 +124,16 @@ function Cigarrillos() {
     setCodigo("");
   };
 
+  const eliminarCigarrillo = async (id) => {
+    if (!confirm("¿Eliminar este cigarrillo?")) return;
+    try {
+      await fetch(`http://localhost:3001/api/cigarrillos/${id}`, { method: "DELETE" });
+      cargarDatos();
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
   const filtrados = cigarrillos.filter(c => 
     c.nombre.toLowerCase().includes(busqueda.toLowerCase()) || 
     (c.codigo_barras && c.codigo_barras.includes(busqueda))

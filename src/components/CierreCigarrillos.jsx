@@ -74,7 +74,7 @@ function CierreCigarrillos() {
         return alert("Error: El saldo para mañana no puede ser negativo.");
     }
     
-    if (!confirm(`¿Confirmar cierre de CIGARRILLOS?\n\n💵 Contado: $${contado}\n💰 Retiro: $${retiro}\n🛡️ Queda (Inicio Mañana): $${queda}`)) return;
+    if (!confirm(`¿Confirmar cierre de cigarrillos?\n\nContado: $${contado}\nRetiro: $${retiro}\nQueda (Inicio Mañana): $${queda}`)) return;
 
     try {
       const res = await fetch("http://localhost:3001/api/cierres_unificado", {
@@ -92,7 +92,7 @@ function CierreCigarrillos() {
       
       const data = await res.json();
       if (data.success) {
-        alert("✅ Cierre de Cigarrillos exitoso.");
+        alert("Cierre de Cigarrillos exitoso.");
         window.location.reload();
       } else {
         alert("Error: " + data.error);
@@ -197,7 +197,7 @@ function CierreCigarrillos() {
             {/* RETIRO */}
             <div className="flex-1 w-full">
               <label className="block text-sm font-bold text-orange-800 mb-1 flex items-center gap-1">
-                 <DollarSign size={14}/> ¿Cuánto retiras?
+                 <DollarSign size={14}/> Retiro
               </label>
               <input 
                 type="number" 
@@ -252,7 +252,7 @@ function CierreCigarrillos() {
           </div>
           {quedaEnCaja < 0 && (
              <p className="text-red-600 text-xs font-bold mt-2 text-center bg-red-100 p-2 rounded">
-                ⚠️ CUIDADO: Estás retirando más de lo que contaste.
+                CUIDADO: Estás retirando más de lo que contaste.
              </p>
           )}
         </div>
