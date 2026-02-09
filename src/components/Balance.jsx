@@ -112,7 +112,7 @@ function Balance() {
             disabled={cargando}
             className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded font-bold shadow transition-transform active:scale-95 disabled:bg-gray-400"
         >
-            {cargando ? "Calculando..." : "🔍 Calcular Balance"}
+            {cargando ? "Calculando..." : "Calcular Balance"}
         </button>
       </div>
 

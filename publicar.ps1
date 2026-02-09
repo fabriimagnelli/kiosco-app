@@ -1,0 +1,257 @@
+# ============================================================================
+# SCRIPT DE PUBLICACION - SACWare Kiosco
+# ============================================================================
+# USO: Abrir PowerShell en la carpeta del proyecto y ejecutar:
+#   .\publicar.ps1
+#   .\publicar.ps1 -Notas "Descripcion de cambios"
+#   .\publicar.ps1 -SinPublicar        (solo buildea, no sube a GitHub)
+#
+# IMPORTANTE: El proyecto esta en OneDrive, que bloquea archivos .asar.
+# Este script buildea en C:\temp\KioscoApp-build para evitar ese problema.
+# ============================================================================
+
+param(
+    [string]$Notas = "",
+    [switch]$SinPublicar
+)
+
+$ErrorActionPreference = "Stop"
+$ProjectDir = "C:\Users\Fabri\OneDrive\Desktop\KioscoApp"
+$BuildDir = "C:\temp\KioscoApp-build"
+
+Write-Host ""
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "  SACWare Kiosco - Publicar Release" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host ""
+
+# --- Paso 1: Verificar requisitos ---
+Write-Host "[1/7] Verificando requisitos..." -ForegroundColor Yellow
+
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+    Write-Host "  ERROR: Node.js no esta instalado." -ForegroundColor Red
+    exit 1
+}
+Write-Host "  Node.js OK" -ForegroundColor Green
+
+$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+
+if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+    Write-Host "  ERROR: GitHub CLI (gh) no esta instalado." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  SOLUCION: Ejecuta este comando e intenta de nuevo:" -ForegroundColor Yellow
+    Write-Host "    winget install GitHub.cli" -ForegroundColor White
+    exit 1
+}
+
+$ErrorActionPreference = "Continue"
+gh auth status 2>&1 | Out-Null
+$ghAuthExit = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+if ($ghAuthExit -ne 0) {
+    Write-Host "  ERROR: No estas autenticado en GitHub." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  SOLUCION: Ejecuta este comando e intenta de nuevo:" -ForegroundColor Yellow
+    Write-Host "    gh auth login" -ForegroundColor White
+    Write-Host "    (Elegir: GitHub.com > HTTPS > Login with browser)" -ForegroundColor Gray
+    exit 1
+}
+Write-Host "  GitHub CLI autenticado OK" -ForegroundColor Green
+
+$env:GH_TOKEN = (gh auth token)
+
+# --- Paso 2: Leer version ---
+$packageJsonPath = Join-Path $ProjectDir "package.json"
+$packageJson = Get-Content $packageJsonPath -Raw | ConvertFrom-Json
+$version = $packageJson.version
+
+Write-Host "  Version a publicar: v$version" -ForegroundColor Cyan
+Write-Host ""
+
+# --- Paso 3: Cerrar procesos que bloquean ---
+Write-Host "[2/7] Cerrando procesos que bloquean archivos..." -ForegroundColor Yellow
+
+@("SACWare Kiosco", "electron") | ForEach-Object {
+    $p = Get-Process -Name $_ -ErrorAction SilentlyContinue
+    if ($p) {
+        Write-Host "  Cerrando: $_" -ForegroundColor Gray
+        $p | Stop-Process -Force -ErrorAction SilentlyContinue
+    }
+}
+Start-Sleep -Seconds 1
+Write-Host "  OK" -ForegroundColor Green
+Write-Host ""
+
+# --- Paso 4: Copiar proyecto a C:\temp (fuera de OneDrive) ---
+Write-Host "[3/7] Preparando carpeta de build fuera de OneDrive..." -ForegroundColor Yellow
+
+if (Test-Path $BuildDir) {
+    Remove-Item $BuildDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null
+
+Write-Host "  Copiando proyecto a $BuildDir..." -ForegroundColor Gray
+robocopy $ProjectDir $BuildDir /mir /xd "dist_electron" ".git" /xf "*.db" /njh /njs /np /ndl /nfl | Out-Null
+
+if (-not (Test-Path "$BuildDir\package.json")) {
+    Write-Host "  ERROR: No se pudo copiar el proyecto." -ForegroundColor Red
+    exit 1
+}
+Write-Host "  Proyecto copiado OK" -ForegroundColor Green
+Write-Host ""
+
+# --- Paso 5: Buildear ---
+Write-Host "[4/7] Buildeando aplicacion (1-3 minutos)..." -ForegroundColor Yellow
+Write-Host ""
+
+Set-Location $BuildDir
+
+Write-Host "  [Vite] Compilando frontend..." -ForegroundColor Gray
+$ErrorActionPreference = "Continue"
+cmd /c "npm run build 2>&1"
+$viteExit = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+if ($viteExit -ne 0) {
+    Write-Host ""
+    Write-Host "  ERROR: Fallo la compilacion de Vite." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  SOLUCION: Revisa errores de sintaxis en tus archivos .jsx/.js" -ForegroundColor Yellow
+    Set-Location $ProjectDir
+    exit 1
+}
+Write-Host "  [Vite] OK" -ForegroundColor Green
+Write-Host ""
+
+Write-Host "  [Electron] Empaquetando aplicacion..." -ForegroundColor Gray
+$ErrorActionPreference = "Continue"
+cmd /c "npx electron-builder 2>&1"
+$ebExit = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+if ($ebExit -ne 0) {
+    Write-Host ""
+    Write-Host "  ERROR: Fallo electron-builder." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  SOLUCIONES COMUNES:" -ForegroundColor Yellow
+    Write-Host "    - 'Cannot find module': Ejecuta 'npm install' y reintenta" -ForegroundColor White
+    Write-Host "    - 'EPERM': Ejecuta PowerShell como Administrador" -ForegroundColor White
+    Write-Host "    - 'icon not found': Verifica que build/icon.ico existe" -ForegroundColor White
+    Set-Location $ProjectDir
+    exit 1
+}
+Write-Host ""
+Write-Host "  [Electron] OK" -ForegroundColor Green
+Write-Host ""
+
+# --- Paso 6: Verificar archivos generados ---
+Write-Host "[5/7] Verificando archivos generados..." -ForegroundColor Yellow
+
+$distDir = Join-Path $BuildDir "dist_electron"
+$setupExe = Get-ChildItem $distDir -Filter "SACWare Kiosco Setup $version.exe" -ErrorAction SilentlyContinue
+$blockmap = Get-ChildItem $distDir -Filter "SACWare Kiosco Setup $version.exe.blockmap" -ErrorAction SilentlyContinue
+$latestYml = Join-Path $distDir "latest.yml"
+
+if (-not $setupExe) {
+    Write-Host "  ERROR: No se genero el instalador .exe" -ForegroundColor Red
+    Write-Host "  Archivos encontrados:" -ForegroundColor Gray
+    Get-ChildItem $distDir -File | ForEach-Object { Write-Host "    $($_.Name)" -ForegroundColor Gray }
+    Set-Location $ProjectDir
+    exit 1
+}
+if (-not $blockmap) {
+    Write-Host "  ERROR: No se genero el .blockmap" -ForegroundColor Red
+    Set-Location $ProjectDir
+    exit 1
+}
+if (-not (Test-Path $latestYml)) {
+    Write-Host "  ERROR: No se genero latest.yml" -ForegroundColor Red
+    Set-Location $ProjectDir
+    exit 1
+}
+
+$sizeMB = [math]::Round($setupExe.Length / 1MB, 1)
+Write-Host "  $($setupExe.Name) ($sizeMB MB)" -ForegroundColor Green
+Write-Host "  $($blockmap.Name)" -ForegroundColor Green
+Write-Host "  latest.yml" -ForegroundColor Green
+Write-Host ""
+
+if ($SinPublicar) {
+    Write-Host "  Build completo (sin publicar). Archivos en: $distDir" -ForegroundColor Cyan
+    Set-Location $ProjectDir
+    exit 0
+}
+
+# --- Paso 7: Git commit + tag + push ---
+Write-Host "[6/7] Subiendo cambios a Git..." -ForegroundColor Yellow
+
+Set-Location $ProjectDir
+$ErrorActionPreference = "Continue"
+cmd /c "git add -A 2>&1" | Out-Null
+$changes = cmd /c "git status --porcelain 2>&1"
+if ($changes) {
+    cmd /c "git commit -m `"v$version`" 2>&1" | Out-Null
+    Write-Host "  Commit creado" -ForegroundColor Green
+} else {
+    Write-Host "  Sin cambios nuevos" -ForegroundColor Green
+}
+
+$existingTag = cmd /c "git tag -l `"v$version`" 2>&1"
+if ($existingTag) {
+    cmd /c "git tag -d `"v$version`" 2>&1" | Out-Null
+    cmd /c "git push origin :refs/tags/v$version 2>&1" | Out-Null
+}
+
+cmd /c "git tag `"v$version`" 2>&1" | Out-Null
+cmd /c "git push origin main --tags 2>&1"
+$ErrorActionPreference = "Stop"
+Write-Host "  Push + tag v$version OK" -ForegroundColor Green
+Write-Host ""
+
+# --- Paso 8: Crear release en GitHub ---
+Write-Host "[7/7] Creando release en GitHub (subiendo ~78 MB)..." -ForegroundColor Yellow
+
+gh release view "v$version" 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "  Release existente encontrada, reemplazando..." -ForegroundColor Gray
+    gh release delete "v$version" --yes 2>&1 | Out-Null
+    Start-Sleep -Seconds 3
+}
+
+if (-not $Notas) {
+    $Notas = "Release v$version"
+}
+
+$releaseResult = gh release create "v$version" `
+    "$($setupExe.FullName)" `
+    "$($blockmap.FullName)" `
+    "$latestYml" `
+    --title "v$version" `
+    --notes "$Notas" 2>&1
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Host ""
+    Write-Host "  ERROR: No se pudo crear la release en GitHub." -ForegroundColor Red
+    Write-Host "  $releaseResult" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  SOLUCIONES:" -ForegroundColor Yellow
+    Write-Host "    - Verifica tu conexion a internet" -ForegroundColor White
+    Write-Host "    - Ejecuta: gh auth login" -ForegroundColor White
+    Write-Host "    - Si dice 'already_exists': espera 30 seg y reintenta" -ForegroundColor White
+    Set-Location $ProjectDir
+    exit 1
+}
+
+Write-Host "  Release creada!" -ForegroundColor Green
+Write-Host ""
+
+Set-Location $ProjectDir
+
+Write-Host "========================================" -ForegroundColor Green
+Write-Host "  PUBLICACION COMPLETA! v$version" -ForegroundColor Green
+Write-Host "========================================" -ForegroundColor Green
+Write-Host ""
+Write-Host "  URL: https://github.com/fabriimagnelli/kiosco-app/releases/tag/v$version" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  Los clientes recibiran la actualizacion:" -ForegroundColor White
+Write-Host "    - En 10 seg si reinician la app" -ForegroundColor Gray
+Write-Host "    - En max 30 min si la tienen abierta" -ForegroundColor Gray
+Write-Host ""
