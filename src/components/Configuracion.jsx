@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Settings, Save, User, Key, Building2, Phone, MapPin, LogOut, Eye, EyeOff, Database, Download, RotateCcw, Loader2, CheckCircle, AlertTriangle, Users, Plus, Trash2, Shield } from "lucide-react";
+import { Settings, Save, User, Key, Building2, Phone, MapPin, LogOut, Eye, EyeOff, Database, Download, RotateCcw, Loader2, CheckCircle, AlertTriangle, Users, Plus, Trash2, Shield, RefreshCw } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "../lib/api";
@@ -20,6 +20,9 @@ function Configuracion() {
   const [nuevoUser, setNuevoUser] = useState({ nombre: "", password: "", rol: "cajero" });
   const [userLoading, setUserLoading] = useState(false);
 
+  // Update state
+  const [updateAvailable, setUpdateAvailable] = useState(null);
+
   // Estados de datos
   const [datos, setDatos] = useState({
     admin_user: "",
@@ -33,6 +36,13 @@ function Configuracion() {
     cargarConfiguracion();
     cargarBackups();
     if (rolActual === "admin") cargarUsuarios();
+    // Verificar si hay actualización pendiente
+    if (window.electronAPI) {
+      window.electronAPI.getUpdateStatus().then(status => {
+        if (status) setUpdateAvailable(status);
+      }).catch(() => {});
+      window.electronAPI.onUpdateReady((data) => setUpdateAvailable(data));
+    }
   }, []);
 
   const cargarBackups = async () => {
@@ -165,6 +175,12 @@ function Configuracion() {
     }
   };
 
+  const instalarActualizacion = () => {
+    if (window.electronAPI) {
+      window.electronAPI.installUpdate();
+    }
+  };
+
   return (
     // AGREGADO: h-full y overflow-y-auto para permitir hacer scroll
     <div className="p-6 max-w-4xl mx-auto animate-in fade-in duration-500 h-full overflow-y-auto">
@@ -280,6 +296,23 @@ function Configuracion() {
 
         {/* COLUMNA DERECHA: ACCIONES */}
         <div className="space-y-6">
+
+            {/* TARJETA ACTUALIZAR SISTEMA (Solo visible si hay actualización) */}
+            {updateAvailable && (
+            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-6 rounded-xl shadow-sm border-2 border-blue-300 animate-in fade-in slide-in-from-top-2 duration-300">
+                <h3 className="font-bold text-blue-800 mb-2 flex items-center gap-2">
+                    <RefreshCw size={20} className="text-blue-600 animate-spin" style={{ animationDuration: '3s' }}/> Actualización Disponible
+                </h3>
+                <p className="text-sm text-blue-600 mb-1">Versión <strong>v{updateAvailable.version}</strong> lista para instalar.</p>
+                <p className="text-xs text-blue-400 mb-4">La app se reiniciará automáticamente para aplicar la actualización.</p>
+                <button 
+                    onClick={instalarActualizacion}
+                    className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700 transition-all flex justify-center items-center gap-2 shadow-lg hover:shadow-xl"
+                >
+                    <Download size={18}/> Actualizar Sistema
+                </button>
+            </div>
+            )}
             
             {/* TARJETA CERRAR SESIÓN */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const log = require('electron-log');
 const path = require('path');
@@ -37,6 +37,7 @@ if (!gotTheLock) {
   let mainWindow;
   let serverStarted = false;
   let updateCheckInterval = null;
+  let pendingUpdate = null; // Almacena info de actualización pendiente
 
   function createWindow() {
     mainWindow = new BrowserWindow({
@@ -47,6 +48,7 @@ if (!gotTheLock) {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
+        preload: path.join(__dirname, 'preload.js'),
       },
       autoHideMenuBar: true,
       show: false // No mostrar hasta que esté listo
@@ -173,6 +175,14 @@ if (!gotTheLock) {
   autoUpdater.on('update-downloaded', (info) => {
     log.info(`Actualización v${info.version} descargada. Listo para instalar.`);
     
+    // Guardar estado de actualización pendiente
+    pendingUpdate = { version: info.version, date: new Date().toISOString() };
+    
+    // Notificar al renderer (para banner y botón en Configuración)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-ready', pendingUpdate);
+    }
+    
     // Preguntar al usuario si quiere reiniciar ahora
     if (mainWindow && !mainWindow.isDestroyed()) {
       dialog.showMessageBox(mainWindow, {
@@ -188,13 +198,23 @@ if (!gotTheLock) {
           log.info('Usuario eligió reiniciar ahora para actualizar.');
           autoUpdater.quitAndInstall(false, true);
         } else {
-          log.info('Usuario pospuso la actualización. Se instalará al cerrar la app.');
+          log.info('Usuario pospuso la actualización. Disponible desde Configuración.');
         }
       });
     } else {
       // Si no hay ventana, instalar silenciosamente al cerrar
       log.info('Sin ventana activa. La actualización se instalará al cerrar.');
     }
+  });
+
+  // ─── IPC Handlers para comunicación con el renderer ────────────────────
+  ipcMain.handle('get-update-status', () => {
+    return pendingUpdate;
+  });
+
+  ipcMain.on('install-update', () => {
+    log.info('Usuario solicitó instalar actualización desde la UI.');
+    autoUpdater.quitAndInstall(false, true);
   });
 
   autoUpdater.on('error', (err) => {

@@ -4,6 +4,7 @@ import { HashRouter, Routes, Route, Navigate, useNavigate } from "react-router-d
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import Sidebar from "./components/Sidebar";
 import Login from "./components/Login";
+import { Download, X, RefreshCw } from "lucide-react";
 
 import Inicio from "./components/Inicio";
 import Ventas from "./components/Ventas";
@@ -40,9 +41,45 @@ const Layout = ({ children }) => {
   });
   const navigate = useNavigate();
 
+  // --- Estado de actualización ---
+  const [updateAvailable, setUpdateAvailable] = useState(null);
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
+
   useEffect(() => {
     localStorage.setItem("sidebarOpen", JSON.stringify(sidebarOpen));
   }, [sidebarOpen]);
+
+  // Verificar actualización pendiente al montar
+  useEffect(() => {
+    if (window.electronAPI) {
+      // Consultar si ya hay una actualización descargada
+      window.electronAPI.getUpdateStatus().then(status => {
+        if (status) {
+          setUpdateAvailable(status);
+          // Mostrar alerta una vez por sesión
+          if (!sessionStorage.getItem('updateAlertShown')) {
+            sessionStorage.setItem('updateAlertShown', 'true');
+            setShowUpdateModal(true);
+          }
+        }
+      }).catch(() => {});
+
+      // Escuchar si se descarga una nueva actualización mientras el sistema está abierto
+      window.electronAPI.onUpdateReady((data) => {
+        setUpdateAvailable(data);
+        if (!sessionStorage.getItem('updateAlertShown')) {
+          sessionStorage.setItem('updateAlertShown', 'true');
+          setShowUpdateModal(true);
+        }
+      });
+    }
+  }, []);
+
+  const instalarActualizacion = () => {
+    if (window.electronAPI) {
+      window.electronAPI.installUpdate();
+    }
+  };
 
   // Atajos de teclado globales
   useEffect(() => {
@@ -76,10 +113,66 @@ const Layout = ({ children }) => {
     <div className="flex h-screen bg-slate-100 overflow-hidden font-sans text-slate-900">
       <Sidebar isOpen={sidebarOpen} toggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
       <div className="flex-1 flex flex-col h-full overflow-hidden relative transition-all duration-300">
+        
+        {/* BANNER DE ACTUALIZACIÓN PERSISTENTE */}
+        {updateAvailable && (
+          <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-4 py-2.5 flex items-center justify-between z-30 shadow-md animate-in slide-in-from-top-1 duration-300">
+            <div className="flex items-center gap-2 text-sm">
+              <Download size={16} className="animate-bounce"/>
+              <span className="font-medium">
+                Nueva versión <strong>v{updateAvailable.version}</strong> disponible
+              </span>
+            </div>
+            <button 
+              onClick={instalarActualizacion}
+              className="bg-white text-blue-700 px-4 py-1 rounded-lg text-sm font-bold hover:bg-blue-50 transition-colors flex items-center gap-1.5"
+            >
+              <RefreshCw size={14}/> Actualizar ahora
+            </button>
+          </div>
+        )}
+
         <main className="flex-1 overflow-hidden relative">
           {children}
         </main>
       </div>
+
+      {/* MODAL DE ALERTA DE ACTUALIZACIÓN (una vez por sesión) */}
+      {showUpdateModal && updateAvailable && (
+        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4 animate-in fade-in duration-300">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-300">
+            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-6 text-center">
+              <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                <Download size={32} className="text-white"/>
+              </div>
+              <h2 className="text-xl font-bold text-white">¡Nueva Actualización Disponible!</h2>
+            </div>
+            <div className="p-6 text-center">
+              <p className="text-slate-600 mb-2">
+                Se descargó la versión <strong className="text-blue-700">v{updateAvailable.version}</strong> de SACWare Kiosco.
+              </p>
+              <p className="text-sm text-slate-400 mb-6">
+                Incluye mejoras y correcciones. Te recomendamos actualizar cuando puedas.
+                También podés hacerlo desde <strong>Configuración</strong>.
+              </p>
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setShowUpdateModal(false)}
+                  className="flex-1 py-3 rounded-xl font-bold text-slate-600 border border-slate-300 hover:bg-slate-50 transition-colors"
+                >
+                  Más tarde
+                </button>
+                <button 
+                  onClick={instalarActualizacion}
+                  className="flex-1 py-3 rounded-xl font-bold text-white bg-blue-600 hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
+                >
+                  <RefreshCw size={16}/> Actualizar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
