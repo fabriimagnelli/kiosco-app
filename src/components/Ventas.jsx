@@ -30,8 +30,12 @@ function Ventas() {
   // Descuento
   const [descuento, setDescuento] = useState("");
 
+  // Datos del negocio para ticket
+  const [configNegocio, setConfigNegocio] = useState({ kiosco_nombre: "", kiosco_direccion: "", kiosco_telefono: "" });
+
   useEffect(() => {
     cargarDatos();
+    cargarConfigNegocio();
     
     if (location.state && location.state.ticketEditar) {
         const ticketId = location.state.ticketEditar;
@@ -39,6 +43,14 @@ function Ventas() {
         cargarVentaParaEditar(ticketId);
     }
   }, [location.state]);
+
+  const cargarConfigNegocio = async () => {
+    try {
+      const res = await apiFetch("/api/config");
+      const data = await res.json();
+      setConfigNegocio(data);
+    } catch (e) { console.error("Error cargando config negocio:", e); }
+  };
 
   const cargarDatos = async () => {
     try {
@@ -148,24 +160,32 @@ function Ventas() {
 
   const generarTicketPDF = (ticketId, items, metodoPago, totalVenta, descuentoTotal = 0) => {
     try {
-      // Ticket térmico 80mm (~226pt de ancho)
       const anchoMM = 80;
-      const doc = new jsPDF({ unit: "mm", format: [anchoMM, 200] });
-      let y = 10;
-      const margen = 5;
-      const ancho = anchoMM - margen * 2;
+      const doc = new jsPDF({ unit: "mm", format: [anchoMM, 250] });
+      let y = 8;
+      const margen = 4;
 
-      // ENCABEZADO
+      const nombreNegocio = configNegocio.kiosco_nombre || "Mi Kiosco";
+      const direccion = configNegocio.kiosco_direccion || "";
+      const telefono = configNegocio.kiosco_telefono || "";
+
+      // === ENCABEZADO: Datos del negocio ===
       doc.setFontSize(14);
       doc.setFont("helvetica", "bold");
-      doc.text("KIOSCO", anchoMM / 2, y, { align: "center" });
-      y += 6;
-      doc.setFontSize(8);
-      doc.setFont("helvetica", "normal");
-      doc.text(new Date().toLocaleString("es-AR"), anchoMM / 2, y, { align: "center" });
-      y += 4;
-      doc.text(`Ticket #${ticketId}`, anchoMM / 2, y, { align: "center" });
+      doc.text(nombreNegocio.toUpperCase(), anchoMM / 2, y, { align: "center" });
       y += 5;
+
+      doc.setFontSize(7);
+      doc.setFont("helvetica", "normal");
+      if (direccion) {
+        doc.text(direccion, anchoMM / 2, y, { align: "center" });
+        y += 3.5;
+      }
+      if (telefono) {
+        doc.text(`Tel: ${telefono}`, anchoMM / 2, y, { align: "center" });
+        y += 3.5;
+      }
+      y += 1;
 
       // Línea separadora
       doc.setDrawColor(0);
@@ -173,52 +193,91 @@ function Ventas() {
       doc.line(margen, y, anchoMM - margen, y);
       y += 4;
 
-      // PRODUCTOS
+      // Fecha y ticket
       doc.setFontSize(8);
+      doc.text(`Fecha: ${new Date().toLocaleString("es-AR")}`, margen, y);
+      y += 3.5;
       doc.setFont("helvetica", "bold");
-      doc.text("Cant.", margen, y);
-      doc.text("Producto", margen + 10, y);
-      doc.text("Subtot.", anchoMM - margen, y, { align: "right" });
+      doc.text(`Ticket #${ticketId}`, margen, y);
       y += 4;
-      doc.setFont("helvetica", "normal");
 
+      doc.line(margen, y, anchoMM - margen, y);
+      y += 4;
+
+      // === DETALLE DE PRODUCTOS ===
+      doc.setFontSize(7);
+      doc.setFont("helvetica", "bold");
+      doc.text("Cant", margen, y);
+      doc.text("Descripción", margen + 8, y);
+      doc.text("P.Unit", anchoMM - margen - 18, y, { align: "right" });
+      doc.text("Subtotal", anchoMM - margen, y, { align: "right" });
+      y += 1;
+      doc.line(margen, y, anchoMM - margen, y);
+      y += 3;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+
+      let subtotalGeneral = 0;
       items.forEach((item) => {
-        const subtotal = item.precio * item.cantidad;
-        doc.text(`${item.cantidad}`, margen, y);
-        const nombre = item.nombre.length > 22 ? item.nombre.substring(0, 22) + "..." : item.nombre;
-        doc.text(nombre, margen + 10, y);
+        const precioUnit = Number(item.precio) || 0;
+        const cant = Number(item.cantidad) || 1;
+        const subtotal = precioUnit * cant;
+        subtotalGeneral += subtotal;
+
+        doc.text(`${cant}`, margen + 2, y, { align: "center" });
+        const nombre = (item.nombre || "Producto").length > 20 ? (item.nombre || "Producto").substring(0, 20) + ".." : (item.nombre || "Producto");
+        doc.text(nombre, margen + 8, y);
+        doc.text(`$${precioUnit.toFixed(0)}`, anchoMM - margen - 18, y, { align: "right" });
         doc.text(`$${subtotal.toFixed(0)}`, anchoMM - margen, y, { align: "right" });
-        y += 4;
+        y += 3.5;
       });
 
-      y += 2;
+      y += 1;
       doc.line(margen, y, anchoMM - margen, y);
-      y += 5;
+      y += 4;
+
+      // === SUBTOTAL ===
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "normal");
+      doc.text("Subtotal:", margen, y);
+      doc.text(`$${subtotalGeneral.toFixed(0)}`, anchoMM - margen, y, { align: "right" });
+      y += 4;
 
       // DESCUENTO (si hay)
       if (descuentoTotal > 0) {
-        doc.setFont("helvetica", "normal");
         doc.text("Descuento:", margen, y);
         doc.text(`-$${descuentoTotal.toFixed(0)}`, anchoMM - margen, y, { align: "right" });
-        y += 5;
+        y += 4;
       }
 
-      // TOTAL
-      doc.setFontSize(12);
+      // === TOTAL ===
+      doc.setFontSize(11);
       doc.setFont("helvetica", "bold");
       doc.text("TOTAL:", margen, y);
       doc.text(`$${totalVenta.toFixed(0)}`, anchoMM - margen, y, { align: "right" });
-      y += 6;
+      y += 5;
 
+      // Método de pago
       doc.setFontSize(8);
       doc.setFont("helvetica", "normal");
-      doc.text(`Pago: ${metodoPago}`, anchoMM / 2, y, { align: "center" });
-      y += 6;
-      doc.text("¡Gracias por su compra!", anchoMM / 2, y, { align: "center" });
+      doc.text(`Método de pago: ${metodoPago}`, margen, y);
+      y += 5;
 
-      // Ajustar altura del documento
-      const alturaFinal = y + 10;
-      doc.internal.pageSize.height = alturaFinal;
+      doc.line(margen, y, anchoMM - margen, y);
+      y += 4;
+
+      // === PIE ===
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "bold");
+      doc.text("¡Gracias por su compra!", anchoMM / 2, y, { align: "center" });
+      y += 4;
+      doc.setFontSize(6);
+      doc.setFont("helvetica", "normal");
+      doc.text("Documento no fiscal", anchoMM / 2, y, { align: "center" });
+
+      // Ajustar altura del documento al contenido
+      doc.internal.pageSize.height = y + 8;
 
       doc.save(`ticket_${ticketId}.pdf`);
     } catch (e) {
