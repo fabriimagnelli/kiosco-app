@@ -144,6 +144,19 @@ const initDB = async () => {
         await ensureColumn("productos", "stock_minimo", "INTEGER DEFAULT 5");
         await ensureColumn("cigarrillos", "stock_minimo", "INTEGER DEFAULT 5");
         await ensureColumn("ventas", "descuento", "REAL DEFAULT 0");
+        await ensureColumn("ventas", "notas", "TEXT DEFAULT ''");
+        await ensureColumn("ventas", "descuento_item", "REAL DEFAULT 0");
+
+        // Tabla de devoluciones parciales
+        await dbRun(`CREATE TABLE IF NOT EXISTS devoluciones (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            venta_ticket_id INTEGER NOT NULL,
+            producto TEXT NOT NULL,
+            cantidad INTEGER NOT NULL,
+            monto REAL NOT NULL,
+            motivo TEXT DEFAULT '',
+            fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
 
         // Migración: asegurar que la tabla usuarios tenga la estructura correcta
         try {
@@ -656,8 +669,13 @@ app.post("/api/ventas", async (req, res) => {
     const pagoAnticipado = parseFloat(req.body.pago_anticipado) || 0;
     const metodoAnticipo = req.body.metodo_anticipo || 'Efectivo';
     const descuento = parseFloat(req.body.descuento) || 0;
+    const notas = req.body.notas || '';
     if (!productos || productos.length === 0) return res.status(400).json({ error: "No hay productos" });
-    const subtotal = productos.reduce((acc, p) => acc + (p.precio * p.cantidad), 0);
+    const subtotal = productos.reduce((acc, p) => {
+        const precioItem = p.precio * p.cantidad;
+        const descItem = parseFloat(p.descuento_item) || 0;
+        return acc + precioItem - descItem;
+    }, 0);
     const total = Math.max(0, subtotal - descuento);
     try {
         await dbRun("BEGIN TRANSACTION");
@@ -690,8 +708,9 @@ app.post("/api/ventas", async (req, res) => {
                 }
                 // Registrar la promo como venta (sin descontar de tabla promo ya que no tiene stock)
                 let cat = 'Promo';
-                await dbRun(`INSERT INTO ventas (ticket_id, producto, cantidad, precio_total, precio_unitario, cliente_id, metodo_pago, categoria, fecha, pago_efectivo, pago_digital, editado) VALUES (?,?,?,?,?,?,?,?, datetime('now', 'localtime'), ?, ?, ?)`,
-                    [ticket_id, item.nombre, item.cantidad, total, item.precio, cliente_id, metodo_pago, cat, pEfvo, pDig, ticket_a_corregir ? 1 : 0]);
+                const descItem = parseFloat(item.descuento_item) || 0;
+                await dbRun(`INSERT INTO ventas (ticket_id, producto, cantidad, precio_total, precio_unitario, cliente_id, metodo_pago, categoria, fecha, pago_efectivo, pago_digital, editado, notas, descuento, descuento_item) VALUES (?,?,?,?,?,?,?,?, datetime('now', 'localtime'), ?, ?, ?, ?, ?, ?)`,
+                    [ticket_id, item.nombre, item.cantidad, (item.precio * item.cantidad) - descItem, item.precio, cliente_id, metodo_pago, cat, pEfvo, pDig, ticket_a_corregir ? 1 : 0, notas, descuento, descItem]);
             } else {
                 // Productos y cigarrillos normales - VALIDAR STOCK ANTES DE DESCONTAR
                 let tabla = (item.tipo === 'Cigarrillo' || (item.categoria && item.categoria.toLowerCase().includes('cigarrillo'))) ? 'cigarrillos' : (item.tipo === 'Producto' ? 'productos' : null);
@@ -710,8 +729,9 @@ app.post("/api/ventas", async (req, res) => {
                 }
 
                 let cat = item.tipo || 'General'; if (tabla === 'cigarrillos' || item.tipo === 'Cigarrillo') cat = 'Cigarrillo';
-                await dbRun(`INSERT INTO ventas (ticket_id, producto, cantidad, precio_total, precio_unitario, cliente_id, metodo_pago, categoria, fecha, pago_efectivo, pago_digital, editado) VALUES (?,?,?,?,?,?,?,?, datetime('now', 'localtime'), ?, ?, ?)`,
-                    [ticket_id, item.nombre, item.cantidad, total, item.precio, cliente_id, metodo_pago, cat, pEfvo, pDig, ticket_a_corregir ? 1 : 0]);
+                const descItem = parseFloat(item.descuento_item) || 0;
+                await dbRun(`INSERT INTO ventas (ticket_id, producto, cantidad, precio_total, precio_unitario, cliente_id, metodo_pago, categoria, fecha, pago_efectivo, pago_digital, editado, notas, descuento, descuento_item) VALUES (?,?,?,?,?,?,?,?, datetime('now', 'localtime'), ?, ?, ?, ?, ?, ?)`,
+                    [ticket_id, item.nombre, item.cantidad, (item.precio * item.cantidad) - descItem, item.precio, cliente_id, metodo_pago, cat, pEfvo, pDig, ticket_a_corregir ? 1 : 0, notas, descuento, descItem]);
             }
         }
         if (metodo_pago === 'Fiado') {
@@ -761,7 +781,128 @@ app.delete("/api/ventas/:ticket_id", async (req, res) => {
     } catch (e) { await dbRun("ROLLBACK"); res.status(500).json({ error: e.message }); }
 });
 
-app.get("/api/ventas/historial", (req, res) => { db.all(`SELECT v.*, c.nombre as nombre_cliente FROM ventas v LEFT JOIN clientes c ON v.cliente_id = c.id ORDER BY v.fecha DESC`, [], (err, rows) => { if (err) res.status(500).json({ error: err.message }); else res.json(rows); }); });
+// HISTORIAL CON FILTROS AVANZADOS
+app.get("/api/ventas/historial", async (req, res) => {
+    try {
+        const { desde, hasta, metodo, cliente_id, categoria, min, max, busqueda } = req.query;
+        let where = [];
+        let params = [];
+
+        if (desde) { where.push("date(v.fecha) >= ?"); params.push(desde); }
+        if (hasta) { where.push("date(v.fecha) <= ?"); params.push(hasta); }
+        if (metodo) { where.push("v.metodo_pago = ?"); params.push(metodo); }
+        if (cliente_id) { where.push("v.cliente_id = ?"); params.push(cliente_id); }
+        if (categoria) { where.push("v.categoria = ?"); params.push(categoria); }
+        if (busqueda) { where.push("(v.producto LIKE ? OR c.nombre LIKE ?)"); params.push(`%${busqueda}%`, `%${busqueda}%`); }
+
+        const whereClause = where.length > 0 ? "WHERE " + where.join(" AND ") : "";
+        const sql = `SELECT v.*, c.nombre as nombre_cliente FROM ventas v LEFT JOIN clientes c ON v.cliente_id = c.id ${whereClause} ORDER BY v.fecha DESC`;
+        const rows = await dbAll(sql, params);
+
+        // Filtrar por monto total de ticket (min/max) post-query
+        if (min || max) {
+            const agrupado = {};
+            rows.forEach(r => {
+                if (!agrupado[r.ticket_id]) agrupado[r.ticket_id] = 0;
+                agrupado[r.ticket_id] += r.precio_total;
+            });
+            const minVal = parseFloat(min) || 0;
+            const maxVal = parseFloat(max) || Infinity;
+            const ticketsValidos = Object.keys(agrupado).filter(t => agrupado[t] >= minVal && agrupado[t] <= maxVal).map(Number);
+            const filtrados = rows.filter(r => ticketsValidos.includes(r.ticket_id));
+            return res.json(filtrados);
+        }
+
+        res.json(rows);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// OBTENER DETALLE DE UN TICKET ESPECÍFICO (para reimpresión)
+app.get("/api/ventas/:ticket_id", async (req, res) => {
+    try {
+        const items = await dbAll(
+            `SELECT v.*, c.nombre as nombre_cliente FROM ventas v LEFT JOIN clientes c ON v.cliente_id = c.id WHERE v.ticket_id = ? ORDER BY v.id`,
+            [req.params.ticket_id]
+        );
+        if (items.length === 0) return res.status(404).json({ error: "Ticket no encontrado" });
+        res.json(items);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DEVOLUCIÓN PARCIAL
+app.post("/api/ventas/:ticket_id/devolucion", async (req, res) => {
+    const { items, motivo } = req.body;
+    const ticketId = parseInt(req.params.ticket_id);
+    if (!items || !Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "No hay items para devolver" });
+    try {
+        await dbRun("BEGIN TRANSACTION");
+        let totalDevuelto = 0;
+        for (const item of items) {
+            // Verificar que la venta existe
+            const ventaItem = await dbGet(
+                "SELECT * FROM ventas WHERE ticket_id = ? AND producto = ?",
+                [ticketId, item.producto]
+            );
+            if (!ventaItem) throw new Error(`Producto "${item.producto}" no encontrado en el ticket`);
+            if (item.cantidad > ventaItem.cantidad) throw new Error(`No se puede devolver más de ${ventaItem.cantidad} unidades de "${item.producto}"`);
+
+            const montoDevolucion = item.cantidad * ventaItem.precio_unitario;
+            totalDevuelto += montoDevolucion;
+
+            // Registrar devolución
+            await dbRun(
+                "INSERT INTO devoluciones (venta_ticket_id, producto, cantidad, monto, motivo) VALUES (?,?,?,?,?)",
+                [ticketId, item.producto, item.cantidad, montoDevolucion, motivo || '']
+            );
+
+            // Restaurar stock
+            if (ventaItem.categoria === 'Promo') {
+                const promo = await dbGet("SELECT componentes FROM promos WHERE nombre = ?", [item.producto]);
+                if (promo && promo.componentes) {
+                    const componentes = JSON.parse(promo.componentes);
+                    for (const comp of componentes) {
+                        await dbRun(
+                            `UPDATE ${comp.tipo === 'Cigarrillo' ? 'cigarrillos' : 'productos'} SET stock = stock + ? WHERE nombre = ?`,
+                            [comp.cantidad * item.cantidad, comp.nombre]
+                        );
+                    }
+                }
+            } else if (ventaItem.categoria !== 'Manual') {
+                const tabla = (ventaItem.categoria && ventaItem.categoria.toLowerCase().includes('cigarrillo')) ? 'cigarrillos' : 'productos';
+                await dbRun(`UPDATE ${tabla} SET stock = stock + ? WHERE nombre = ?`, [item.cantidad, item.producto]);
+            }
+
+            // Actualizar cantidad en ventas (si se devuelve todo, eliminar la fila)
+            if (item.cantidad >= ventaItem.cantidad) {
+                await dbRun("DELETE FROM ventas WHERE ticket_id = ? AND producto = ?", [ticketId, item.producto]);
+            } else {
+                const nuevaCantidad = ventaItem.cantidad - item.cantidad;
+                const nuevoPrecioTotal = nuevaCantidad * ventaItem.precio_unitario;
+                await dbRun(
+                    "UPDATE ventas SET cantidad = ?, precio_total = ? WHERE ticket_id = ? AND producto = ?",
+                    [nuevaCantidad, nuevoPrecioTotal, ticketId, item.producto]
+                );
+            }
+        }
+
+        // Si se devolvió todo el ticket, limpiar fiados
+        const remaining = await dbAll("SELECT * FROM ventas WHERE ticket_id = ?", [ticketId]);
+        if (remaining.length === 0) {
+            await dbRun("DELETE FROM fiados WHERE descripcion LIKE ?", [`%Ticket ${ticketId}%`]);
+        }
+
+        await dbRun("COMMIT");
+        res.json({ success: true, totalDevuelto, itemsRestantes: remaining.length });
+    } catch (e) { await dbRun("ROLLBACK"); res.status(500).json({ error: e.message }); }
+});
+
+// OBTENER DEVOLUCIONES
+app.get("/api/devoluciones", async (req, res) => {
+    try {
+        const devs = await dbAll("SELECT * FROM devoluciones ORDER BY fecha DESC");
+        res.json(devs || []);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.get("/api/gastos", (req, res) => { db.all("SELECT * FROM gastos ORDER BY fecha DESC", [], (err, rows) => res.json(rows || [])); });
 app.post("/api/gastos", async (req, res) => {
     try {

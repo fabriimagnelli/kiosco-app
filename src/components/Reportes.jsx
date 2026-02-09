@@ -3,10 +3,12 @@ import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell 
 } from "recharts";
 import { 
-    FileText, TrendingUp, ShoppingBag, Edit, MoreVertical, Trash2, ChevronDown, ChevronUp, User, AlertCircle, Wallet, DollarSign 
+    FileText, TrendingUp, ShoppingBag, Edit, MoreVertical, Trash2, ChevronDown, ChevronUp, User, AlertCircle, Wallet, DollarSign, 
+    Search, Filter, Calendar, Printer, Share2, RotateCcw, X, Download
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "../lib/api";
+import jsPDF from "jspdf";
 
 function Reportes() {
   const navigate = useNavigate();
@@ -21,8 +23,29 @@ function Reportes() {
   const [menuAbierto, setMenuAbierto] = useState(null);
   const [rentabilidad, setRentabilidad] = useState([]);
 
+  // --- FILTROS AVANZADOS ---
+  const [filtroDesde, setFiltroDesde] = useState("");
+  const [filtroHasta, setFiltroHasta] = useState("");
+  const [filtroMetodo, setFiltroMetodo] = useState("");
+  const [filtroBusqueda, setFiltroBusqueda] = useState("");
+  const [filtroMin, setFiltroMin] = useState("");
+  const [filtroMax, setFiltroMax] = useState("");
+  const [mostrarFiltros, setMostrarFiltros] = useState(false);
+  const [clientes, setClientes] = useState([]);
+  const [filtroCliente, setFiltroCliente] = useState("");
+
+  // --- DEVOLUCIONES ---
+  const [modalDevolucion, setModalDevolucion] = useState(null);
+  const [itemsDevolucion, setItemsDevolucion] = useState([]);
+  const [motivoDevolucion, setMotivoDevolucion] = useState("");
+
+  // --- CONFIG NEGOCIO (para reimpresión) ---
+  const [configNegocio, setConfigNegocio] = useState({ kiosco_nombre: "", kiosco_direccion: "", kiosco_telefono: "" });
+
   useEffect(() => {
     cargarHistorial();
+    apiFetch("/api/clientes").then(r => r.json()).then(d => setClientes(Array.isArray(d) ? d : [])).catch(() => {});
+    apiFetch("/api/config").then(r => r.json()).then(d => setConfigNegocio(d)).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -34,8 +57,18 @@ function Reportes() {
     }
   }, [activeTab]);
 
-  const cargarHistorial = () => {
-    apiFetch("/api/ventas/historial")
+  const cargarHistorial = (filtros = {}) => {
+    const params = new URLSearchParams();
+    if (filtros.desde || filtroDesde) params.set('desde', filtros.desde || filtroDesde);
+    if (filtros.hasta || filtroHasta) params.set('hasta', filtros.hasta || filtroHasta);
+    if (filtros.metodo || filtroMetodo) params.set('metodo', filtros.metodo || filtroMetodo);
+    if (filtros.cliente_id || filtroCliente) params.set('cliente_id', filtros.cliente_id || filtroCliente);
+    if (filtros.busqueda || filtroBusqueda) params.set('busqueda', filtros.busqueda || filtroBusqueda);
+    if (filtros.min || filtroMin) params.set('min', filtros.min || filtroMin);
+    if (filtros.max || filtroMax) params.set('max', filtros.max || filtroMax);
+
+    const qs = params.toString();
+    apiFetch(`/api/ventas/historial${qs ? '?' + qs : ''}`)
       .then(r => r.json())
       .then(data => {
         const agrupado = {};
@@ -55,9 +88,10 @@ function Reportes() {
                     metodo: v.metodo_pago,
                     cliente: v.cliente || v.nombre_cliente || "Consumidor Final", 
                     editado: v.editado,
-                    // CAPTURAMOS LOS PAGOS REALIZADOS
                     pago_efectivo: v.pago_efectivo || 0,
                     pago_digital: v.pago_digital || 0,
+                    notas: v.notas || '',
+                    descuento: v.descuento || 0,
                     lista_productos: [] 
                 };
 
@@ -120,6 +154,161 @@ function Reportes() {
       navigate("/ventas", { state: { ticketEditar: ticket.ticket_id } });
   };
 
+  // --- APLICAR / LIMPIAR FILTROS ---
+  const aplicarFiltros = () => {
+    cargarHistorial({ desde: filtroDesde, hasta: filtroHasta, metodo: filtroMetodo, cliente_id: filtroCliente, busqueda: filtroBusqueda, min: filtroMin, max: filtroMax });
+  };
+
+  const limpiarFiltros = () => {
+    setFiltroDesde(""); setFiltroHasta(""); setFiltroMetodo(""); setFiltroCliente(""); setFiltroBusqueda(""); setFiltroMin(""); setFiltroMax("");
+    cargarHistorial({ desde: '', hasta: '', metodo: '', cliente_id: '', busqueda: '', min: '', max: '' });
+  };
+
+  const hayFiltrosActivos = filtroDesde || filtroHasta || filtroMetodo || filtroCliente || filtroBusqueda || filtroMin || filtroMax;
+
+  // --- REIMPRIMIR TICKET ---
+  const reimprimirTicket = async (ticket) => {
+    try {
+      const res = await apiFetch(`/api/ventas/${ticket.ticket_id}`);
+      const items = await res.json();
+      if (!items || items.length === 0) return alert("No se encontraron datos del ticket.");
+
+      const anchoMM = 80;
+      const doc = new jsPDF({ unit: "mm", format: [anchoMM, 300] });
+      let y = 8;
+      const margen = 4;
+
+      const nombreNegocio = configNegocio.kiosco_nombre || "Mi Kiosco";
+      const direccion = configNegocio.kiosco_direccion || "";
+      const telefono = configNegocio.kiosco_telefono || "";
+
+      doc.setFontSize(14);
+      doc.setFont("helvetica", "bold");
+      doc.text(nombreNegocio.toUpperCase(), anchoMM / 2, y, { align: "center" });
+      y += 5;
+      doc.setFontSize(7);
+      doc.setFont("helvetica", "normal");
+      if (direccion) { doc.text(direccion, anchoMM / 2, y, { align: "center" }); y += 3.5; }
+      if (telefono) { doc.text(`Tel: ${telefono}`, anchoMM / 2, y, { align: "center" }); y += 3.5; }
+      y += 1;
+      doc.line(margen, y, anchoMM - margen, y); y += 4;
+
+      doc.setFontSize(8);
+      doc.text(`Fecha: ${new Date(ticket.fecha).toLocaleString("es-AR")}`, margen, y); y += 3.5;
+      doc.setFont("helvetica", "bold");
+      doc.text(`Ticket #${ticket.ticket_id}`, margen, y); y += 3.5;
+      doc.setFont("helvetica", "normal");
+      doc.text(`(REIMPRESIÓN)`, margen, y); y += 4;
+      doc.line(margen, y, anchoMM - margen, y); y += 4;
+
+      doc.setFontSize(7);
+      doc.setFont("helvetica", "bold");
+      doc.text("Cant", margen, y);
+      doc.text("Descripción", margen + 8, y);
+      doc.text("P.Unit", anchoMM - margen - 18, y, { align: "right" });
+      doc.text("Subtotal", anchoMM - margen, y, { align: "right" });
+      y += 1; doc.line(margen, y, anchoMM - margen, y); y += 3;
+
+      doc.setFont("helvetica", "normal");
+      let subtotalGen = 0;
+      (ticket.lista_productos || []).forEach(item => {
+        subtotalGen += item.subtotal;
+        doc.text(`${item.cantidad}`, margen + 2, y, { align: "center" });
+        const nombre = item.nombre.length > 20 ? item.nombre.substring(0, 20) + ".." : item.nombre;
+        doc.text(nombre, margen + 8, y);
+        doc.text(`$${item.precio_unitario.toFixed(0)}`, anchoMM - margen - 18, y, { align: "right" });
+        doc.text(`$${item.subtotal.toFixed(0)}`, anchoMM - margen, y, { align: "right" });
+        y += 3.5;
+      });
+
+      y += 1; doc.line(margen, y, anchoMM - margen, y); y += 4;
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
+      doc.text("TOTAL:", margen, y);
+      doc.text(`$${ticket.total.toFixed(0)}`, anchoMM - margen, y, { align: "right" });
+      y += 5;
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "normal");
+      doc.text(`Método de pago: ${ticket.metodo}`, margen, y); y += 3.5;
+      doc.text(`Cliente: ${ticket.cliente}`, margen, y); y += 5;
+
+      // Notas si existen
+      const notasTicket = items[0]?.notas;
+      if (notasTicket && notasTicket.trim()) {
+        doc.setFontSize(7);
+        doc.text("Notas:", margen, y); y += 3;
+        const lineas = doc.splitTextToSize(notasTicket, anchoMM - margen * 2);
+        lineas.forEach(l => { doc.text(l, margen, y); y += 3; });
+        y += 2;
+      }
+
+      doc.line(margen, y, anchoMM - margen, y); y += 4;
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "bold");
+      doc.text("¡Gracias por su compra!", anchoMM / 2, y, { align: "center" });
+      y += 4;
+      doc.setFontSize(6);
+      doc.setFont("helvetica", "normal");
+      doc.text("Documento no fiscal", anchoMM / 2, y, { align: "center" });
+
+      doc.internal.pageSize.height = y + 8;
+      doc.save(`ticket_${ticket.ticket_id}_reimpresion.pdf`);
+    } catch (e) {
+      console.error("Error reimprimiendo:", e);
+      alert("Error al reimprimir el ticket.");
+    }
+  };
+
+  // --- COMPARTIR TICKET POR WHATSAPP ---
+  const compartirTicket = (ticket) => {
+    const prods = (ticket.lista_productos || []).map(p => `  ${p.cantidad}x ${p.nombre} - $${p.subtotal.toFixed(0)}`).join('\n');
+    const texto = `🧾 *Ticket #${ticket.ticket_id}*\n📅 ${new Date(ticket.fecha).toLocaleString("es-AR")}\n\n${prods}\n\n💰 *Total: $${ticket.total.toFixed(0)}*\n💳 Método: ${ticket.metodo}\n👤 Cliente: ${ticket.cliente}\n\n_${configNegocio.kiosco_nombre || 'Mi Kiosco'}_`;
+    const url = `https://wa.me/?text=${encodeURIComponent(texto)}`;
+    window.open(url, '_blank');
+  };
+
+  // --- DEVOLUCIÓN PARCIAL ---
+  const abrirDevolucion = (ticket) => {
+    setModalDevolucion(ticket);
+    setItemsDevolucion(ticket.lista_productos.map(p => ({ ...p, devolver: 0 })));
+    setMotivoDevolucion("");
+    setMenuAbierto(null);
+  };
+
+  const confirmarDevolucion = async () => {
+    const itemsADevolver = itemsDevolucion.filter(i => i.devolver > 0);
+    if (itemsADevolver.length === 0) return alert("Seleccioná al menos un producto para devolver.");
+    
+    // Validar cantidades
+    for (const item of itemsADevolver) {
+      if (item.devolver > item.cantidad) return alert(`No se puede devolver más de ${item.cantidad} unidades de "${item.nombre}".`);
+    }
+
+    if (!confirm(`¿Confirmar devolución de ${itemsADevolver.length} item(s)?`)) return;
+
+    try {
+      const res = await apiFetch(`/api/ventas/${modalDevolucion.ticket_id}/devolucion`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: itemsADevolver.map(i => ({ producto: i.nombre, cantidad: i.devolver })),
+          motivo: motivoDevolucion
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(`Devolución realizada. Total devuelto: $${data.totalDevuelto.toFixed(0)}`);
+        setModalDevolucion(null);
+        cargarHistorial();
+      } else {
+        alert("Error: " + data.error);
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Error de conexión");
+    }
+  };
+
   const toggleExpand = (id) => {
       if (ticketExpandido === id) setTicketExpandido(null);
       else setTicketExpandido(id);
@@ -162,11 +351,85 @@ function Reportes() {
 
       {activeTab === "historial" ? (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-                <h3 className="font-bold text-slate-700 text-lg">Últimas Ventas</h3>
-                <span className="text-sm text-slate-400">{historialVentas.length} transacciones</span>
+            {/* BARRA DE BÚSQUEDA Y FILTROS */}
+            <div className="p-4 border-b border-slate-100 space-y-3">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+                    <h3 className="font-bold text-slate-700 text-lg">Últimas Ventas</h3>
+                    <div className="flex items-center gap-2 w-full md:w-auto">
+                        <div className="flex-1 md:w-64 flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                            <Search size={16} className="text-slate-400"/>
+                            <input 
+                                className="bg-transparent outline-none text-sm w-full"
+                                placeholder="Buscar producto o cliente..."
+                                value={filtroBusqueda}
+                                onChange={e => setFiltroBusqueda(e.target.value)}
+                                onKeyDown={e => e.key === 'Enter' && aplicarFiltros()}
+                            />
+                        </div>
+                        <button 
+                            onClick={() => setMostrarFiltros(!mostrarFiltros)}
+                            className={`p-2 rounded-lg border transition-colors ${mostrarFiltros || hayFiltrosActivos ? 'bg-blue-100 border-blue-300 text-blue-700' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+                        >
+                            <Filter size={18}/>
+                        </button>
+                        <span className="text-sm text-slate-400">{historialVentas.length} ventas</span>
+                    </div>
+                </div>
+
+                {/* PANEL DE FILTROS AVANZADOS */}
+                {mostrarFiltros && (
+                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 animate-in fade-in slide-in-from-top-2 duration-200">
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            <div>
+                                <label className="text-[10px] font-bold text-slate-500 uppercase">Desde</label>
+                                <input type="date" className="w-full p-2 border rounded-lg text-sm bg-white" value={filtroDesde} onChange={e => setFiltroDesde(e.target.value)} />
+                            </div>
+                            <div>
+                                <label className="text-[10px] font-bold text-slate-500 uppercase">Hasta</label>
+                                <input type="date" className="w-full p-2 border rounded-lg text-sm bg-white" value={filtroHasta} onChange={e => setFiltroHasta(e.target.value)} />
+                            </div>
+                            <div>
+                                <label className="text-[10px] font-bold text-slate-500 uppercase">Método de Pago</label>
+                                <select className="w-full p-2 border rounded-lg text-sm bg-white" value={filtroMetodo} onChange={e => setFiltroMetodo(e.target.value)}>
+                                    <option value="">Todos</option>
+                                    <option value="Efectivo">Efectivo</option>
+                                    <option value="Mercado Pago">Mercado Pago</option>
+                                    <option value="Débito">Tarjetas</option>
+                                    <option value="Transferencia">Transferencia</option>
+                                    <option value="Fiado">Cuenta Corriente</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-[10px] font-bold text-slate-500 uppercase">Cliente</label>
+                                <select className="w-full p-2 border rounded-lg text-sm bg-white" value={filtroCliente} onChange={e => setFiltroCliente(e.target.value)}>
+                                    <option value="">Todos</option>
+                                    {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-[10px] font-bold text-slate-500 uppercase">Monto Mínimo</label>
+                                <input type="number" placeholder="$ 0" className="w-full p-2 border rounded-lg text-sm bg-white" value={filtroMin} onChange={e => setFiltroMin(e.target.value)} />
+                            </div>
+                            <div>
+                                <label className="text-[10px] font-bold text-slate-500 uppercase">Monto Máximo</label>
+                                <input type="number" placeholder="$ 999999" className="w-full p-2 border rounded-lg text-sm bg-white" value={filtroMax} onChange={e => setFiltroMax(e.target.value)} />
+                            </div>
+                            <div className="col-span-2 flex items-end gap-2">
+                                <button onClick={aplicarFiltros} className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors">
+                                    Aplicar Filtros
+                                </button>
+                                {hayFiltrosActivos && (
+                                    <button onClick={limpiarFiltros} className="py-2 px-4 rounded-lg text-sm font-medium border border-slate-300 text-slate-600 hover:bg-slate-100 transition-colors flex items-center gap-1">
+                                        <X size={14}/> Limpiar
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
-            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-320px)]">
+
+            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-420px)]">
                 <table className="w-full text-left border-collapse">
                     <thead className="bg-slate-50 text-slate-600 font-semibold text-sm uppercase tracking-wider sticky top-0 z-10">
                         <tr>
@@ -211,7 +474,16 @@ function Reportes() {
                                             <MoreVertical size={20} />
                                          </button>
                                          {menuAbierto === ticket.ticket_id && (
-                                             <div className="absolute right-10 top-2 bg-white shadow-xl border border-slate-100 rounded-lg z-50 w-48 overflow-hidden flex flex-col text-left animate-in fade-in zoom-in duration-200">
+                                             <div className="absolute right-10 top-2 bg-white shadow-xl border border-slate-100 rounded-lg z-50 w-52 overflow-hidden flex flex-col text-left animate-in fade-in zoom-in duration-200">
+                                                 <button onClick={() => { reimprimirTicket(ticket); setMenuAbierto(null); }} className="px-4 py-3 hover:bg-slate-50 text-slate-600 text-sm font-medium flex items-center gap-2 border-b border-slate-50">
+                                                    <Printer size={16} className="text-purple-500"/> Reimprimir Ticket
+                                                 </button>
+                                                 <button onClick={() => { compartirTicket(ticket); setMenuAbierto(null); }} className="px-4 py-3 hover:bg-slate-50 text-slate-600 text-sm font-medium flex items-center gap-2 border-b border-slate-50">
+                                                    <Share2 size={16} className="text-green-500"/> Compartir WhatsApp
+                                                 </button>
+                                                 <button onClick={() => abrirDevolucion(ticket)} className="px-4 py-3 hover:bg-orange-50 text-orange-600 text-sm font-medium flex items-center gap-2 border-b border-slate-50">
+                                                    <RotateCcw size={16}/> Devolución Parcial
+                                                 </button>
                                                  <button onClick={() => editarVenta(ticket)} className="px-4 py-3 hover:bg-slate-50 text-slate-600 text-sm font-medium flex items-center gap-2 border-b border-slate-50">
                                                     <Edit size={16} className="text-blue-500"/> Editar / Corregir
                                                  </button>
@@ -302,6 +574,27 @@ function Reportes() {
                                                                     ))}
                                                                 </tbody>
                                                             </table>
+                                                        </div>
+
+                                                        {/* NOTAS DE LA VENTA */}
+                                                        {ticket.notas && ticket.notas.trim() && (
+                                                            <div className="mt-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                                                                <p className="text-xs font-bold text-yellow-700 uppercase mb-1">📝 Notas</p>
+                                                                <p className="text-sm text-yellow-800">{ticket.notas}</p>
+                                                            </div>
+                                                        )}
+
+                                                        {/* BOTONES DE ACCIÓN RÁPIDA */}
+                                                        <div className="mt-3 flex gap-2 flex-wrap">
+                                                            <button onClick={() => reimprimirTicket(ticket)} className="flex items-center gap-1 px-3 py-2 bg-purple-50 text-purple-700 border border-purple-200 rounded-lg text-xs font-medium hover:bg-purple-100 transition-colors">
+                                                                <Printer size={14}/> Reimprimir
+                                                            </button>
+                                                            <button onClick={() => compartirTicket(ticket)} className="flex items-center gap-1 px-3 py-2 bg-green-50 text-green-700 border border-green-200 rounded-lg text-xs font-medium hover:bg-green-100 transition-colors">
+                                                                <Share2 size={14}/> WhatsApp
+                                                            </button>
+                                                            <button onClick={() => abrirDevolucion(ticket)} className="flex items-center gap-1 px-3 py-2 bg-orange-50 text-orange-700 border border-orange-200 rounded-lg text-xs font-medium hover:bg-orange-100 transition-colors">
+                                                                <RotateCcw size={14}/> Devolución
+                                                            </button>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -432,6 +725,92 @@ function Reportes() {
           </div>
         </div>
       ) : null}
+
+      {/* === MODAL DE DEVOLUCIÓN PARCIAL === */}
+      {modalDevolucion && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[80vh] overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-5 bg-orange-600 text-white flex justify-between items-center">
+              <div>
+                <h3 className="font-bold text-lg flex items-center gap-2">
+                  <RotateCcw size={20}/> Devolución Parcial
+                </h3>
+                <p className="text-orange-100 text-sm">Ticket #{modalDevolucion.ticket_id}</p>
+              </div>
+              <button onClick={() => setModalDevolucion(null)} className="p-1 hover:bg-white/20 rounded">
+                <X size={20}/>
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 overflow-y-auto max-h-[50vh]">
+              <p className="text-sm text-slate-500">Seleccioná la cantidad a devolver de cada producto:</p>
+              
+              {itemsDevolucion.map((item, idx) => (
+                <div key={idx} className="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <div className="flex-1">
+                    <p className="font-bold text-sm text-slate-700">{item.nombre}</p>
+                    <p className="text-xs text-slate-400">Vendidos: {item.cantidad} | P.Unit: ${item.precio_unitario.toFixed(0)}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => setItemsDevolucion(prev => prev.map((it, i) => i === idx ? { ...it, devolver: Math.max(0, it.devolver - 1) } : it))}
+                      className="w-8 h-8 rounded-lg bg-white border border-slate-300 text-slate-600 font-bold hover:bg-slate-100"
+                    >-</button>
+                    <span className={`w-8 text-center font-bold ${item.devolver > 0 ? 'text-orange-600' : 'text-slate-400'}`}>
+                      {item.devolver}
+                    </span>
+                    <button 
+                      onClick={() => setItemsDevolucion(prev => prev.map((it, i) => i === idx ? { ...it, devolver: Math.min(it.cantidad, it.devolver + 1) } : it))}
+                      className="w-8 h-8 rounded-lg bg-white border border-slate-300 text-slate-600 font-bold hover:bg-slate-100"
+                    >+</button>
+                  </div>
+                </div>
+              ))}
+
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Motivo de devolución (opcional)</label>
+                <textarea
+                  className="w-full p-2 border rounded-lg text-sm bg-white resize-none"
+                  rows={2}
+                  placeholder="Ej: Producto dañado, error en la venta..."
+                  value={motivoDevolucion}
+                  onChange={e => setMotivoDevolucion(e.target.value)}
+                />
+              </div>
+
+              {/* Resumen de devolución */}
+              {itemsDevolucion.some(i => i.devolver > 0) && (
+                <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-sm">
+                  <p className="font-bold text-orange-800 mb-1">Resumen de devolución:</p>
+                  {itemsDevolucion.filter(i => i.devolver > 0).map((item, idx) => (
+                    <div key={idx} className="flex justify-between text-orange-700">
+                      <span>{item.devolver}x {item.nombre}</span>
+                      <span className="font-medium">-${(item.devolver * item.precio_unitario).toFixed(0)}</span>
+                    </div>
+                  ))}
+                  <div className="flex justify-between font-bold text-orange-900 border-t border-orange-200 mt-2 pt-2">
+                    <span>Total a devolver:</span>
+                    <span>${itemsDevolucion.filter(i => i.devolver > 0).reduce((acc, i) => acc + (i.devolver * i.precio_unitario), 0).toFixed(0)}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex gap-3">
+              <button onClick={() => setModalDevolucion(null)} className="flex-1 py-3 rounded-xl font-bold text-slate-600 border border-slate-300 hover:bg-white transition-colors">
+                Cancelar
+              </button>
+              <button 
+                onClick={confirmarDevolucion}
+                disabled={!itemsDevolucion.some(i => i.devolver > 0)}
+                className="flex-1 py-3 rounded-xl font-bold text-white bg-orange-600 hover:bg-orange-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Confirmar Devolución
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
