@@ -320,17 +320,21 @@ function Configuracion() {
                   <div>
                     <p className="text-xs font-bold text-slate-500 mb-2">Backups disponibles ({backups.length})</p>
                     <div className="space-y-1 max-h-40 overflow-y-auto">
-                      {backups.map((b, i) => (
-                        <div key={i} className="flex items-center justify-between bg-slate-50 p-2 rounded-lg border border-slate-100 text-xs">
-                          <span className="text-slate-600 truncate flex-1 mr-2" title={b}>{b}</span>
-                          <button
-                            onClick={() => restaurarBackup(b)}
-                            className="text-orange-600 hover:text-orange-800 font-bold flex items-center gap-1 flex-shrink-0"
-                          >
-                            <RotateCcw size={14}/> Restaurar
-                          </button>
-                        </div>
-                      ))}
+                      {backups.map((b, i) => {
+                        const nombre = typeof b === 'string' ? b : b.nombre;
+                        const detalle = typeof b === 'object' ? ` (${b.tamaño})` : '';
+                        return (
+                          <div key={i} className="flex items-center justify-between bg-slate-50 p-2 rounded-lg border border-slate-100 text-xs">
+                            <span className="text-slate-600 truncate flex-1 mr-2" title={nombre}>{nombre}{detalle}</span>
+                            <button
+                              onClick={() => restaurarBackup(nombre)}
+                              className="text-orange-600 hover:text-orange-800 font-bold flex items-center gap-1 flex-shrink-0"
+                            >
+                              <RotateCcw size={14}/> Restaurar
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
