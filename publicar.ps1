@@ -224,7 +224,14 @@ if ($releaseExists -ne 0) {
     Write-Host "  electron-builder puede haberla creado como draft." -ForegroundColor Gray
     Write-Host "  Verificar manualmente en: https://github.com/fabriimagnelli/kiosco-app/releases" -ForegroundColor Gray
 } else {
-    Write-Host "  Release v$version encontrada en GitHub" -ForegroundColor Green
+    # electron-builder crea releases como draft, hay que publicarlas
+    $isDraft = gh release view "v$version" --json isDraft --jq ".isDraft" 2>&1
+    if ($isDraft -eq "true") {
+        gh release edit "v$version" --draft=false 2>&1 | Out-Null
+        Write-Host "  Release v$version publicada (quitado draft)" -ForegroundColor Green
+    } else {
+        Write-Host "  Release v$version ya estaba publicada" -ForegroundColor Green
+    }
     
     if ($Notas) {
         gh release edit "v$version" --notes "$Notas" 2>&1 | Out-Null
