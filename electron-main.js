@@ -1,14 +1,24 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, dialog } = require('electron');
 const { autoUpdater } = require('electron-updater');
+const log = require('electron-log');
 const path = require('path');
 const fs = require('fs');
 
-// Configuración básica del updater
+// ─── Configuración de logging ───────────────────────────────────────────────
+// electron-log guarda en: %USERPROFILE%\AppData\Roaming\sacware-kiosco\logs\main.log
+log.transports.file.level = 'info';
+log.transports.file.maxSize = 5 * 1024 * 1024; // 5 MB máximo por archivo de log
+autoUpdater.logger = log;
+autoUpdater.logger.transports.file.level = 'info';
+
+// ─── Configuración del auto-updater ─────────────────────────────────────────
 autoUpdater.autoDownload = true;
+autoUpdater.autoInstallOnAppQuit = true;
+autoUpdater.allowDowngrade = false;
 
 // Prevenir que errores no capturados muestren el diálogo de error de Electron
 process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', error.message);
+  log.error('Uncaught Exception:', error.message);
   // Si es EADDRINUSE, no crashear - el servidor maneja el reintento
   if (error.code === 'EADDRINUSE') return;
   // Para otros errores, loguear en escritorio
@@ -26,6 +36,7 @@ if (!gotTheLock) {
 } else {
   let mainWindow;
   let serverStarted = false;
+  let updateCheckInterval = null;
 
   function createWindow() {
     mainWindow = new BrowserWindow({
@@ -93,15 +104,28 @@ if (!gotTheLock) {
     }
   }
 
+  // ─── Función de chequeo de actualizaciones ──────────────────────────────
+  function checkForUpdates() {
+    if (!app.isPackaged) return;
+    log.info('Buscando actualizaciones...');
+    autoUpdater.checkForUpdates().catch(err => {
+      log.warn('Error al buscar actualizaciones:', err.message);
+    });
+  }
+
+  function setupAutoUpdater() {
+    if (!app.isPackaged) return;
+
+    // Primer chequeo: 10 segundos después de iniciar
+    setTimeout(checkForUpdates, 10 * 1000);
+
+    // Re-chequeo periódico cada 30 minutos
+    updateCheckInterval = setInterval(checkForUpdates, 30 * 60 * 1000);
+  }
+
   app.on('ready', () => {
     startServer();
-    
-    // Check updates (solo si está empaquetado)
-    if (app.isPackaged) {
-      setTimeout(() => {
-        autoUpdater.checkForUpdatesAndNotify().catch(e => console.log("Updater error:", e));
-      }, 5000);
-    }
+    setupAutoUpdater();
 
     // Esperar a que Express arranque antes de abrir la ventana
     setTimeout(createWindow, app.isPackaged ? 2500 : 500);
@@ -122,7 +146,59 @@ if (!gotTheLock) {
     if (mainWindow === null) createWindow();
   });
   
-  // Eventos del Updater
-  autoUpdater.on('update-available', () => console.log('Update available'));
-  autoUpdater.on('update-downloaded', () => console.log('Update downloaded'));
+  // ─── Eventos del Auto-Updater ───────────────────────────────────────────
+  autoUpdater.on('checking-for-update', () => {
+    log.info('Verificando si hay actualizaciones...');
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    log.info(`Actualización disponible: v${info.version}`);
+    // Notificar al usuario que se está descargando
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-status', {
+        status: 'downloading',
+        version: info.version
+      });
+    }
+  });
+
+  autoUpdater.on('update-not-available', (info) => {
+    log.info(`App actualizada (v${info.version}). No hay nuevas versiones.`);
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    log.info(`Descargando actualización: ${Math.round(progress.percent)}%`);
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    log.info(`Actualización v${info.version} descargada. Listo para instalar.`);
+    
+    // Preguntar al usuario si quiere reiniciar ahora
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        title: 'Actualización disponible',
+        message: `Se descargó la versión ${info.version} de SACWare Kiosco.`,
+        detail: 'La actualización se instalará al reiniciar la aplicación. ¿Desea reiniciar ahora?',
+        buttons: ['Reiniciar ahora', 'Más tarde'],
+        defaultId: 0,
+        cancelId: 1
+      }).then(({ response }) => {
+        if (response === 0) {
+          log.info('Usuario eligió reiniciar ahora para actualizar.');
+          autoUpdater.quitAndInstall(false, true);
+        } else {
+          log.info('Usuario pospuso la actualización. Se instalará al cerrar la app.');
+        }
+      });
+    } else {
+      // Si no hay ventana, instalar silenciosamente al cerrar
+      log.info('Sin ventana activa. La actualización se instalará al cerrar.');
+    }
+  });
+
+  autoUpdater.on('error', (err) => {
+    log.error('Error en auto-updater:', err.message);
+    // No molestar al usuario con errores de red - se reintentará en 30 min
+  });
 }
