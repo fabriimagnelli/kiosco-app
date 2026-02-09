@@ -122,11 +122,20 @@ if ($viteExit -ne 0) {
 Write-Host "  [Vite] OK" -ForegroundColor Green
 Write-Host ""
 
-Write-Host "  [Electron] Empaquetando aplicacion..." -ForegroundColor Gray
-$ErrorActionPreference = "Continue"
-cmd /c "npx electron-builder 2>&1"
-$ebExit = $LASTEXITCODE
-$ErrorActionPreference = "Stop"
+Write-Host "  [Electron] Empaquetando y publicando..." -ForegroundColor Gray
+if ($SinPublicar) {
+    $ErrorActionPreference = "Continue"
+    cmd /c "npx electron-builder 2>&1"
+    $ebExit = $LASTEXITCODE
+    $ErrorActionPreference = "Stop"
+} else {
+    # --publish always hace que electron-builder suba los archivos a GitHub
+    # con los nombres correctos que coinciden con latest.yml
+    $ErrorActionPreference = "Continue"
+    cmd /c "npx electron-builder --publish always 2>&1"
+    $ebExit = $LASTEXITCODE
+    $ErrorActionPreference = "Stop"
+}
 if ($ebExit -ne 0) {
     Write-Host ""
     Write-Host "  ERROR: Fallo electron-builder." -ForegroundColor Red
@@ -135,6 +144,7 @@ if ($ebExit -ne 0) {
     Write-Host "    - 'Cannot find module': Ejecuta 'npm install' y reintenta" -ForegroundColor White
     Write-Host "    - 'EPERM': Ejecuta PowerShell como Administrador" -ForegroundColor White
     Write-Host "    - 'icon not found': Verifica que build/icon.ico existe" -ForegroundColor White
+    Write-Host "    - 'HttpError: Bad credentials': Ejecuta 'gh auth login'" -ForegroundColor White
     Set-Location $ProjectDir
     exit 1
 }
@@ -193,54 +203,51 @@ if ($changes) {
 } else {
     Write-Host "  Sin cambios nuevos" -ForegroundColor Green
 }
-
-$existingTag = cmd /c "git tag -l `"v$version`" 2>&1"
-if ($existingTag) {
-    cmd /c "git tag -d `"v$version`" 2>&1" | Out-Null
-    cmd /c "git push origin :refs/tags/v$version 2>&1" | Out-Null
-}
-
-cmd /c "git tag `"v$version`" 2>&1" | Out-Null
-cmd /c "git push origin main --tags 2>&1"
+cmd /c "git push origin main 2>&1" | Out-Null
 $ErrorActionPreference = "Stop"
-Write-Host "  Push + tag v$version OK" -ForegroundColor Green
+Write-Host "  Push OK" -ForegroundColor Green
 Write-Host ""
 
-# --- Paso 8: Crear release en GitHub ---
-Write-Host "[7/7] Creando release en GitHub (subiendo ~78 MB)..." -ForegroundColor Yellow
+# --- Paso 8: Verificar release en GitHub ---
+Write-Host "[7/7] Verificando release en GitHub..." -ForegroundColor Yellow
 
+# electron-builder --publish always ya creo la release y subio los archivos
+# Solo verificamos que exista y editamos las notas si se proporcionaron
+Start-Sleep -Seconds 3
+$ErrorActionPreference = "Continue"
 gh release view "v$version" 2>&1 | Out-Null
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "  Release existente encontrada, reemplazando..." -ForegroundColor Gray
-    gh release delete "v$version" --yes 2>&1 | Out-Null
-    Start-Sleep -Seconds 3
+$releaseExists = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+
+if ($releaseExists -ne 0) {
+    Write-Host "  ADVERTENCIA: La release no se encontro en GitHub." -ForegroundColor Yellow
+    Write-Host "  electron-builder puede haberla creado como draft." -ForegroundColor Gray
+    Write-Host "  Verificar manualmente en: https://github.com/fabriimagnelli/kiosco-app/releases" -ForegroundColor Gray
+} else {
+    Write-Host "  Release v$version encontrada en GitHub" -ForegroundColor Green
+    
+    if ($Notas) {
+        gh release edit "v$version" --notes "$Notas" 2>&1 | Out-Null
+        Write-Host "  Notas actualizadas" -ForegroundColor Green
+    }
 }
 
-if (-not $Notas) {
-    $Notas = "Release v$version"
+# Verificar que los nombres de archivos coincidan con latest.yml
+Write-Host ""
+Write-Host "  Verificando nombres de archivos..." -ForegroundColor Gray
+$assets = gh release view "v$version" --json assets --jq ".assets[].name" 2>&1
+$ymlContent = Get-Content $latestYml -Raw
+if ($ymlContent -match 'url: (.+\.exe)') {
+    $expectedName = $Matches[1].Trim()
+    if ($assets -match [regex]::Escape($expectedName)) {
+        Write-Host "  NOMBRES OK: latest.yml coincide con los assets" -ForegroundColor Green
+    } else {
+        Write-Host "  ADVERTENCIA: Posible mismatch de nombres" -ForegroundColor Yellow
+        Write-Host "  latest.yml espera: $expectedName" -ForegroundColor Gray
+        Write-Host "  GitHub tiene: $assets" -ForegroundColor Gray
+    }
 }
 
-$releaseResult = gh release create "v$version" `
-    "$($setupExe.FullName)" `
-    "$($blockmap.FullName)" `
-    "$latestYml" `
-    --title "v$version" `
-    --notes "$Notas" 2>&1
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host ""
-    Write-Host "  ERROR: No se pudo crear la release en GitHub." -ForegroundColor Red
-    Write-Host "  $releaseResult" -ForegroundColor Gray
-    Write-Host ""
-    Write-Host "  SOLUCIONES:" -ForegroundColor Yellow
-    Write-Host "    - Verifica tu conexion a internet" -ForegroundColor White
-    Write-Host "    - Ejecuta: gh auth login" -ForegroundColor White
-    Write-Host "    - Si dice 'already_exists': espera 30 seg y reintenta" -ForegroundColor White
-    Set-Location $ProjectDir
-    exit 1
-}
-
-Write-Host "  Release creada!" -ForegroundColor Green
 Write-Host ""
 
 Set-Location $ProjectDir
