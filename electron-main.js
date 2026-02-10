@@ -40,6 +40,11 @@ if (!gotTheLock) {
   let pendingUpdate = null; // Almacena info de actualización pendiente
 
   function createWindow() {
+    // El preload debe apuntar al archivo desempaquetado en disco
+    const preloadPath = app.isPackaged
+      ? path.join(__dirname.replace('app.asar', 'app.asar.unpacked'), 'preload.js')
+      : path.join(__dirname, 'preload.js');
+
     mainWindow = new BrowserWindow({
       width: 1280,
       height: 800,
@@ -48,7 +53,7 @@ if (!gotTheLock) {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
-        preload: path.join(__dirname, 'preload.js'),
+        preload: preloadPath,
       },
       autoHideMenuBar: true,
       show: false // No mostrar hasta que esté listo
