@@ -7,8 +7,13 @@ const { exec } = require("child_process");
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const multer = require("multer");
-const sharp = require("sharp");
+let multer, sharp;
+try {
+    multer = require("multer");
+    sharp = require("sharp");
+} catch (e) {
+    console.warn("[WARN] multer/sharp no disponibles, la subida de imágenes estará deshabilitada:", e.message);
+}
 
 const app = express();
 const port = 3001;
@@ -26,14 +31,14 @@ const uploadsPath = process.env.IS_ELECTRON === "true" && process.env.USER_DATA_
     : path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadsPath)) fs.mkdirSync(uploadsPath, { recursive: true });
 
-const upload = multer({
+const upload = multer ? multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
     fileFilter: (req, file, cb) => {
         if (file.mimetype.startsWith("image/")) cb(null, true);
         else cb(new Error("Solo se permiten imágenes"), false);
     }
-});
+}) : null;
 
 // --- CONFIGURACIÓN DE ARCHIVOS ESTÁTICOS ---
 const publicPath = process.env.SERVER_ROOT 
@@ -174,6 +179,20 @@ const initDB = async () => {
         await ensureColumn("clientes", "telefono", "TEXT");
         await ensureColumn("clientes", "direccion", "TEXT");
         await ensureColumn("clientes", "email", "TEXT");
+        await ensureColumn("clientes", "puntos", "INTEGER DEFAULT 0");
+        await ensureColumn("clientes", "limite_credito", "REAL DEFAULT 0");
+        await ensureColumn("clientes", "puntos_canjeados", "INTEGER DEFAULT 0");
+
+        // Tabla historial de puntos de fidelización
+        await dbRun(`CREATE TABLE IF NOT EXISTS puntos_historial (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente_id INTEGER NOT NULL,
+            puntos INTEGER NOT NULL,
+            tipo TEXT NOT NULL,
+            descripcion TEXT DEFAULT '',
+            ticket_id INTEGER,
+            fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
         await ensureColumn("productos", "stock_minimo", "INTEGER DEFAULT 5");
         await ensureColumn("cigarrillos", "stock_minimo", "INTEGER DEFAULT 5");
         await ensureColumn("ventas", "descuento", "REAL DEFAULT 0");
@@ -657,10 +676,166 @@ app.put("/api/promos/:id", (req, res) => {
 app.delete("/api/promos/:id", (req, res) => { db.run("DELETE FROM promos WHERE id=?", [req.params.id], function(err) { if (err) return res.status(500).json({ error: err.message }); res.json({ success: true }); }); });
 
 // CLIENTES, FIADOS, PROVEEDORES...
-app.get("/api/clientes", (req, res) => { db.all("SELECT c.*, COALESCE(SUM(f.monto), 0) as total_deuda FROM clientes c LEFT JOIN fiados f ON c.id = f.cliente_id GROUP BY c.id ORDER BY c.nombre", [], (err, rows) => { if (err) res.status(500).json({ error: err.message }); else res.json(rows); }); });
-app.post("/api/clientes", (req, res) => { db.run("INSERT INTO clientes (nombre, telefono, direccion, email) VALUES (?,?,?,?)", [req.body.nombre, req.body.telefono, req.body.direccion, req.body.email], function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ id: this.lastID }); }); });
-app.put("/api/clientes/:id", (req, res) => { db.run("UPDATE clientes SET nombre=?, telefono=?, direccion=?, email=? WHERE id=?", [req.body.nombre, req.body.telefono, req.body.direccion, req.body.email, req.params.id], function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ success: true }); }); });
-app.delete("/api/clientes/:id", (req, res) => { db.run("DELETE FROM clientes WHERE id=?", req.params.id, function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ deleted: this.changes }); }); });
+app.get("/api/clientes", async (req, res) => {
+    try {
+        const rows = await dbAll(`
+            SELECT c.*,
+                COALESCE((SELECT SUM(f.monto) FROM fiados f WHERE f.cliente_id = c.id), 0) as total_deuda,
+                COALESCE((SELECT MAX(f.fecha) FROM fiados f WHERE f.cliente_id = c.id AND f.monto > 0), NULL) as ultimo_fiado_fecha,
+                COALESCE((SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id), 0) as total_compras,
+                COALESCE((SELECT SUM(v.precio_total) FROM ventas v WHERE v.cliente_id = c.id), 0) as total_gastado
+            FROM clientes c ORDER BY c.nombre
+        `);
+        res.json(rows);
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post("/api/clientes", (req, res) => {
+    db.run("INSERT INTO clientes (nombre, telefono, direccion, email, limite_credito) VALUES (?,?,?,?,?)",
+        [req.body.nombre, req.body.telefono, req.body.direccion, req.body.email, parseFloat(req.body.limite_credito) || 0],
+        function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ id: this.lastID }); });
+});
+app.put("/api/clientes/:id", (req, res) => {
+    db.run("UPDATE clientes SET nombre=?, telefono=?, direccion=?, email=?, limite_credito=? WHERE id=?",
+        [req.body.nombre, req.body.telefono, req.body.direccion, req.body.email, parseFloat(req.body.limite_credito) || 0, req.params.id],
+        function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ success: true }); });
+});
+app.delete("/api/clientes/:id", async (req, res) => {
+    try {
+        await dbRun("DELETE FROM puntos_historial WHERE cliente_id=?", [req.params.id]);
+        await dbRun("DELETE FROM fiados WHERE cliente_id=?", [req.params.id]);
+        await dbRun("DELETE FROM clientes WHERE id=?", [req.params.id]);
+        res.json({ deleted: true });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// --- HISTORIAL DE COMPRAS POR CLIENTE ---
+app.get("/api/clientes/:id/compras", async (req, res) => {
+    try {
+        // Traer ventas agrupadas por ticket_id
+        const compras = await dbAll(`
+            SELECT ticket_id, MIN(fecha) as fecha, metodo_pago,
+                SUM(precio_total) as total,
+                GROUP_CONCAT(producto || ' x' || cantidad, ', ') as detalle,
+                COUNT(*) as items
+            FROM ventas WHERE cliente_id = ?
+            GROUP BY ticket_id
+            ORDER BY fecha DESC
+            LIMIT 100
+        `, [req.params.id]);
+        res.json(compras);
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// --- SISTEMA DE PUNTOS / FIDELIZACIÓN ---
+
+// Obtener configuración de puntos (cuántos puntos por peso gastado, valor de canje)
+app.get("/api/configuracion/puntos", async (req, res) => {
+    try {
+        const ptsPorPeso = await dbGet("SELECT value FROM configuracion WHERE key='puntos_por_peso'");
+        const valorCanje = await dbGet("SELECT value FROM configuracion WHERE key='puntos_valor_canje'");
+        const puntosActivos = await dbGet("SELECT value FROM configuracion WHERE key='puntos_activos'");
+        res.json({
+            puntos_por_peso: parseFloat(ptsPorPeso?.value) || 1,    // 1 punto por cada $X gastado
+            puntos_valor_canje: parseFloat(valorCanje?.value) || 100, // Cada 100 puntos = $X descuento
+            puntos_activos: puntosActivos?.value === '1' || puntosActivos?.value === 'true' || false
+        });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put("/api/configuracion/puntos", async (req, res) => {
+    try {
+        await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('puntos_por_peso', ?)", [req.body.puntos_por_peso || 1]);
+        await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('puntos_valor_canje', ?)", [req.body.puntos_valor_canje || 100]);
+        await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('puntos_activos', ?)", [req.body.puntos_activos ? '1' : '0']);
+        res.json({ success: true });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Historial de puntos de un cliente
+app.get("/api/clientes/:id/puntos", async (req, res) => {
+    try {
+        const historial = await dbAll("SELECT * FROM puntos_historial WHERE cliente_id = ? ORDER BY fecha DESC LIMIT 50", [req.params.id]);
+        res.json(historial);
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Canjear puntos
+app.post("/api/clientes/:id/canjear_puntos", async (req, res) => {
+    try {
+        const puntosACanjear = parseInt(req.body.puntos) || 0;
+        if (puntosACanjear <= 0) return res.status(400).json({ error: "Puntos inválidos" });
+        const cliente = await dbGet("SELECT puntos FROM clientes WHERE id=?", [req.params.id]);
+        if (!cliente) return res.status(404).json({ error: "Cliente no encontrado" });
+        if (cliente.puntos < puntosACanjear) return res.status(400).json({ error: "Puntos insuficientes" });
+        
+        const valorCanje = await dbGet("SELECT value FROM configuracion WHERE key='puntos_valor_canje'");
+        const valorPorPunto = parseFloat(valorCanje?.value) || 100;
+        const descuento = (puntosACanjear / valorPorPunto);
+        
+        await dbRun("UPDATE clientes SET puntos = puntos - ?, puntos_canjeados = puntos_canjeados + ? WHERE id=?", [puntosACanjear, puntosACanjear, req.params.id]);
+        await dbRun("INSERT INTO puntos_historial (cliente_id, puntos, tipo, descripcion) VALUES (?,?,?,?)",
+            [req.params.id, -puntosACanjear, 'canje', `Canje por $${descuento.toFixed(2)} de descuento`]);
+        
+        res.json({ success: true, descuento, puntos_restantes: cliente.puntos - puntosACanjear });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Ajustar puntos manualmente (admin)
+app.post("/api/clientes/:id/ajustar_puntos", async (req, res) => {
+    try {
+        const puntos = parseInt(req.body.puntos) || 0;
+        if (puntos === 0) return res.status(400).json({ error: "Monto inválido" });
+        await dbRun("UPDATE clientes SET puntos = MAX(0, puntos + ?) WHERE id=?", [puntos, req.params.id]);
+        await dbRun("INSERT INTO puntos_historial (cliente_id, puntos, tipo, descripcion) VALUES (?,?,?,?)",
+            [req.params.id, puntos, 'ajuste', req.body.descripcion || 'Ajuste manual']);
+        res.json({ success: true });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// --- RECORDATORIO DE DEUDAS VENCIDAS ---
+app.get("/api/clientes/alertas/deudas", async (req, res) => {
+    try {
+        const diasLimite = parseInt(req.query.dias) || 7;
+        const alertas = await dbAll(`
+            SELECT c.id, c.nombre, c.telefono, c.limite_credito,
+                COALESCE(SUM(f.monto), 0) as total_deuda,
+                MIN(CASE WHEN f.monto > 0 THEN f.fecha END) as fiado_mas_antiguo,
+                CAST(julianday('now', 'localtime') - julianday(MIN(CASE WHEN f.monto > 0 THEN f.fecha END)) AS INTEGER) as dias_desde_primer_fiado
+            FROM clientes c
+            JOIN fiados f ON c.id = f.cliente_id
+            GROUP BY c.id
+            HAVING total_deuda > 0
+            AND dias_desde_primer_fiado >= ?
+            ORDER BY dias_desde_primer_fiado DESC
+        `, [diasLimite]);
+        res.json(alertas);
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Validar límite de crédito antes de fiar
+app.get("/api/clientes/:id/validar_credito", async (req, res) => {
+    try {
+        const montoNuevo = parseFloat(req.query.monto) || 0;
+        const cliente = await dbGet(`
+            SELECT c.limite_credito,
+                COALESCE((SELECT SUM(f.monto) FROM fiados f WHERE f.cliente_id = c.id), 0) as deuda_actual
+            FROM clientes c WHERE c.id = ?
+        `, [req.params.id]);
+        if (!cliente) return res.status(404).json({ error: "Cliente no encontrado" });
+        
+        const limite = cliente.limite_credito || 0;
+        const deudaActual = cliente.deuda_actual || 0;
+        const nuevaDeuda = deudaActual + montoNuevo;
+        
+        res.json({
+            limite_credito: limite,
+            deuda_actual: deudaActual,
+            nueva_deuda: nuevaDeuda,
+            permitido: limite <= 0 || nuevaDeuda <= limite, // 0 = sin límite
+            excedente: limite > 0 ? Math.max(0, nuevaDeuda - limite) : 0
+        });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
 
 app.get("/api/fiados", (req, res) => { db.all("SELECT * FROM fiados ORDER BY fecha DESC", [], (err, rows) => { if (err) res.status(500).json({ error: err.message }); else res.json(rows); }); });
 app.get("/api/fiados/:id", (req, res) => { db.all("SELECT * FROM fiados WHERE cliente_id = ? ORDER BY fecha DESC", [req.params.id], (err, rows) => { if (err) res.status(500).json({ error: err.message }); else res.json(rows || []); }); });
@@ -780,6 +955,7 @@ app.delete("/api/productos/:id", async (req, res) => {
 });
 
 // --- IMAGEN DE PRODUCTO ---
+if (upload && sharp) {
 app.post("/api/productos/:id/imagen", upload.single("imagen"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No se envió imagen" });
@@ -803,6 +979,9 @@ app.post("/api/productos/:id/imagen", upload.single("imagen"), async (req, res) 
         res.json({ success: true, imagen: filename });
     } catch(e) { res.status(500).json({ error: e.message }); }
 });
+} else {
+    app.post("/api/productos/:id/imagen", (req, res) => res.status(501).json({ error: "Subida de imágenes no disponible (multer/sharp no instalados)" }));
+}
 app.delete("/api/productos/:id/imagen", async (req, res) => {
     try {
         const prod = await dbGet("SELECT imagen FROM productos WHERE id=?", [req.params.id]);
@@ -964,9 +1143,33 @@ app.post("/api/ventas", async (req, res) => {
         }
         if (metodo_pago === 'Fiado') {
              if(!cliente_id) throw new Error("Debe seleccionar un cliente.");
-             const cli = await dbGet("SELECT nombre FROM clientes WHERE id = ?", [cliente_id]);
+             const cli = await dbGet("SELECT nombre, limite_credito FROM clientes WHERE id = ?", [cliente_id]);
              const deuda = total - pagoAnticipado;
+             // Validar límite de crédito
+             if (cli && cli.limite_credito > 0 && deuda > 0) {
+                 const deudaActual = await dbGet("SELECT COALESCE(SUM(monto), 0) as total FROM fiados WHERE cliente_id = ?", [cliente_id]);
+                 const nuevaDeuda = (deudaActual?.total || 0) + deuda;
+                 if (nuevaDeuda > cli.limite_credito) {
+                     throw new Error(`Límite de crédito excedido. Límite: $${cli.limite_credito.toFixed(2)}, Deuda actual: $${(deudaActual?.total || 0).toFixed(2)}, Nuevo fiado: $${deuda.toFixed(2)}`);
+                 }
+             }
              if(deuda > 0) await dbRun("INSERT INTO fiados (cliente, cliente_id, monto, descripcion) VALUES (?, ?, ?, ?)", [cli ? cli.nombre : "Desconocido", cliente_id, deuda, `Fiado Ticket ${ticket_id}`]);
+        }
+        // Acumular puntos de fidelización si el cliente está identificado
+        if (cliente_id && metodo_pago !== 'Fiado') {
+            try {
+                const puntosActivos = await dbGet("SELECT value FROM configuracion WHERE key='puntos_activos'");
+                if (puntosActivos?.value === '1') {
+                    const ptsPorPeso = await dbGet("SELECT value FROM configuracion WHERE key='puntos_por_peso'");
+                    const ratio = parseFloat(ptsPorPeso?.value) || 1;
+                    const puntosGanados = Math.floor(total / ratio); // 1 punto por cada $ratio
+                    if (puntosGanados > 0) {
+                        await dbRun("UPDATE clientes SET puntos = puntos + ? WHERE id = ?", [puntosGanados, cliente_id]);
+                        await dbRun("INSERT INTO puntos_historial (cliente_id, puntos, tipo, descripcion, ticket_id) VALUES (?,?,?,?,?)",
+                            [cliente_id, puntosGanados, 'compra', `Compra Ticket #${ticket_id} ($${total.toFixed(2)})`, ticket_id]);
+                    }
+                }
+            } catch(ptsErr) { console.error('[PUNTOS] Error acumulando puntos:', ptsErr.message); }
         }
         await dbRun("COMMIT");
         res.json({ success: true, ticket_id });

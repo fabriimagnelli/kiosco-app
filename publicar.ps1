@@ -26,7 +26,7 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
 # --- Paso 1: Verificar requisitos ---
-Write-Host "[1/7] Verificando requisitos..." -ForegroundColor Yellow
+Write-Host "[1/8] Verificando requisitos..." -ForegroundColor Yellow
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     Write-Host "  ERROR: Node.js no esta instalado." -ForegroundColor Red
@@ -105,9 +105,21 @@ if ($bumpType) {
     
     $newVersion = "$vMajor.$vMinor.$vPatch"
     
-    # Actualizar package.json
-    $packageJson.version = $newVersion
-    $packageJson | ConvertTo-Json -Depth 10 | Set-Content $packageJsonPath -Encoding UTF8
+    # Actualizar package.json usando Node.js (ConvertTo-Json de PowerShell corrompe caracteres especiales y escapes)
+    # IMPORTANTE: Convertir \ a / en PowerShell ANTES de pasar a Node, porque JS interpreta \U \F etc como escape sequences
+    $pkgPathFwd = $packageJsonPath -replace '\\', '/'
+    node -e "const fs=require('fs'); const pkg=JSON.parse(fs.readFileSync('$pkgPathFwd','utf-8')); pkg.version='$newVersion'; fs.writeFileSync('$pkgPathFwd', JSON.stringify(pkg,null,2)+'\n','utf-8');"
+    
+    # Esperar a que OneDrive sincronice el archivo
+    Start-Sleep -Milliseconds 500
+    
+    # Verificar que el bump se aplico correctamente
+    $checkVer = (node -e "const fs=require('fs'); const pkg=JSON.parse(fs.readFileSync('$pkgPathFwd','utf-8')); console.log(pkg.version);") | Select-Object -Last 1
+    $checkVer = $checkVer.Trim()
+    if ($checkVer -ne $newVersion) {
+        Write-Host "  ERROR: No se pudo actualizar la version (leido: '$checkVer', esperado: '$newVersion')" -ForegroundColor Red
+        exit 1
+    }
     
     Write-Host "  Bump: v$currentVersion -> v$newVersion ($bumpType)" -ForegroundColor Green
     $version = $newVersion
@@ -136,7 +148,26 @@ Write-Host ""
 Write-Host "[4/8] Preparando carpeta de build fuera de OneDrive..." -ForegroundColor Yellow
 
 if (Test-Path $BuildDir) {
-    Remove-Item $BuildDir -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host "  Limpiando build anterior..." -ForegroundColor Gray
+    # Intentar matar procesos que bloqueen archivos en temp
+    Get-Process | Where-Object { $_.Path -like "$BuildDir*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+    # Intentar borrar con reintentos
+    $retries = 3
+    for ($i = 1; $i -le $retries; $i++) {
+        Remove-Item $BuildDir -Recurse -Force -ErrorAction SilentlyContinue
+        if (-not (Test-Path $BuildDir)) { break }
+        Write-Host "    Reintentando limpieza ($i/$retries)..." -ForegroundColor Gray
+        Start-Sleep -Seconds 2
+    }
+    if (Test-Path $BuildDir) {
+        Write-Host "  ADVERTENCIA: No se pudo limpiar completamente $BuildDir" -ForegroundColor Yellow
+        # Limpiar al menos dist_electron para evitar archivos de version anterior
+        $oldDist = Join-Path $BuildDir "dist_electron"
+        if (Test-Path $oldDist) {
+            Remove-Item $oldDist -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null
 
@@ -147,7 +178,17 @@ if (-not (Test-Path "$BuildDir\package.json")) {
     Write-Host "  ERROR: No se pudo copiar el proyecto." -ForegroundColor Red
     exit 1
 }
-Write-Host "  Proyecto copiado OK" -ForegroundColor Green
+
+# Verificar que la version copiada sea correcta
+$tempPkgPathFwd = ("$BuildDir/package.json") -replace '\\', '/'
+$tempVersion = (node -e "const fs=require('fs'); const pkg=JSON.parse(fs.readFileSync('$tempPkgPathFwd','utf-8')); console.log(pkg.version);") | Select-Object -Last 1
+$tempVersion = $tempVersion.Trim()
+if ($tempVersion -ne $version) {
+    Write-Host "  ADVERTENCIA: Version en temp ($tempVersion) difiere de la esperada ($version)" -ForegroundColor Yellow
+    Write-Host "  Corrigiendo..." -ForegroundColor Gray
+    node -e "const fs=require('fs'); const pkg=JSON.parse(fs.readFileSync('$tempPkgPathFwd','utf-8')); pkg.version='$version'; fs.writeFileSync('$tempPkgPathFwd', JSON.stringify(pkg,null,2)+'\n','utf-8');"
+}
+Write-Host "  Proyecto copiado OK (v$version)" -ForegroundColor Green
 Write-Host ""
 
 # --- Paso 5: Buildear ---
@@ -206,14 +247,30 @@ Write-Host ""
 Write-Host "[6/8] Verificando archivos generados..." -ForegroundColor Yellow
 
 $distDir = Join-Path $BuildDir "dist_electron"
+Write-Host "  Buscando: 'SACWare Kiosco Setup $version.exe' en $distDir" -ForegroundColor Gray
+
+if (-not (Test-Path $distDir)) {
+    Write-Host "  ERROR: La carpeta dist_electron no existe en $BuildDir" -ForegroundColor Red
+    Write-Host "  Esto indica que electron-builder no genero salida." -ForegroundColor Yellow
+    Set-Location $ProjectDir
+    exit 1
+}
+
 $setupExe = Get-ChildItem $distDir -Filter "SACWare Kiosco Setup $version.exe" -ErrorAction SilentlyContinue
 $blockmap = Get-ChildItem $distDir -Filter "SACWare Kiosco Setup $version.exe.blockmap" -ErrorAction SilentlyContinue
 $latestYml = Join-Path $distDir "latest.yml"
 
 if (-not $setupExe) {
     Write-Host "  ERROR: No se genero el instalador .exe" -ForegroundColor Red
-    Write-Host "  Archivos encontrados:" -ForegroundColor Gray
-    Get-ChildItem $distDir -File | ForEach-Object { Write-Host "    $($_.Name)" -ForegroundColor Gray }
+    Write-Host "  Se esperaba: SACWare Kiosco Setup $version.exe" -ForegroundColor Yellow
+    Write-Host "  Archivos encontrados en $distDir`:" -ForegroundColor Gray
+    Get-ChildItem $distDir -File | ForEach-Object { Write-Host "    $($_.Name) ($([math]::Round($_.Length / 1MB, 1)) MB)" -ForegroundColor Gray }
+    Write-Host "" 
+    Write-Host "  POSIBLE CAUSA: La version del build no coincide con la esperada." -ForegroundColor Yellow
+    Write-Host "  Version esperada: $version" -ForegroundColor White
+    $diagPathFwd = ("$BuildDir/package.json") -replace '\\', '/'
+    $tempPkgVer2 = (node -e "const fs=require('fs'); const pkg=JSON.parse(fs.readFileSync('$diagPathFwd','utf-8')); console.log(pkg.version);") | Select-Object -Last 1
+    Write-Host "  Version en package.json temp: $tempPkgVer2" -ForegroundColor White
     Set-Location $ProjectDir
     exit 1
 }

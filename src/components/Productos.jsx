@@ -316,7 +316,7 @@ function Productos() {
   // =================== RENDER ===================
 
   return (
-    <div className="p-6 space-y-6 animate-in fade-in duration-500">
+    <div className="p-6 space-y-6 animate-in fade-in duration-500 h-full overflow-y-auto">
 
       {/* HEADER */}
       <div className="flex flex-col md:flex-row justify-between items-center gap-4">
@@ -372,7 +372,7 @@ function Productos() {
 
         {/* =============== FORMULARIO =============== */}
         <div className="lg:col-span-1">
-          <div className={`p-6 rounded-xl shadow-sm border sticky top-6 transition-all ${modoEdicion ? 'bg-purple-50 border-purple-200' : 'bg-white border-slate-200'}`}>
+          <div className={`p-6 rounded-xl shadow-sm border sticky top-6 max-h-[calc(100vh-5rem)] overflow-y-auto transition-all ${modoEdicion ? 'bg-purple-50 border-purple-200' : 'bg-white border-slate-200'}`}>
             <h3 className={`font-bold mb-4 flex items-center gap-2 ${modoEdicion ? 'text-purple-700' : 'text-slate-700'}`}>
               {modoEdicion ? <Edit size={20} /> : <Plus size={20} className="text-purple-500" />}
               {modoEdicion ? 'Editar Producto' : 'Nuevo Producto'}

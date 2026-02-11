@@ -1,6 +1,6 @@
 {
   "name": "sacware-kiosco",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Sistema de Gestión Comercial para Kioscos",
   "private": true,
   "main": "electron-main.js",
@@ -47,6 +47,7 @@
     ],
     "asarUnpack": [
       "node_modules/sqlite3/**",
+      "node_modules/sharp/**",
       "preload.js"
     ],
     "win": {
@@ -81,6 +82,8 @@
     "electron-updater": "^6.7.3",
     "express": "^4.22.1",
     "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
+    "sharp": "^0.34.5",
     "sqlite3": "^5.1.6"
   },
   "devDependencies": {
