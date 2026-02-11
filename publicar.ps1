@@ -60,16 +60,66 @@ Write-Host "  GitHub CLI autenticado OK" -ForegroundColor Green
 
 $env:GH_TOKEN = (gh auth token)
 
-# --- Paso 2: Leer version ---
+# --- Paso 2: Bump de version automatico ---
+Write-Host "[2/8] Gestion de version..." -ForegroundColor Yellow
+
 $packageJsonPath = Join-Path $ProjectDir "package.json"
 $packageJson = Get-Content $packageJsonPath -Raw | ConvertFrom-Json
-$version = $packageJson.version
+$currentVersion = $packageJson.version
 
-Write-Host "  Version a publicar: v$version" -ForegroundColor Cyan
+Write-Host "  Version actual: v$currentVersion" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  Selecciona el tipo de cambio:" -ForegroundColor White
+Write-Host "    [1] patch  (bug fixes, ajustes menores)   -> ej: 1.3.5 -> 1.3.6" -ForegroundColor Gray
+Write-Host "    [2] minor  (nuevas funciones)              -> ej: 1.3.5 -> 1.4.0" -ForegroundColor Gray  
+Write-Host "    [3] major  (cambios grandes/incompatibles) -> ej: 1.3.5 -> 2.0.0" -ForegroundColor Gray
+Write-Host "    [4] sin cambio (publicar con v$currentVersion)" -ForegroundColor Gray
+Write-Host ""
+
+$bumpChoice = Read-Host "  Opcion (1/2/3/4) [default=1]"
+if (-not $bumpChoice) { $bumpChoice = "1" }
+
+switch ($bumpChoice) {
+    "1" { $bumpType = "patch" }
+    "2" { $bumpType = "minor" }
+    "3" { $bumpType = "major" }
+    "4" { $bumpType = $null }
+    default { 
+        Write-Host "  Opcion invalida. Usando patch." -ForegroundColor Yellow
+        $bumpType = "patch"
+    }
+}
+
+if ($bumpType) {
+    # Calcular nueva version manualmente (sin npm version para evitar git tags)
+    $parts = $currentVersion.Split('.')
+    $vMajor = [int]$parts[0]
+    $vMinor = [int]$parts[1]
+    $vPatch = [int]$parts[2]
+    
+    switch ($bumpType) {
+        "patch" { $vPatch++ }
+        "minor" { $vMinor++; $vPatch = 0 }
+        "major" { $vMajor++; $vMinor = 0; $vPatch = 0 }
+    }
+    
+    $newVersion = "$vMajor.$vMinor.$vPatch"
+    
+    # Actualizar package.json
+    $packageJson.version = $newVersion
+    $packageJson | ConvertTo-Json -Depth 10 | Set-Content $packageJsonPath -Encoding UTF8
+    
+    Write-Host "  Bump: v$currentVersion -> v$newVersion ($bumpType)" -ForegroundColor Green
+    $version = $newVersion
+} else {
+    Write-Host "  Sin cambio de version: v$currentVersion" -ForegroundColor Green  
+    $version = $currentVersion
+}
+
 Write-Host ""
 
 # --- Paso 3: Cerrar procesos que bloquean ---
-Write-Host "[2/7] Cerrando procesos que bloquean archivos..." -ForegroundColor Yellow
+Write-Host "[3/8] Cerrando procesos que bloquean archivos..." -ForegroundColor Yellow
 
 @("SACWare Kiosco", "electron") | ForEach-Object {
     $p = Get-Process -Name $_ -ErrorAction SilentlyContinue
@@ -83,7 +133,7 @@ Write-Host "  OK" -ForegroundColor Green
 Write-Host ""
 
 # --- Paso 4: Copiar proyecto a C:\temp (fuera de OneDrive) ---
-Write-Host "[3/7] Preparando carpeta de build fuera de OneDrive..." -ForegroundColor Yellow
+Write-Host "[4/8] Preparando carpeta de build fuera de OneDrive..." -ForegroundColor Yellow
 
 if (Test-Path $BuildDir) {
     Remove-Item $BuildDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -101,7 +151,7 @@ Write-Host "  Proyecto copiado OK" -ForegroundColor Green
 Write-Host ""
 
 # --- Paso 5: Buildear ---
-Write-Host "[4/7] Buildeando aplicacion (1-3 minutos)..." -ForegroundColor Yellow
+Write-Host "[5/8] Buildeando aplicacion (1-3 minutos)..." -ForegroundColor Yellow
 Write-Host ""
 
 Set-Location $BuildDir
@@ -153,7 +203,7 @@ Write-Host "  [Electron] OK" -ForegroundColor Green
 Write-Host ""
 
 # --- Paso 6: Verificar archivos generados ---
-Write-Host "[5/7] Verificando archivos generados..." -ForegroundColor Yellow
+Write-Host "[6/8] Verificando archivos generados..." -ForegroundColor Yellow
 
 $distDir = Join-Path $BuildDir "dist_electron"
 $setupExe = Get-ChildItem $distDir -Filter "SACWare Kiosco Setup $version.exe" -ErrorAction SilentlyContinue
@@ -191,7 +241,7 @@ if ($SinPublicar) {
 }
 
 # --- Paso 7: Git commit + tag + push ---
-Write-Host "[6/7] Subiendo cambios a Git..." -ForegroundColor Yellow
+Write-Host "[7/8] Subiendo cambios a Git..." -ForegroundColor Yellow
 
 Set-Location $ProjectDir
 $ErrorActionPreference = "Continue"
@@ -203,13 +253,24 @@ if ($changes) {
 } else {
     Write-Host "  Sin cambios nuevos" -ForegroundColor Green
 }
+
+# Crear git tag para la version
+$ErrorActionPreference = "Continue"
+cmd /c "git tag -a `"v$version`" -m `"Release v$version`" 2>&1" | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "  Tag v$version creado" -ForegroundColor Green
+} else {
+    Write-Host "  Tag v$version ya existia (omitido)" -ForegroundColor Gray
+}
+
 cmd /c "git push origin main 2>&1" | Out-Null
+cmd /c "git push origin --tags 2>&1" | Out-Null
 $ErrorActionPreference = "Stop"
-Write-Host "  Push OK" -ForegroundColor Green
+Write-Host "  Push OK (codigo + tags)" -ForegroundColor Green
 Write-Host ""
 
 # --- Paso 8: Verificar release en GitHub ---
-Write-Host "[7/7] Verificando release en GitHub..." -ForegroundColor Yellow
+Write-Host "[8/8] Verificando release en GitHub..." -ForegroundColor Yellow
 
 # electron-builder --publish always ya creo la release y subio los archivos
 # Solo verificamos que exista y editamos las notas si se proporcionaron

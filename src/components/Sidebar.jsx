@@ -156,7 +156,7 @@ function Sidebar({ isOpen, toggleSidebar }) {
             <p className="text-xs text-slate-500">{rol === 'admin' ? 'Administrador' : rol === 'supervisor' ? 'Supervisor' : 'Cajero'}</p>
           </div>
         </div>
-        
+        <p className={`text-[10px] text-slate-600 text-center transition-all duration-300 ${isOpen ? "opacity-100" : "opacity-0"}`}>v{__APP_VERSION__}</p>
       </div>
 
     </div>

@@ -397,6 +397,40 @@ function Ventas() {
     (p.codigo_barras && p.codigo_barras.includes(busqueda))
   );
 
+  // Buscar por código de barras (incluye secundarios) al presionar Enter
+  const buscarPorCodigo = async (codigo) => {
+    if (!codigo || codigo.length < 3) return;
+    try {
+      const res = await apiFetch(`/api/buscar_codigo/${encodeURIComponent(codigo.trim())}`);
+      const data = await res.json();
+      if (data && data.id) {
+        const tipo = data.tipo_item === 'cigarrillo' ? 'Cigarrillo' : data.tipo_item === 'promo' ? 'Promo' : 'Producto';
+        agregarAlCarrito({ ...data, tipo });
+        setBusqueda("");
+        return true;
+      }
+    } catch(e) { /* silencioso */ }
+    return false;
+  };
+
+  const handleBusquedaKeyDown = async (e) => {
+    if (e.key === 'Enter' && busqueda.trim()) {
+      e.preventDefault();
+      // Si hay exactamente 1 resultado en filtro local, agregarlo
+      if (productosFiltrados.length === 1) {
+        agregarAlCarrito(productosFiltrados[0]);
+        setBusqueda("");
+        return;
+      }
+      // Si no, buscar por código secundario en el servidor
+      const found = await buscarPorCodigo(busqueda.trim());
+      if (!found && productosFiltrados.length > 0) {
+        agregarAlCarrito(productosFiltrados[0]);
+        setBusqueda("");
+      }
+    }
+  };
+
   const subtotal = carrito.reduce((acc, item) => {
     const bruto = item.precio * item.cantidad;
     const descItem = calcularDescuentoItem(item);
@@ -428,6 +462,7 @@ function Ventas() {
             placeholder="Buscar producto o escanear código..." 
             value={busqueda}
             onChange={e => setBusqueda(e.target.value)}
+            onKeyDown={handleBusquedaKeyDown}
             autoFocus
           />
         </div>

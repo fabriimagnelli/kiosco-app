@@ -7,6 +7,8 @@ const { exec } = require("child_process");
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const multer = require("multer");
+const sharp = require("sharp");
 
 const app = express();
 const port = 3001;
@@ -18,12 +20,28 @@ const JWT_EXPIRATION = "24h";
 app.use(cors());
 app.use(express.json());
 
+// --- CONFIGURACIÓN DE UPLOADS (IMÁGENES DE PRODUCTOS) ---
+const uploadsPath = process.env.IS_ELECTRON === "true" && process.env.USER_DATA_PATH
+    ? path.join(process.env.USER_DATA_PATH, "uploads")
+    : path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadsPath)) fs.mkdirSync(uploadsPath, { recursive: true });
+
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype.startsWith("image/")) cb(null, true);
+        else cb(new Error("Solo se permiten imágenes"), false);
+    }
+});
+
 // --- CONFIGURACIÓN DE ARCHIVOS ESTÁTICOS ---
 const publicPath = process.env.SERVER_ROOT 
     ? path.join(process.env.SERVER_ROOT, "public") 
     : path.join(__dirname, "public");
 console.log("Sirviendo frontend desde:", publicPath);
 app.use(express.static(publicPath));
+app.use("/uploads", express.static(uploadsPath));
 
 // --- CONFIGURACIÓN BASE DE DATOS ---
 let dbPath;
@@ -103,8 +121,23 @@ const initDB = async () => {
         await dbRun(`CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL UNIQUE, password TEXT NOT NULL, rol TEXT DEFAULT 'cajero', activo INTEGER DEFAULT 1)`);
         
         await dbRun(`CREATE TABLE IF NOT EXISTS configuracion (key TEXT PRIMARY KEY, value TEXT)`);
-        const version = await dbGet("SELECT value FROM configuracion WHERE key = 'sistema_version'");
-        if (!version) await dbRun("INSERT INTO configuracion (key, value) VALUES ('sistema_version', '1.0.0')");
+        
+        // Sincronizar version de package.json a la DB automaticamente
+        const isElectron = process.env.IS_ELECTRON === 'true';
+        // En Electron empaquetado: package.json está en resources/app.asar/
+        // En desarrollo: está en la raíz del proyecto (../package.json desde server/)
+        const pkgSearchPaths = isElectron
+            ? [path.join(process.resourcesPath || '', 'app.asar', 'package.json'), path.join(__dirname, '..', 'package.json')]
+            : [path.join(__dirname, '..', 'package.json'), path.join(__dirname, 'package.json')];
+        let appVersion = '1.0.0';
+        for (const p of pkgSearchPaths) {
+            try {
+                const pkgData = JSON.parse(fs.readFileSync(p, 'utf-8'));
+                if (pkgData.version) { appVersion = pkgData.version; break; }
+            } catch(e) { /* intentar siguiente ruta */ }
+        }
+        await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('sistema_version', ?)", [appVersion]);
+        console.log(`[DB] Version del sistema sincronizada: v${appVersion}`);
 
         // Migraciones de columnas
         const ensureColumn = async (table, column, definition) => { try { await dbRun(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`); } catch (e) { } };
@@ -146,6 +179,33 @@ const initDB = async () => {
         await ensureColumn("ventas", "descuento", "REAL DEFAULT 0");
         await ensureColumn("ventas", "notas", "TEXT DEFAULT ''");
         await ensureColumn("ventas", "descuento_item", "REAL DEFAULT 0");
+
+        // Nuevas columnas para productos (imagen, unidad de medida)
+        await ensureColumn("productos", "imagen", "TEXT DEFAULT ''");
+        await ensureColumn("productos", "unidad_medida", "TEXT DEFAULT 'unidad'");
+
+        // Tabla de códigos de barras múltiples
+        await dbRun(`CREATE TABLE IF NOT EXISTS codigos_barras (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            producto_id INTEGER NOT NULL,
+            tipo_producto TEXT DEFAULT 'producto',
+            codigo TEXT NOT NULL,
+            descripcion TEXT DEFAULT '',
+            UNIQUE(codigo)
+        )`);
+
+        // Tabla de historial de precios
+        await dbRun(`CREATE TABLE IF NOT EXISTS historial_precios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            producto_id INTEGER NOT NULL,
+            tipo_producto TEXT DEFAULT 'producto',
+            precio_anterior REAL,
+            precio_nuevo REAL,
+            costo_anterior REAL,
+            costo_nuevo REAL,
+            fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+            usuario TEXT DEFAULT ''
+        )`);
 
         // Tabla de devoluciones parciales
         await dbRun(`CREATE TABLE IF NOT EXISTS devoluciones (
@@ -256,8 +316,24 @@ app.delete("/api/system/reset-transactions", async (req, res) => {
 // SISTEMA ACTUALIZACIÓN 
 app.get("/api/system/version", async (req, res) => {
     try {
-        const ver = await dbGet("SELECT value FROM configuracion WHERE key = 'sistema_version'");
-        res.json({ version: ver ? ver.value : '1.0.0' });
+        // Leer version desde package.json (fuente unica de verdad)
+        const isElectron = process.env.IS_ELECTRON === 'true';
+        const pkgSearchPaths = isElectron
+            ? [path.join(process.resourcesPath || '', 'app.asar', 'package.json'), path.join(__dirname, '..', 'package.json')]
+            : [path.join(__dirname, '..', 'package.json'), path.join(__dirname, 'package.json')];
+        let version = null;
+        for (const p of pkgSearchPaths) {
+            try {
+                const pkgData = JSON.parse(fs.readFileSync(p, 'utf-8'));
+                if (pkgData.version) { version = pkgData.version; break; }
+            } catch(e) { /* intentar siguiente */ }
+        }
+        if (!version) {
+            // Fallback a la DB
+            const ver = await dbGet("SELECT value FROM configuracion WHERE key = 'sistema_version'");
+            version = ver ? ver.value : '1.0.0';
+        }
+        res.json({ version });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -646,9 +722,161 @@ app.post("/api/movimientos_proveedores", async (req, res) => {
 app.delete("/api/movimientos_proveedores/:id", (req, res) => { db.run("DELETE FROM movimientos_proveedores WHERE id=?", [req.params.id], function(err) { if(err) res.status(500).json({error: err.message}); else res.json({deleted: this.changes}); }); });
 
 app.get("/api/productos", (req, res) => { db.all("SELECT * FROM productos ORDER BY nombre", [], (err, rows) => { if (err) res.status(500).json({ error: err.message }); else res.json(rows); }); });
-app.post("/api/productos", (req, res) => { db.run("INSERT INTO productos (nombre, precio, costo, stock, codigo_barras, categoria, stock_minimo) VALUES (?,?,?,?,?,?,?)", [req.body.nombre, req.body.precio, req.body.costo, req.body.stock, req.body.codigo_barras, req.body.categoria || 'General', req.body.stock_minimo || 5], function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ id: this.lastID }); }); });
-app.put("/api/productos/:id", (req, res) => { db.run("UPDATE productos SET nombre=?, precio=?, costo=?, stock=?, codigo_barras=?, categoria=?, stock_minimo=? WHERE id=?", [req.body.nombre, req.body.precio, req.body.costo, req.body.stock, req.body.codigo_barras, req.body.categoria, req.body.stock_minimo || 5, req.params.id], function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ updated: this.changes }); }); });
-app.delete("/api/productos/:id", (req, res) => { db.run("DELETE FROM productos WHERE id=?", req.params.id, function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ deleted: this.changes }); }); });
+app.post("/api/productos", (req, res) => { db.run("INSERT INTO productos (nombre, precio, costo, stock, codigo_barras, categoria, stock_minimo, unidad_medida) VALUES (?,?,?,?,?,?,?,?)", [req.body.nombre, req.body.precio, req.body.costo, req.body.stock, req.body.codigo_barras, req.body.categoria || 'General', req.body.stock_minimo || 5, req.body.unidad_medida || 'unidad'], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    const prodId = this.lastID;
+    // Registrar precio inicial en historial
+    db.run("INSERT INTO historial_precios (producto_id, tipo_producto, precio_anterior, precio_nuevo, costo_anterior, costo_nuevo) VALUES (?,?,?,?,?,?)",
+        [prodId, 'producto', 0, req.body.precio, 0, req.body.costo || 0]);
+    res.json({ id: prodId });
+}); });
+
+// --- EXPORTAR PRODUCTOS CSV --- (antes de rutas con :id)
+app.get("/api/productos/exportar/csv", async (req, res) => {
+    try {
+        const productos = await dbAll("SELECT nombre, precio, costo, stock, codigo_barras, categoria, stock_minimo, unidad_medida FROM productos ORDER BY nombre");
+        const header = "nombre;precio;costo;stock;codigo_barras;categoria;stock_minimo;unidad_medida";
+        const lines = productos.map(p => `"${p.nombre}";${p.precio};${p.costo};${p.stock};"${p.codigo_barras || ''}";"${p.categoria}";"${p.stock_minimo}";"${p.unidad_medida || 'unidad'}"`);
+        const csv = [header, ...lines].join("\n");
+        res.setHeader("Content-Type", "text/csv; charset=utf-8");
+        res.setHeader("Content-Disposition", `attachment; filename=productos_${new Date().toISOString().slice(0,10)}.csv`);
+        res.send("\uFEFF" + csv); // BOM para Excel
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put("/api/productos/:id", async (req, res) => {
+    try {
+        // Obtener precios actuales para historial
+        const actual = await dbGet("SELECT precio, costo FROM productos WHERE id=?", [req.params.id]);
+        const precioNuevo = parseFloat(req.body.precio);
+        const costoNuevo = parseFloat(req.body.costo) || 0;
+        
+        // Registrar cambio de precio si hubo diferencia
+        if (actual && (actual.precio !== precioNuevo || actual.costo !== costoNuevo)) {
+            await dbRun("INSERT INTO historial_precios (producto_id, tipo_producto, precio_anterior, precio_nuevo, costo_anterior, costo_nuevo, usuario) VALUES (?,?,?,?,?,?,?)",
+                [req.params.id, 'producto', actual.precio, precioNuevo, actual.costo, costoNuevo, req.body.usuario || '']);
+        }
+        
+        await dbRun("UPDATE productos SET nombre=?, precio=?, costo=?, stock=?, codigo_barras=?, categoria=?, stock_minimo=?, unidad_medida=? WHERE id=?",
+            [req.body.nombre, precioNuevo, costoNuevo, req.body.stock, req.body.codigo_barras, req.body.categoria, req.body.stock_minimo || 5, req.body.unidad_medida || 'unidad', req.params.id]);
+        res.json({ updated: 1 });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete("/api/productos/:id", async (req, res) => {
+    try {
+        // Limpiar imagen si existe
+        const prod = await dbGet("SELECT imagen FROM productos WHERE id=?", [req.params.id]);
+        if (prod && prod.imagen) {
+            const imgPath = path.join(uploadsPath, prod.imagen);
+            if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
+        }
+        // Limpiar códigos de barras adicionales  
+        await dbRun("DELETE FROM codigos_barras WHERE producto_id=? AND tipo_producto='producto'", [req.params.id]);
+        // Limpiar historial de precios
+        await dbRun("DELETE FROM historial_precios WHERE producto_id=? AND tipo_producto='producto'", [req.params.id]);
+        await dbRun("DELETE FROM productos WHERE id=?", [req.params.id]);
+        res.json({ deleted: 1 });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// --- IMAGEN DE PRODUCTO ---
+app.post("/api/productos/:id/imagen", upload.single("imagen"), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: "No se envió imagen" });
+        const filename = `prod_${req.params.id}_${Date.now()}.webp`;
+        const outputPath = path.join(uploadsPath, filename);
+        
+        // Redimensionar y convertir a webp con sharp
+        await sharp(req.file.buffer)
+            .resize(400, 400, { fit: 'cover', withoutEnlargement: true })
+            .webp({ quality: 80 })
+            .toFile(outputPath);
+        
+        // Borrar imagen anterior si existe
+        const prod = await dbGet("SELECT imagen FROM productos WHERE id=?", [req.params.id]);
+        if (prod && prod.imagen) {
+            const oldPath = path.join(uploadsPath, prod.imagen);
+            if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+        }
+        
+        await dbRun("UPDATE productos SET imagen=? WHERE id=?", [filename, req.params.id]);
+        res.json({ success: true, imagen: filename });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete("/api/productos/:id/imagen", async (req, res) => {
+    try {
+        const prod = await dbGet("SELECT imagen FROM productos WHERE id=?", [req.params.id]);
+        if (prod && prod.imagen) {
+            const imgPath = path.join(uploadsPath, prod.imagen);
+            if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
+        }
+        await dbRun("UPDATE productos SET imagen='' WHERE id=?", [req.params.id]);
+        res.json({ success: true });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// --- CÓDIGOS DE BARRAS MÚLTIPLES ---
+app.get("/api/productos/:id/codigos", (req, res) => {
+    db.all("SELECT * FROM codigos_barras WHERE producto_id=? AND tipo_producto='producto' ORDER BY id", [req.params.id], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+    });
+});
+app.post("/api/productos/:id/codigos", async (req, res) => {
+    try {
+        const { codigo, descripcion } = req.body;
+        if (!codigo || !codigo.trim()) return res.status(400).json({ error: "Código requerido" });
+        // Verificar que no exista en productos ni en codigos_barras
+        const existeProd = await dbGet("SELECT id, nombre FROM productos WHERE codigo_barras=?", [codigo.trim()]);
+        const existeCig = await dbGet("SELECT id, nombre FROM cigarrillos WHERE codigo_barras=?", [codigo.trim()]);
+        const existeCB = await dbGet("SELECT cb.id, p.nombre FROM codigos_barras cb JOIN productos p ON cb.producto_id=p.id WHERE cb.codigo=?", [codigo.trim()]);
+        if (existeProd) return res.status(400).json({ error: `Código ya asignado a "${existeProd.nombre}"` });
+        if (existeCig) return res.status(400).json({ error: `Código ya asignado al cigarrillo "${existeCig.nombre}"` });
+        if (existeCB) return res.status(400).json({ error: `Código ya asignado como secundario de "${existeCB.nombre}"` });
+        
+        await dbRun("INSERT INTO codigos_barras (producto_id, tipo_producto, codigo, descripcion) VALUES (?,?,?,?)",
+            [req.params.id, 'producto', codigo.trim(), descripcion || '']);
+        res.json({ success: true });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete("/api/codigos_barras/:id", (req, res) => {
+    db.run("DELETE FROM codigos_barras WHERE id=?", [req.params.id], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ deleted: this.changes });
+    });
+});
+
+// --- HISTORIAL DE PRECIOS ---
+app.get("/api/productos/:id/historial_precios", (req, res) => {
+    db.all("SELECT * FROM historial_precios WHERE producto_id=? AND tipo_producto='producto' ORDER BY fecha DESC LIMIT 50", [req.params.id], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+    });
+});
+
+// --- BUSCAR POR CÓDIGO DE BARRAS (busca en principal + secundarios) ---
+app.get("/api/buscar_codigo/:codigo", async (req, res) => {
+    try {
+        const codigo = req.params.codigo.trim();
+        // 1. Buscar en productos.codigo_barras
+        let prod = await dbGet("SELECT *, 'producto' as tipo_item FROM productos WHERE codigo_barras=?", [codigo]);
+        if (prod) return res.json(prod);
+        // 2. Buscar en cigarrillos.codigo_barras
+        let cig = await dbGet("SELECT *, 'cigarrillo' as tipo_item FROM cigarrillos WHERE codigo_barras=?", [codigo]);
+        if (cig) return res.json(cig);
+        // 3. Buscar en promos.codigo_barras
+        let promo = await dbGet("SELECT *, 'promo' as tipo_item FROM promos WHERE codigo_barras=?", [codigo]);
+        if (promo) return res.json(promo);
+        // 4. Buscar en codigos_barras (secundarios)
+        const cb = await dbGet("SELECT producto_id, tipo_producto FROM codigos_barras WHERE codigo=?", [codigo]);
+        if (cb) {
+            const tabla = cb.tipo_producto === 'cigarrillo' ? 'cigarrillos' : 'productos';
+            const item = await dbGet(`SELECT *, '${cb.tipo_producto}' as tipo_item FROM ${tabla} WHERE id=?`, [cb.producto_id]);
+            if (item) return res.json(item);
+        }
+        res.json(null);
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
 
 app.get("/api/categorias", (req, res) => { db.all("SELECT DISTINCT categoria FROM productos WHERE categoria IS NOT NULL AND categoria != '' ORDER BY categoria", [], (err, rows) => { if(err) return res.status(500).json({error: err.message}); res.json(rows.map(r => r.categoria)); }); });
 app.delete("/api/categorias/:nombre", (req, res) => {
