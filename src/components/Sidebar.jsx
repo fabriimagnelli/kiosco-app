@@ -64,11 +64,6 @@ function Sidebar({ isOpen, toggleSidebar }) {
           {isOpen && <span className="ml-auto text-[10px] bg-slate-700/50 px-1.5 py-0.5 rounded text-slate-400">F2</span>}
         </Link>
 
-        <Link to="/apertura" className={`${btnBase} ${isActive("/apertura") ? btnActive : btnInactive}`} title="Apertura de Caja">
-          <LockOpen size={20} className="flex-shrink-0" />
-          <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Apertura</span>
-        </Link>
-
         <Link to="/cierre" className={`${btnBase} ${isActive("/cierre") ? btnActive : btnInactive}`} title="Cierre (F3)">
           <Archive size={20} className="flex-shrink-0" />
           <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Cierre</span>
