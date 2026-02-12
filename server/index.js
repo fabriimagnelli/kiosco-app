@@ -271,6 +271,42 @@ const initDB = async () => {
         await ensureColumn("caja_diaria", "caja_id", "INTEGER DEFAULT 1");
         await ensureColumn("aperturas_caja", "caja_id", "INTEGER DEFAULT 1");
 
+        // 33. Órdenes de compra a proveedores
+        await dbRun(`CREATE TABLE IF NOT EXISTS ordenes_compra (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            proveedor_id INTEGER NOT NULL,
+            estado TEXT DEFAULT 'pendiente',
+            observacion TEXT DEFAULT '',
+            total REAL DEFAULT 0,
+            fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
+            fecha_entrega TEXT DEFAULT '',
+            fecha_recibido TEXT DEFAULT '',
+            recibido_por TEXT DEFAULT ''
+        )`);
+        await dbRun(`CREATE TABLE IF NOT EXISTS ordenes_compra_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            orden_id INTEGER NOT NULL,
+            producto_id INTEGER,
+            tipo_producto TEXT DEFAULT 'producto',
+            nombre TEXT NOT NULL,
+            cantidad INTEGER NOT NULL,
+            costo_unitario REAL DEFAULT 0,
+            cantidad_recibida INTEGER DEFAULT 0
+        )`);
+
+        // 34. Precio de costo por proveedor
+        await dbRun(`CREATE TABLE IF NOT EXISTS producto_proveedor (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            producto_id INTEGER NOT NULL,
+            tipo_producto TEXT DEFAULT 'producto',
+            proveedor_id INTEGER NOT NULL,
+            costo REAL DEFAULT 0,
+            codigo_proveedor TEXT DEFAULT '',
+            es_principal INTEGER DEFAULT 0,
+            ultima_compra TEXT DEFAULT '',
+            UNIQUE(producto_id, tipo_producto, proveedor_id)
+        )`);
+
         // 26. Conciliación bancaria
         await dbRun(`CREATE TABLE IF NOT EXISTS conciliacion_bancaria (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -426,7 +462,26 @@ app.get("/api/dashboard", async (req, res) => {
         const gastosHoy = await dbGet("SELECT SUM(monto) as total FROM gastos WHERE date(fecha) = date('now', 'localtime')");
         const prodBajo = await dbAll("SELECT nombre, stock, stock_minimo FROM productos WHERE stock <= COALESCE(stock_minimo, 5)");
         const cigBajo = await dbAll("SELECT nombre, stock, stock_minimo FROM cigarrillos WHERE stock <= COALESCE(stock_minimo, 5)");
-        res.json({ ventas_hoy: ventasHoy.total || 0, tickets_hoy: ventasHoy.tickets || 0, gastos_hoy: gastosHoy.total || 0, bajo_stock: [...prodBajo, ...cigBajo] });
+
+        // 35. Proveedores que visitan hoy
+        const diasSemana = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+        const hoyDia = diasSemana[new Date().getDay()];
+        const visitasHoy = await dbAll("SELECT id, nombre, telefono, rubro FROM proveedores WHERE dia_visita = ?", [hoyDia]);
+
+        // Órdenes de compra pendientes
+        const ordenesPendientes = await dbGet("SELECT COUNT(*) as total FROM ordenes_compra WHERE estado = 'pendiente' OR estado = 'parcial'");
+
+        // 36. Proveedores con mayor deuda
+        const topDeudas = await dbAll(`
+            SELECT p.id, p.nombre, COALESCE(SUM(m.monto), 0) as saldo
+            FROM proveedores p
+            LEFT JOIN movimientos_proveedores m ON m.proveedor_id = p.id
+            GROUP BY p.id
+            HAVING saldo > 0
+            ORDER BY saldo DESC LIMIT 5
+        `);
+
+        res.json({ ventas_hoy: ventasHoy.total || 0, tickets_hoy: ventasHoy.tickets || 0, gastos_hoy: gastosHoy.total || 0, bajo_stock: [...prodBajo, ...cigBajo], visitas_hoy: visitasHoy, ordenes_pendientes: ordenesPendientes?.total || 0, top_deudas_proveedores: topDeudas });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1270,6 +1325,196 @@ app.post("/api/movimientos_proveedores", async (req, res) => {
     }
 });
 app.delete("/api/movimientos_proveedores/:id", (req, res) => { db.run("DELETE FROM movimientos_proveedores WHERE id=?", [req.params.id], function(err) { if(err) res.status(500).json({error: err.message}); else res.json({deleted: this.changes}); }); });
+
+// === 33. ÓRDENES DE COMPRA ===
+app.get("/api/ordenes_compra", async (req, res) => {
+    try {
+        const { estado, proveedor_id } = req.query;
+        let sql = `SELECT o.*, p.nombre as proveedor_nombre FROM ordenes_compra o JOIN proveedores p ON o.proveedor_id = p.id`;
+        const params = [];
+        const where = [];
+        if (estado) { where.push("o.estado = ?"); params.push(estado); }
+        if (proveedor_id) { where.push("o.proveedor_id = ?"); params.push(proveedor_id); }
+        if (where.length) sql += " WHERE " + where.join(" AND ");
+        sql += " ORDER BY o.fecha_creacion DESC";
+        const ordenes = await dbAll(sql, params);
+        res.json(ordenes);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/api/ordenes_compra/:id", async (req, res) => {
+    try {
+        const orden = await dbGet(`SELECT o.*, p.nombre as proveedor_nombre FROM ordenes_compra o JOIN proveedores p ON o.proveedor_id = p.id WHERE o.id = ?`, [req.params.id]);
+        if (!orden) return res.status(404).json({ error: "Orden no encontrada" });
+        const items = await dbAll("SELECT * FROM ordenes_compra_items WHERE orden_id = ?", [req.params.id]);
+        res.json({ ...orden, items });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/ordenes_compra", async (req, res) => {
+    try {
+        const { proveedor_id, observacion, fecha_entrega, items } = req.body;
+        if (!proveedor_id || !items || !items.length) return res.status(400).json({ error: "Proveedor e items requeridos" });
+        const total = items.reduce((s, i) => s + (i.cantidad * i.costo_unitario), 0);
+        await dbRun("BEGIN TRANSACTION");
+        const result = await dbRun("INSERT INTO ordenes_compra (proveedor_id, observacion, total, fecha_entrega) VALUES (?,?,?,?)",
+            [proveedor_id, observacion || '', total, fecha_entrega || '']);
+        const ordenId = result.lastID;
+        for (const item of items) {
+            await dbRun("INSERT INTO ordenes_compra_items (orden_id, producto_id, tipo_producto, nombre, cantidad, costo_unitario) VALUES (?,?,?,?,?,?)",
+                [ordenId, item.producto_id || null, item.tipo_producto || 'producto', item.nombre, item.cantidad, item.costo_unitario || 0]);
+        }
+        await dbRun("COMMIT");
+        res.json({ success: true, id: ordenId });
+    } catch (e) { await dbRun("ROLLBACK"); res.status(500).json({ error: e.message }); }
+});
+
+app.put("/api/ordenes_compra/:id", async (req, res) => {
+    try {
+        const { estado, observacion, fecha_entrega, items } = req.body;
+        if (estado) await dbRun("UPDATE ordenes_compra SET estado=? WHERE id=?", [estado, req.params.id]);
+        if (observacion !== undefined) await dbRun("UPDATE ordenes_compra SET observacion=? WHERE id=?", [observacion, req.params.id]);
+        if (fecha_entrega !== undefined) await dbRun("UPDATE ordenes_compra SET fecha_entrega=? WHERE id=?", [fecha_entrega, req.params.id]);
+        if (items && items.length) {
+            const total = items.reduce((s, i) => s + (i.cantidad * i.costo_unitario), 0);
+            await dbRun("DELETE FROM ordenes_compra_items WHERE orden_id=?", [req.params.id]);
+            for (const item of items) {
+                await dbRun("INSERT INTO ordenes_compra_items (orden_id, producto_id, tipo_producto, nombre, cantidad, costo_unitario) VALUES (?,?,?,?,?,?)",
+                    [req.params.id, item.producto_id || null, item.tipo_producto || 'producto', item.nombre, item.cantidad, item.costo_unitario || 0]);
+            }
+            await dbRun("UPDATE ordenes_compra SET total=? WHERE id=?", [total, req.params.id]);
+        }
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Recibir orden (actualiza stock, registra movimiento proveedor, actualiza costos)
+app.post("/api/ordenes_compra/:id/recibir", async (req, res) => {
+    try {
+        const { items_recibidos, observacion } = req.body;
+        const orden = await dbGet("SELECT * FROM ordenes_compra WHERE id=?", [req.params.id]);
+        if (!orden) return res.status(404).json({ error: "Orden no encontrada" });
+        if (orden.estado === 'recibido') return res.status(400).json({ error: "Orden ya fue recibida" });
+        await dbRun("BEGIN TRANSACTION");
+        let totalRecibido = 0;
+        for (const item of items_recibidos) {
+            const cantRecibida = item.cantidad_recibida || item.cantidad;
+            totalRecibido += cantRecibida * (item.costo_unitario || 0);
+            await dbRun("UPDATE ordenes_compra_items SET cantidad_recibida=? WHERE id=?", [cantRecibida, item.id]);
+            // Actualizar stock del producto
+            if (item.producto_id) {
+                const tabla = item.tipo_producto === 'cigarrillo' ? 'cigarrillos' : 'productos';
+                await dbRun(`UPDATE ${tabla} SET stock = stock + ? WHERE id = ?`, [cantRecibida, item.producto_id]);
+                // Actualizar costo si cambió
+                if (item.costo_unitario > 0) {
+                    await dbRun(`UPDATE ${tabla} SET costo = ? WHERE id = ?`, [item.costo_unitario, item.producto_id]);
+                }
+            }
+        }
+        // Verificar si todos los items fueron recibidos completos
+        const itemsOrden = await dbAll("SELECT cantidad, cantidad_recibida FROM ordenes_compra_items WHERE orden_id=?", [req.params.id]);
+        const todosCompletos = itemsOrden.every(i => i.cantidad_recibida >= i.cantidad);
+        const nuevoEstado = todosCompletos ? 'recibido' : 'parcial';
+        await dbRun("UPDATE ordenes_compra SET estado=?, fecha_recibido=datetime('now','localtime') WHERE id=?", [nuevoEstado, req.params.id]);
+        // Registrar movimiento como deuda con proveedor
+        if (totalRecibido > 0) {
+            await dbRun("INSERT INTO movimientos_proveedores (proveedor_id, monto, descripcion, metodo_pago) VALUES (?,?,?,?)",
+                [orden.proveedor_id, totalRecibido, `Orden #${req.params.id} - ${observacion || 'Recepción de mercadería'}`, 'Cuenta Corriente']);
+        }
+        await dbRun("COMMIT");
+        res.json({ success: true, estado: nuevoEstado, totalRecibido });
+    } catch (e) { await dbRun("ROLLBACK"); res.status(500).json({ error: e.message }); }
+});
+
+app.delete("/api/ordenes_compra/:id", async (req, res) => {
+    try {
+        await dbRun("DELETE FROM ordenes_compra_items WHERE orden_id=?", [req.params.id]);
+        await dbRun("DELETE FROM ordenes_compra WHERE id=?", [req.params.id]);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// === 34. PRECIO DE COSTO POR PROVEEDOR ===
+app.get("/api/producto_proveedor/:producto_id", async (req, res) => {
+    try {
+        const { tipo } = req.query;
+        const rows = await dbAll(`
+            SELECT pp.*, p.nombre as proveedor_nombre
+            FROM producto_proveedor pp
+            JOIN proveedores p ON pp.proveedor_id = p.id
+            WHERE pp.producto_id = ? AND pp.tipo_producto = ?
+            ORDER BY pp.es_principal DESC, pp.costo ASC
+        `, [req.params.producto_id, tipo || 'producto']);
+        res.json(rows);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/producto_proveedor", async (req, res) => {
+    try {
+        const { producto_id, tipo_producto, proveedor_id, costo, codigo_proveedor, es_principal } = req.body;
+        // Si es principal, quitar principal de los demás
+        if (es_principal) {
+            await dbRun("UPDATE producto_proveedor SET es_principal=0 WHERE producto_id=? AND tipo_producto=?", [producto_id, tipo_producto || 'producto']);
+        }
+        await dbRun(`INSERT OR REPLACE INTO producto_proveedor (producto_id, tipo_producto, proveedor_id, costo, codigo_proveedor, es_principal, ultima_compra)
+            VALUES (?,?,?,?,?,?,datetime('now','localtime'))`,
+            [producto_id, tipo_producto || 'producto', proveedor_id, costo, codigo_proveedor || '', es_principal ? 1 : 0]);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete("/api/producto_proveedor/:id", async (req, res) => {
+    try {
+        await dbRun("DELETE FROM producto_proveedor WHERE id=?", [req.params.id]);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// === 35. CALENDARIO DE VISITAS ===
+app.get("/api/proveedores/visitas/semana", async (req, res) => {
+    try {
+        const dias = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
+        const resultado = {};
+        for (const dia of dias) {
+            const provs = await dbAll("SELECT id, nombre, telefono, rubro FROM proveedores WHERE dia_visita = ? ORDER BY nombre", [dia]);
+            resultado[dia] = provs;
+        }
+        res.json(resultado);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// === 36. DEUDA CON PROVEEDORES (Saldo) ===
+app.get("/api/proveedores/deudas/resumen", async (req, res) => {
+    try {
+        const deudas = await dbAll(`
+            SELECT p.id, p.nombre, p.telefono, p.rubro,
+                   COALESCE(SUM(m.monto), 0) as saldo,
+                   COUNT(m.id) as total_movimientos,
+                   MAX(m.fecha) as ultimo_movimiento
+            FROM proveedores p
+            LEFT JOIN movimientos_proveedores m ON m.proveedor_id = p.id
+            GROUP BY p.id
+            ORDER BY saldo DESC
+        `);
+        const totalDeuda = deudas.filter(d => d.saldo > 0).reduce((s, d) => s + d.saldo, 0);
+        const totalFavor = deudas.filter(d => d.saldo < 0).reduce((s, d) => s + Math.abs(d.saldo), 0);
+        res.json({ proveedores: deudas, totalDeuda, totalFavor });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Proveedores con saldo incluido en listado principal
+app.get("/api/proveedores_con_saldo", async (req, res) => {
+    try {
+        const rows = await dbAll(`
+            SELECT p.*, COALESCE(SUM(m.monto), 0) as saldo
+            FROM proveedores p
+            LEFT JOIN movimientos_proveedores m ON m.proveedor_id = p.id
+            GROUP BY p.id
+            ORDER BY p.nombre
+        `);
+        res.json(rows);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 app.get("/api/productos", (req, res) => { db.all("SELECT * FROM productos ORDER BY nombre", [], (err, rows) => { if (err) res.status(500).json({ error: err.message }); else res.json(rows); }); });
 app.post("/api/productos", (req, res) => { db.run("INSERT INTO productos (nombre, precio, costo, stock, codigo_barras, categoria, stock_minimo, unidad_medida) VALUES (?,?,?,?,?,?,?,?)", [req.body.nombre, req.body.precio, req.body.costo, req.body.stock, req.body.codigo_barras, req.body.categoria || 'General', req.body.stock_minimo || 5, req.body.unidad_medida || 'unidad'], function (err) {
