@@ -4,7 +4,7 @@ import { useAuth } from "../context/AuthContext";
 import { 
   Home, ShoppingCart, Package, Users, Truck, DollarSign, LogOut, Archive, PieChart,
   FileText, Scale, Cigarette, ShoppingBag, TrendingUp, Settings,
-  ChevronLeft, ChevronRight 
+  ChevronLeft, ChevronRight, LockOpen, Monitor, Building2
 } from "lucide-react";
 
 function Sidebar({ isOpen, toggleSidebar }) {
@@ -62,6 +62,11 @@ function Sidebar({ isOpen, toggleSidebar }) {
           <ShoppingCart size={20} className="flex-shrink-0" />
           <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Ventas</span>
           {isOpen && <span className="ml-auto text-[10px] bg-slate-700/50 px-1.5 py-0.5 rounded text-slate-400">F2</span>}
+        </Link>
+
+        <Link to="/apertura" className={`${btnBase} ${isActive("/apertura") ? btnActive : btnInactive}`} title="Apertura de Caja">
+          <LockOpen size={20} className="flex-shrink-0" />
+          <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Apertura</span>
         </Link>
 
         <Link to="/cierre" className={`${btnBase} ${isActive("/cierre") ? btnActive : btnInactive}`} title="Cierre (F3)">
@@ -126,6 +131,11 @@ function Sidebar({ isOpen, toggleSidebar }) {
           <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Balance</span>
         </Link>
 
+        <Link to="/conciliacion" className={`${btnBase} ${isActive("/conciliacion") ? btnActive : btnInactive}`} title="Conciliación Bancaria">
+          <Building2 size={20} className="flex-shrink-0" />
+          <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Conciliación</span>
+        </Link>
+
         <Link to="/reportes" className={`${btnBase} ${isActive("/reportes") ? btnActive : btnInactive}`} title="Reportes (F6)">
           <FileText size={20} className="flex-shrink-0" />
           <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Reportes</span>
@@ -137,6 +147,11 @@ function Sidebar({ isOpen, toggleSidebar }) {
           <Settings size={20} className="flex-shrink-0" />
           <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Configuración</span>
           {isOpen && <span className="ml-auto text-[10px] bg-slate-700/50 px-1.5 py-0.5 rounded text-slate-400">F8</span>}
+        </Link>
+
+        <Link to="/cajas" className={`${btnBase} ${isActive("/cajas") ? btnActive : btnInactive}`} title="Gestión de Cajas">
+          <Monitor size={20} className="flex-shrink-0" />
+          <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Cajas</span>
         </Link>
 
       </nav>

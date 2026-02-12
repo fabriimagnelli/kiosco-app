@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { Calculator, Save, AlertTriangle, Wallet, Coins, ArrowRight, ArrowDown, Edit2, Check, X } from "lucide-react";
+import React, { useState, useEffect, useRef } from "react";
+import { Calculator, Save, AlertTriangle, Wallet, Coins, ArrowRight, ArrowDown, Edit2, Check, X, Camera } from "lucide-react";
 import { apiFetch } from "../lib/api";
 
 function CierreGeneral() {
@@ -19,6 +19,11 @@ function CierreGeneral() {
   const [inicioManual, setInicioManual] = useState(null);
   const [editandoInicio, setEditandoInicio] = useState(false);
   const [valorTempInicio, setValorTempInicio] = useState("");
+
+  // 24. Foto del arqueo
+  const [fotoArqueo, setFotoArqueo] = useState(null);
+  const [fotoPreview, setFotoPreview] = useState(null);
+  const fotoInputRef = useRef(null);
 
   useEffect(() => {
     apiFetch("/api/cierre/general")
@@ -104,6 +109,26 @@ function CierreGeneral() {
       
       const data = await res.json();
       if (data.success) {
+        // Si hay foto, subirla al cierre recién creado
+        if (fotoArqueo) {
+          try {
+            // Obtener el último cierre para tener su ID
+            const cierresRes = await apiFetch("/api/historial_cierres");
+            const cierres = await cierresRes.json();
+            if (cierres.length > 0) {
+              const ultimoCierreId = cierres[0].id;
+              const formData = new FormData();
+              formData.append("foto", fotoArqueo);
+              await apiFetch(`/api/cierres/${ultimoCierreId}/foto_arqueo`, {
+                method: "POST",
+                body: formData,
+                headers: {} // Dejar que el browser ponga multipart
+              });
+            }
+          } catch (fotoErr) {
+            console.warn("No se pudo subir la foto del arqueo:", fotoErr);
+          }
+        }
         alert("Cierre exitoso.");
         window.location.reload();
       } else {
@@ -282,6 +307,50 @@ function CierreGeneral() {
             value={observacion}
             onChange={e => setObservacion(e.target.value)}
           />
+
+          {/* 24. Foto del Arqueo */}
+          <div className="mb-4">
+            <label className="block text-sm font-bold text-slate-600 mb-2 flex items-center gap-1">
+              <Camera size={16} className="text-blue-600"/> Foto del Arqueo (Opcional)
+            </label>
+            <input
+              ref={fotoInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files[0];
+                if (file) {
+                  setFotoArqueo(file);
+                  setFotoPreview(URL.createObjectURL(file));
+                }
+              }}
+            />
+            <div className="flex gap-2 items-center">
+              <button
+                type="button"
+                onClick={() => fotoInputRef.current?.click()}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors border border-slate-200"
+              >
+                <Camera size={16}/>
+                {fotoPreview ? 'Cambiar Foto' : 'Tomar / Seleccionar Foto'}
+              </button>
+              {fotoPreview && (
+                <button
+                  type="button"
+                  onClick={() => { setFotoArqueo(null); setFotoPreview(null); }}
+                  className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                >
+                  <X size={16}/>
+                </button>
+              )}
+            </div>
+            {fotoPreview && (
+              <img src={fotoPreview} alt="Preview" className="mt-2 max-h-32 rounded-lg border shadow-sm"/>
+            )}
+          </div>
+
           <button 
             onClick={realizarCierre}
             className="w-full py-4 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl shadow-lg transition-transform active:scale-95 flex justify-center items-center gap-2"

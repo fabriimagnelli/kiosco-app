@@ -20,6 +20,9 @@ import Cierre from "./components/Cierre";
 import Promos from "./components/Promos"; 
 import Retiros from "./components/Retiros"; 
 import Configuracion from "./components/Configuracion";
+import Apertura from "./components/Apertura";
+import Cajas from "./components/Cajas";
+import Conciliacion from "./components/Conciliacion";
 
 const SplashScreen = () => (
   <div className="fixed inset-0 bg-slate-900 flex flex-col items-center justify-center z-50">
@@ -211,6 +214,9 @@ function RutasApp() {
             <Route path="/balance" element={<RutaProtegida><Balance /></RutaProtegida>} />
             <Route path="/reportes" element={<RutaProtegida><Reportes /></RutaProtegida>} />
             <Route path="/retiros" element={<RutaProtegida><Retiros /></RutaProtegida>} />
+            <Route path="/apertura" element={<RutaProtegida><Apertura /></RutaProtegida>} />
+            <Route path="/cajas" element={<RutaProtegida><Cajas /></RutaProtegida>} />
+            <Route path="/conciliacion" element={<RutaProtegida><Conciliacion /></RutaProtegida>} />
             <Route path="/configuracion" element={<RutaProtegida><Configuracion /></RutaProtegida>} />
             <Route path="*" element={<Navigate to="/" />} />
         </Routes>

@@ -237,6 +237,53 @@ const initDB = async () => {
             fecha DATETIME DEFAULT CURRENT_TIMESTAMP
         )`);
 
+        // --- TABLAS NUEVAS: Caja y Finanzas ---
+
+        // 22. Aperturas de caja (historial)
+        await dbRun(`CREATE TABLE IF NOT EXISTS aperturas_caja (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            caja_id INTEGER DEFAULT 1,
+            monto REAL NOT NULL,
+            observacion TEXT DEFAULT '',
+            usuario TEXT DEFAULT '',
+            fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
+
+        // 24. Arqueo de caja con foto
+        await ensureColumn("historial_cierres", "foto_arqueo", "TEXT DEFAULT ''");
+
+        // 25. Múltiples cajas simultáneas
+        await dbRun(`CREATE TABLE IF NOT EXISTS cajas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL,
+            activa INTEGER DEFAULT 1,
+            fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
+        // Insertar caja principal si no existe
+        const cajaDefault = await dbGet("SELECT id FROM cajas WHERE id = 1");
+        if (!cajaDefault) {
+            await dbRun("INSERT INTO cajas (id, nombre, activa) VALUES (1, 'Caja Principal', 1)");
+        }
+        await ensureColumn("ventas", "caja_id", "INTEGER DEFAULT 1");
+        await ensureColumn("gastos", "caja_id", "INTEGER DEFAULT 1");
+        await ensureColumn("retiros", "caja_id", "INTEGER DEFAULT 1");
+        await ensureColumn("historial_cierres", "caja_id", "INTEGER DEFAULT 1");
+        await ensureColumn("caja_diaria", "caja_id", "INTEGER DEFAULT 1");
+        await ensureColumn("aperturas_caja", "caja_id", "INTEGER DEFAULT 1");
+
+        // 26. Conciliación bancaria
+        await dbRun(`CREATE TABLE IF NOT EXISTS conciliacion_bancaria (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha_desde TEXT NOT NULL,
+            fecha_hasta TEXT NOT NULL,
+            total_sistema REAL DEFAULT 0,
+            total_banco REAL DEFAULT 0,
+            diferencia REAL DEFAULT 0,
+            observacion TEXT DEFAULT '',
+            items TEXT DEFAULT '[]',
+            fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
+
         // Migración: asegurar que la tabla usuarios tenga la estructura correcta
         try {
             await dbGet("SELECT nombre FROM usuarios LIMIT 1");
@@ -526,6 +573,205 @@ app.post("/api/retiros", (req, res) => {
     db.run("INSERT INTO retiros (descripcion, monto, fecha) VALUES (?,?,?)", [req.body.descripcion, req.body.monto, fecha], (err) => err ? res.status(500).json({error: err.message}) : res.json({success: true}));
 });
 app.delete("/api/retiros/:id", (req, res) => { db.run("DELETE FROM retiros WHERE id=?", [req.params.id], (err) => err ? res.status(500).json({error: err.message}) : res.json({success: true})); });
+
+// === 22. APERTURA DE CAJA ===
+app.post("/api/apertura", async (req, res) => {
+    try {
+        const { monto, observacion, caja_id } = req.body;
+        const cajaId = caja_id || 1;
+        const montoNum = parseFloat(monto);
+        if (isNaN(montoNum) || montoNum < 0) return res.status(400).json({ error: "Monto inválido" });
+
+        // Registrar apertura en historial
+        await dbRun(
+            "INSERT INTO aperturas_caja (caja_id, monto, observacion, usuario, fecha) VALUES (?, ?, ?, ?, datetime('now', 'localtime'))",
+            [cajaId, montoNum, observacion || '', req.user?.nombre || '']
+        );
+
+        // Actualizar caja_diaria con el monto de apertura
+        const existeCaja = await dbGet("SELECT * FROM caja_diaria WHERE fecha = date('now', 'localtime') AND caja_id = ?", [cajaId]);
+        if (existeCaja) {
+            await dbRun("UPDATE caja_diaria SET inicio_caja = ? WHERE fecha = date('now', 'localtime') AND caja_id = ?", [montoNum, cajaId]);
+        } else {
+            await dbRun("INSERT INTO caja_diaria (fecha, inicio_caja, caja_id) VALUES (date('now', 'localtime'), ?, ?)", [montoNum, cajaId]);
+        }
+
+        res.json({ success: true, message: "Caja abierta correctamente" });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/api/apertura/estado", async (req, res) => {
+    try {
+        const cajaId = req.query.caja_id || 1;
+        const cajaHoy = await dbGet("SELECT * FROM caja_diaria WHERE fecha = date('now', 'localtime') AND caja_id = ?", [cajaId]);
+        const ultimaApertura = await dbGet("SELECT * FROM aperturas_caja WHERE caja_id = ? ORDER BY id DESC LIMIT 1", [cajaId]);
+        res.json({
+            abierta: !!cajaHoy,
+            inicio_caja: cajaHoy ? cajaHoy.inicio_caja : 0,
+            ultima_apertura: ultimaApertura || null
+        });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/api/apertura/historial", async (req, res) => {
+    try {
+        const aperturas = await dbAll("SELECT * FROM aperturas_caja ORDER BY fecha DESC LIMIT 50");
+        res.json(aperturas || []);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// === 23. HISTORIAL DE CIERRES DETALLADO ===
+app.get("/api/historial_cierres/:id", async (req, res) => {
+    try {
+        const cierre = await dbGet("SELECT * FROM historial_cierres WHERE id = ?", [req.params.id]);
+        if (!cierre) return res.status(404).json({ error: "Cierre no encontrado" });
+
+        // Obtener ventas asociadas a este cierre
+        const ventas = await dbAll("SELECT * FROM ventas WHERE cierre_id = ? ORDER BY fecha DESC", [cierre.id]);
+        const gastos = await dbAll("SELECT * FROM gastos WHERE cierre_id = ? ORDER BY fecha DESC", [cierre.id]);
+        const retiros = await dbAll("SELECT * FROM retiros WHERE cierre_id = ? ORDER BY fecha DESC", [cierre.id]);
+
+        // Calcular desglose
+        let ventasEfectivo = 0, ventasDigital = 0, totalVentasProductos = 0;
+        const ventasPorProducto = {};
+        ventas.forEach(v => {
+            totalVentasProductos += v.precio_total;
+            if (v.pago_efectivo > 0 || v.pago_digital > 0) {
+                ventasEfectivo += v.pago_efectivo;
+                ventasDigital += v.pago_digital;
+            } else {
+                if (v.metodo_pago === 'Efectivo') ventasEfectivo += v.precio_total;
+                else if (['Transferencia','Debito'].includes(v.metodo_pago)) ventasDigital += v.precio_total;
+                else if (v.metodo_pago === 'Mixto') { ventasEfectivo += v.precio_total / 2; ventasDigital += v.precio_total / 2; }
+            }
+            const key = v.producto || 'Sin nombre';
+            if (!ventasPorProducto[key]) ventasPorProducto[key] = { nombre: key, cantidad: 0, total: 0 };
+            ventasPorProducto[key].cantidad += v.cantidad;
+            ventasPorProducto[key].total += v.precio_total;
+        });
+
+        const totalGastos = gastos.reduce((s, g) => s + g.monto, 0);
+        const totalRetiros = retiros.reduce((s, r) => s + r.monto, 0);
+
+        res.json({
+            ...cierre,
+            detalle: {
+                ventas_efectivo: ventasEfectivo,
+                ventas_digital: ventasDigital,
+                total_ventas_productos: totalVentasProductos,
+                ventas_por_producto: Object.values(ventasPorProducto).sort((a, b) => b.total - a.total),
+                gastos: gastos,
+                total_gastos: totalGastos,
+                retiros: retiros,
+                total_retiros: totalRetiros,
+                cantidad_tickets: [...new Set(ventas.map(v => v.ticket_id))].length
+            }
+        });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// === 24. SUBIR FOTO DE ARQUEO ===
+if (upload) {
+    app.post("/api/cierres/:id/foto_arqueo", upload.single("foto"), async (req, res) => {
+        try {
+            if (!req.file) return res.status(400).json({ error: "No se envió imagen" });
+            const filename = `arqueo_${req.params.id}_${Date.now()}.webp`;
+            await sharp(req.file.buffer).resize(1200, 1200, { fit: "inside" }).webp({ quality: 80 }).toFile(path.join(uploadsPath, filename));
+            await dbRun("UPDATE historial_cierres SET foto_arqueo = ? WHERE id = ?", [filename, req.params.id]);
+            res.json({ success: true, foto: filename });
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+} else {
+    app.post("/api/cierres/:id/foto_arqueo", (req, res) => res.status(501).json({ error: "Subida de imágenes no disponible" }));
+}
+
+// === 25. MÚLTIPLES CAJAS ===
+app.get("/api/cajas", async (req, res) => {
+    try {
+        const cajas = await dbAll("SELECT * FROM cajas ORDER BY id");
+        res.json(cajas || []);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/cajas", async (req, res) => {
+    try {
+        const { nombre } = req.body;
+        if (!nombre) return res.status(400).json({ error: "Nombre requerido" });
+        const result = await dbRun("INSERT INTO cajas (nombre) VALUES (?)", [nombre]);
+        res.json({ success: true, id: result.lastID });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put("/api/cajas/:id", async (req, res) => {
+    try {
+        const { nombre, activa } = req.body;
+        await dbRun("UPDATE cajas SET nombre = ?, activa = ? WHERE id = ?", [nombre, activa ? 1 : 0, req.params.id]);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete("/api/cajas/:id", async (req, res) => {
+    try {
+        if (parseInt(req.params.id) === 1) return res.status(400).json({ error: "No se puede eliminar la caja principal" });
+        await dbRun("DELETE FROM cajas WHERE id = ?", [req.params.id]);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// === 26. CONCILIACIÓN BANCARIA ===
+app.get("/api/conciliacion/ventas_digitales", async (req, res) => {
+    try {
+        const { desde, hasta } = req.query;
+        if (!desde || !hasta) return res.status(400).json({ error: "Se requieren parámetros 'desde' y 'hasta'" });
+
+        // Ventas digitales del período
+        const ventas = await dbAll(`
+            SELECT id, ticket_id, producto, cantidad, precio_total, metodo_pago, pago_digital, fecha
+            FROM ventas 
+            WHERE date(fecha) BETWEEN ? AND ? 
+            AND (metodo_pago IN ('Transferencia', 'Debito', 'MercadoPago') OR pago_digital > 0)
+            ORDER BY fecha DESC
+        `, [desde, hasta]);
+
+        const totalSistema = ventas.reduce((s, v) => {
+            if (v.pago_digital > 0) return s + v.pago_digital;
+            return s + v.precio_total;
+        }, 0);
+
+        // Agrupar por día
+        const porDia = {};
+        ventas.forEach(v => {
+            const dia = v.fecha ? v.fecha.split(' ')[0].split('T')[0] : 'Sin fecha';
+            if (!porDia[dia]) porDia[dia] = { fecha: dia, total: 0, cantidad: 0 };
+            porDia[dia].total += v.pago_digital > 0 ? v.pago_digital : v.precio_total;
+            porDia[dia].cantidad++;
+        });
+
+        res.json({
+            ventas,
+            total_sistema: totalSistema,
+            por_dia: Object.values(porDia).sort((a, b) => a.fecha.localeCompare(b.fecha))
+        });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/conciliacion", async (req, res) => {
+    try {
+        const { fecha_desde, fecha_hasta, total_sistema, total_banco, diferencia, observacion, items } = req.body;
+        await dbRun(
+            "INSERT INTO conciliacion_bancaria (fecha_desde, fecha_hasta, total_sistema, total_banco, diferencia, observacion, items) VALUES (?,?,?,?,?,?,?)",
+            [fecha_desde, fecha_hasta, total_sistema || 0, total_banco || 0, diferencia || 0, observacion || '', JSON.stringify(items || [])]
+        );
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/api/conciliacion/historial", async (req, res) => {
+    try {
+        const conciliaciones = await dbAll("SELECT * FROM conciliacion_bancaria ORDER BY fecha DESC LIMIT 50");
+        res.json((conciliaciones || []).map(c => ({ ...c, items: JSON.parse(c.items || '[]') })));
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // CIERRE GENERAL
 app.get("/api/cierre/general", async (req, res) => {
