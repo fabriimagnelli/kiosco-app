@@ -450,6 +450,135 @@ app.get("/api/reportes/metodos_pago", (req, res) => {
     });
 });
 
+// 27. DASHBOARD COMPARATIVAS — Hoy vs Ayer, Semana vs Anterior, Mes vs Anterior
+app.get("/api/reportes/comparativas", async (req, res) => {
+    try {
+        // HOY vs AYER
+        const hoy = await dbGet(`SELECT COALESCE(SUM(precio_total),0) as total, COUNT(DISTINCT ticket_id) as tickets FROM ventas WHERE date(fecha) = date('now','localtime')`);
+        const ayer = await dbGet(`SELECT COALESCE(SUM(precio_total),0) as total, COUNT(DISTINCT ticket_id) as tickets FROM ventas WHERE date(fecha) = date('now','-1 day','localtime')`);
+        const gastosHoy = await dbGet(`SELECT COALESCE(SUM(monto),0) as total FROM gastos WHERE date(fecha) = date('now','localtime')`);
+        const gastosAyer = await dbGet(`SELECT COALESCE(SUM(monto),0) as total FROM gastos WHERE date(fecha) = date('now','-1 day','localtime')`);
+
+        // ESTA SEMANA vs ANTERIOR (lun-dom)
+        const semanaActual = await dbGet(`SELECT COALESCE(SUM(precio_total),0) as total, COUNT(DISTINCT ticket_id) as tickets FROM ventas WHERE date(fecha) >= date('now','weekday 0','-6 days','localtime') AND date(fecha) <= date('now','localtime')`);
+        const semanaAnterior = await dbGet(`SELECT COALESCE(SUM(precio_total),0) as total, COUNT(DISTINCT ticket_id) as tickets FROM ventas WHERE date(fecha) >= date('now','weekday 0','-13 days','localtime') AND date(fecha) < date('now','weekday 0','-6 days','localtime')`);
+        const gastosSemanaActual = await dbGet(`SELECT COALESCE(SUM(monto),0) as total FROM gastos WHERE date(fecha) >= date('now','weekday 0','-6 days','localtime') AND date(fecha) <= date('now','localtime')`);
+        const gastosSemanaAnterior = await dbGet(`SELECT COALESCE(SUM(monto),0) as total FROM gastos WHERE date(fecha) >= date('now','weekday 0','-13 days','localtime') AND date(fecha) < date('now','weekday 0','-6 days','localtime')`);
+
+        // ESTE MES vs ANTERIOR
+        const mesActual = await dbGet(`SELECT COALESCE(SUM(precio_total),0) as total, COUNT(DISTINCT ticket_id) as tickets FROM ventas WHERE strftime('%Y-%m', fecha) = strftime('%Y-%m', 'now', 'localtime')`);
+        const mesAnterior = await dbGet(`SELECT COALESCE(SUM(precio_total),0) as total, COUNT(DISTINCT ticket_id) as tickets FROM ventas WHERE strftime('%Y-%m', fecha) = strftime('%Y-%m', 'now', '-1 month', 'localtime')`);
+        const gastosMesActual = await dbGet(`SELECT COALESCE(SUM(monto),0) as total FROM gastos WHERE strftime('%Y-%m', fecha) = strftime('%Y-%m', 'now', 'localtime')`);
+        const gastosMesAnterior = await dbGet(`SELECT COALESCE(SUM(monto),0) as total FROM gastos WHERE strftime('%Y-%m', fecha) = strftime('%Y-%m', 'now', '-1 month', 'localtime')`);
+
+        res.json({
+            dia: { actual: { ventas: hoy.total, tickets: hoy.tickets, gastos: gastosHoy.total }, anterior: { ventas: ayer.total, tickets: ayer.tickets, gastos: gastosAyer.total } },
+            semana: { actual: { ventas: semanaActual.total, tickets: semanaActual.tickets, gastos: gastosSemanaActual.total }, anterior: { ventas: semanaAnterior.total, tickets: semanaAnterior.tickets, gastos: gastosSemanaAnterior.total } },
+            mes: { actual: { ventas: mesActual.total, tickets: mesActual.tickets, gastos: gastosMesActual.total }, anterior: { ventas: mesAnterior.total, tickets: mesAnterior.tickets, gastos: gastosMesAnterior.total } }
+        });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 29. REPORTE DE HORAS PICO — En qué horarios se vende más
+app.get("/api/reportes/horas_pico", async (req, res) => {
+    try {
+        const { dias } = req.query; // días hacia atrás, default 30
+        const d = parseInt(dias) || 30;
+        const rows = await dbAll(`
+            SELECT CAST(strftime('%H', fecha) AS INTEGER) as hora,
+                   COUNT(DISTINCT ticket_id) as tickets,
+                   COALESCE(SUM(precio_total),0) as total
+            FROM ventas
+            WHERE date(fecha) >= date('now', '-${d} days', 'localtime')
+            GROUP BY hora ORDER BY hora ASC
+        `);
+        res.json(rows);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 31. TENDENCIA MENSUAL — Evolución ventas/gastos mes a mes (últimos 12 meses)
+app.get("/api/reportes/tendencia_mensual", async (req, res) => {
+    try {
+        const ventas = await dbAll(`
+            SELECT strftime('%Y-%m', fecha) as mes, COALESCE(SUM(precio_total),0) as total
+            FROM ventas
+            WHERE date(fecha) >= date('now','-12 months','localtime')
+            GROUP BY mes ORDER BY mes ASC
+        `);
+        const gastos = await dbAll(`
+            SELECT strftime('%Y-%m', fecha) as mes, COALESCE(SUM(monto),0) as total
+            FROM gastos
+            WHERE date(fecha) >= date('now','-12 months','localtime')
+            GROUP BY mes ORDER BY mes ASC
+        `);
+        // Merge
+        const meses = {};
+        ventas.forEach(v => { meses[v.mes] = { mes: v.mes, ventas: v.total, gastos: 0 }; });
+        gastos.forEach(g => { if (!meses[g.mes]) meses[g.mes] = { mes: g.mes, ventas: 0, gastos: 0 }; meses[g.mes].gastos = g.total; });
+        const data = Object.values(meses).sort((a, b) => a.mes.localeCompare(b.mes)).map(m => ({
+            ...m,
+            ganancia: m.ventas - m.gastos,
+            label: new Date(m.mes + '-01').toLocaleDateString('es-AR', { month: 'short', year: '2-digit' })
+        }));
+        res.json(data);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 32. PRODUCTOS SIN MOVIMIENTO — Inventario "muerto" que no se vende
+app.get("/api/reportes/sin_movimiento", async (req, res) => {
+    try {
+        const { dias } = req.query; // días sin venta, default 30
+        const d = parseInt(dias) || 30;
+        const productos = await dbAll(`
+            SELECT p.id, p.nombre, p.precio, p.costo, p.stock, p.categoria,
+                   MAX(v.fecha) as ultima_venta,
+                   COALESCE(SUM(v.cantidad),0) as total_vendido
+            FROM productos p
+            LEFT JOIN ventas v ON v.producto = p.nombre
+            GROUP BY p.id
+            HAVING p.stock > 0 AND (MAX(v.fecha) IS NULL OR date(MAX(v.fecha)) < date('now', '-${d} days', 'localtime'))
+            ORDER BY p.stock * p.costo DESC
+        `);
+        const cigarrillos = await dbAll(`
+            SELECT c.id, c.nombre, c.precio, c.costo, c.stock, 'Cigarrillos' as categoria,
+                   MAX(v.fecha) as ultima_venta,
+                   COALESCE(SUM(v.cantidad),0) as total_vendido
+            FROM cigarrillos c
+            LEFT JOIN ventas v ON v.producto = c.nombre
+            GROUP BY c.id
+            HAVING c.stock > 0 AND (MAX(v.fecha) IS NULL OR date(MAX(v.fecha)) < date('now', '-${d} days', 'localtime'))
+            ORDER BY c.stock * c.costo DESC
+        `);
+        const todos = [...productos, ...cigarrillos];
+        const capitalInmovilizado = todos.reduce((s, p) => s + (p.stock * (p.costo || 0)), 0);
+        res.json({ productos: todos, capitalInmovilizado, totalItems: todos.length });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// REPORTE DE VENTAS DETALLADO POR RANGO (para exportar Excel/PDF)
+app.get("/api/reportes/ventas_rango", async (req, res) => {
+    try {
+        const { desde, hasta } = req.query;
+        if (!desde || !hasta) return res.status(400).json({ error: "Se requieren 'desde' y 'hasta'" });
+        const ventas = await dbAll(`
+            SELECT v.ticket_id, v.producto, v.cantidad, v.precio_unitario, v.precio_total,
+                   v.metodo_pago, v.categoria, v.fecha, v.descuento
+            FROM ventas v WHERE date(v.fecha) BETWEEN ? AND ?
+            ORDER BY v.fecha DESC
+        `, [desde, hasta]);
+        const resumen = await dbGet(`
+            SELECT COALESCE(SUM(precio_total),0) as total_ventas,
+                   COUNT(DISTINCT ticket_id) as total_tickets,
+                   COALESCE(SUM(CASE WHEN metodo_pago='Efectivo' OR pago_efectivo>0 THEN precio_total ELSE 0 END),0) as total_efectivo,
+                   COALESCE(SUM(CASE WHEN metodo_pago IN ('Transferencia','Debito','MercadoPago') OR pago_digital>0 THEN precio_total ELSE 0 END),0) as total_digital
+            FROM ventas WHERE date(fecha) BETWEEN ? AND ?
+        `, [desde, hasta]);
+        const gastos = await dbAll(`SELECT descripcion, monto, categoria, metodo_pago, fecha FROM gastos WHERE date(fecha) BETWEEN ? AND ? ORDER BY fecha DESC`, [desde, hasta]);
+        const totalGastos = gastos.reduce((s, g) => s + g.monto, 0);
+        res.json({ ventas, resumen, gastos, totalGastos });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // BALANCE POR RANGO DE FECHAS
 app.get("/api/balance_rango", async (req, res) => {
     try {

@@ -1,817 +1,1100 @@
-import React, { useState, useEffect } from "react";
-import { 
-    BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell 
+import React, { useState, useEffect, useMemo } from "react";
+import {
+  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, PieChart, Pie, Cell, Legend, AreaChart, Area
 } from "recharts";
-import { 
-    FileText, TrendingUp, ShoppingBag, Edit, MoreVertical, Trash2, ChevronDown, ChevronUp, User, AlertCircle, Wallet, DollarSign, 
-    Search, Filter, Calendar, Printer, Share2, RotateCcw, X, Download
+import {
+  TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, Clock,
+  Package, AlertTriangle, Download, FileSpreadsheet, FileText, Calendar,
+  DollarSign, BarChart3, PieChart as PieIcon, Activity, Archive,
+  ChevronDown, RefreshCw, Filter
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
-import { apiFetch } from "../lib/api";
 import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import * as XLSX from "xlsx";
+import { apiFetch } from "../lib/api";
 
+const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6", "#f97316"];
+
+// ─── Helpers ────────────────────────────────────────────────
+const fmtMoney = (n) => {
+  if (n == null) return "$0";
+  return `$${Number(n).toLocaleString("es-AR", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+};
+const fmtPct = (actual, anterior) => {
+  if (!anterior || anterior === 0) return actual > 0 ? "+100%" : "0%";
+  const pct = ((actual - anterior) / anterior) * 100;
+  return `${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%`;
+};
+const pctVal = (actual, anterior) => {
+  if (!anterior || anterior === 0) return actual > 0 ? 100 : 0;
+  return ((actual - anterior) / anterior) * 100;
+};
+
+// ─── Tab definitions ────────────────────────────────────────
+const TABS = [
+  { id: "comparativas", label: "Dashboard", icon: BarChart3 },
+  { id: "rentabilidad", label: "Rentabilidad", icon: DollarSign },
+  { id: "horas_pico", label: "Horas Pico", icon: Clock },
+  { id: "tendencia", label: "Tendencia", icon: Activity },
+  { id: "sin_movimiento", label: "Sin Movimiento", icon: Archive },
+  { id: "exportar", label: "Exportar", icon: Download },
+];
+
+// ═══════════════════════════════════════════════════════════
+// COMPONENTE PRINCIPAL
+// ═══════════════════════════════════════════════════════════
 function Reportes() {
-  const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState("historial"); 
-  
-  const [productosTop, setProductosTop] = useState([]);
-  const [ventasSemana, setVentasSemana] = useState([]);
-  const [metodosPago, setMetodosPago] = useState([]);
-  const [historialVentas, setHistorialVentas] = useState([]);
-  
-  const [ticketExpandido, setTicketExpandido] = useState(null);
-  const [menuAbierto, setMenuAbierto] = useState(null);
-  const [rentabilidad, setRentabilidad] = useState([]);
-
-  // --- FILTROS AVANZADOS ---
-  const [filtroDesde, setFiltroDesde] = useState("");
-  const [filtroHasta, setFiltroHasta] = useState("");
-  const [filtroMetodo, setFiltroMetodo] = useState("");
-  const [filtroBusqueda, setFiltroBusqueda] = useState("");
-  const [filtroMin, setFiltroMin] = useState("");
-  const [filtroMax, setFiltroMax] = useState("");
-  const [mostrarFiltros, setMostrarFiltros] = useState(false);
-  const [clientes, setClientes] = useState([]);
-  const [filtroCliente, setFiltroCliente] = useState("");
-
-  // --- DEVOLUCIONES ---
-  const [modalDevolucion, setModalDevolucion] = useState(null);
-  const [itemsDevolucion, setItemsDevolucion] = useState([]);
-  const [motivoDevolucion, setMotivoDevolucion] = useState("");
-
-  // --- CONFIG NEGOCIO (para reimpresión) ---
-  const [configNegocio, setConfigNegocio] = useState({ kiosco_nombre: "", kiosco_direccion: "", kiosco_telefono: "" });
-
-  useEffect(() => {
-    cargarHistorial();
-    apiFetch("/api/clientes").then(r => r.json()).then(d => setClientes(Array.isArray(d) ? d : [])).catch(() => {});
-    apiFetch("/api/config").then(r => r.json()).then(d => setConfigNegocio(d)).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (activeTab === "rentabilidad") {
-      apiFetch("/api/reportes/rentabilidad")
-        .then(r => r.json())
-        .then(data => setRentabilidad(Array.isArray(data) ? data : []))
-        .catch(err => console.error(err));
-    }
-  }, [activeTab]);
-
-  const cargarHistorial = (filtros = {}) => {
-    const params = new URLSearchParams();
-    if (filtros.desde || filtroDesde) params.set('desde', filtros.desde || filtroDesde);
-    if (filtros.hasta || filtroHasta) params.set('hasta', filtros.hasta || filtroHasta);
-    if (filtros.metodo || filtroMetodo) params.set('metodo', filtros.metodo || filtroMetodo);
-    if (filtros.cliente_id || filtroCliente) params.set('cliente_id', filtros.cliente_id || filtroCliente);
-    if (filtros.busqueda || filtroBusqueda) params.set('busqueda', filtros.busqueda || filtroBusqueda);
-    if (filtros.min || filtroMin) params.set('min', filtros.min || filtroMin);
-    if (filtros.max || filtroMax) params.set('max', filtros.max || filtroMax);
-
-    const qs = params.toString();
-    apiFetch(`/api/ventas/historial${qs ? '?' + qs : ''}`)
-      .then(r => r.json())
-      .then(data => {
-        const agrupado = {};
-        const conteoProductos = {};
-        const conteoPagos = {};
-        const ventasPorDia = {};
-        const hace7dias = new Date();
-        hace7dias.setDate(hace7dias.getDate() - 7);
-
-        data.forEach(v => {
-            // 1. Agrupar por Ticket
-            if(!agrupado[v.ticket_id]) {
-                agrupado[v.ticket_id] = {
-                    ticket_id: v.ticket_id,
-                    fecha: v.fecha,
-                    total: v.precio_total, 
-                    metodo: v.metodo_pago,
-                    cliente: v.cliente || v.nombre_cliente || "Consumidor Final", 
-                    editado: v.editado,
-                    pago_efectivo: v.pago_efectivo || 0,
-                    pago_digital: v.pago_digital || 0,
-                    notas: v.notas || '',
-                    descuento: v.descuento || 0,
-                    lista_productos: [] 
-                };
-
-                const metodo = v.metodo_pago || "Otros";
-                conteoPagos[metodo] = (conteoPagos[metodo] || 0) + 1;
-
-                const fechaVenta = new Date(v.fecha);
-                if (fechaVenta >= hace7dias) {
-                    const dia = fechaVenta.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' });
-                    if (!ventasPorDia[dia]) ventasPorDia[dia] = 0;
-                    ventasPorDia[dia] += v.precio_total;
-                }
-            }
-
-            // 2. Agregar producto a la lista
-            agrupado[v.ticket_id].lista_productos.push({
-                nombre: v.nombre_producto || v.producto || "Item",
-                cantidad: v.cantidad || 1,
-                precio_unitario: v.precio_unitario || 0,
-                subtotal: (v.cantidad || 1) * (v.precio_unitario || 0)
-            });
-
-            // 3. Productos Top
-            const nombreProd = v.nombre_producto || v.producto || v.nombre || "Producto";
-            conteoProductos[nombreProd] = (conteoProductos[nombreProd] || 0) + 1;
-        });
-
-        setHistorialVentas(Object.values(agrupado).sort((a, b) => new Date(b.fecha) - new Date(a.fecha)));
-
-        const arrayProductos = Object.keys(conteoProductos).map(key => ({ name: key, value: conteoProductos[key] }));
-        setProductosTop(arrayProductos.sort((a, b) => b.value - a.value).slice(0, 5));
-
-        const arrayVentas = Object.keys(ventasPorDia).map(key => ({ fecha: key, total: ventasPorDia[key] }));
-        setVentasSemana(arrayVentas.reverse());
-
-        const arrayPagos = Object.keys(conteoPagos).map(key => ({ name: key, value: conteoPagos[key] }));
-        setMetodosPago(arrayPagos);
-      })
-      .catch(err => console.error("Error cargando historial:", err));
-  };
-
-  const eliminarVenta = async (ticket_id) => {
-      if(!confirm(`¿Estás seguro de eliminar el Ticket #${ticket_id}? Se devolverá el stock.`)) return;
-      try {
-          const res = await apiFetch(`/api/ventas/${ticket_id}`, { method: "DELETE" });
-          const data = await res.json();
-          if(data.success) {
-              cargarHistorial();
-              setMenuAbierto(null);
-          } else {
-              alert("Error: " + data.error);
-          }
-      } catch (error) {
-          console.error(error);
-          alert("Error de conexión");
-      }
-  };
-
-  const editarVenta = (ticket) => {
-      navigate("/ventas", { state: { ticketEditar: ticket.ticket_id } });
-  };
-
-  // --- APLICAR / LIMPIAR FILTROS ---
-  const aplicarFiltros = () => {
-    cargarHistorial({ desde: filtroDesde, hasta: filtroHasta, metodo: filtroMetodo, cliente_id: filtroCliente, busqueda: filtroBusqueda, min: filtroMin, max: filtroMax });
-  };
-
-  const limpiarFiltros = () => {
-    setFiltroDesde(""); setFiltroHasta(""); setFiltroMetodo(""); setFiltroCliente(""); setFiltroBusqueda(""); setFiltroMin(""); setFiltroMax("");
-    cargarHistorial({ desde: '', hasta: '', metodo: '', cliente_id: '', busqueda: '', min: '', max: '' });
-  };
-
-  const hayFiltrosActivos = filtroDesde || filtroHasta || filtroMetodo || filtroCliente || filtroBusqueda || filtroMin || filtroMax;
-
-  // --- REIMPRIMIR TICKET ---
-  const reimprimirTicket = async (ticket) => {
-    try {
-      const res = await apiFetch(`/api/ventas/${ticket.ticket_id}`);
-      const items = await res.json();
-      if (!items || items.length === 0) return alert("No se encontraron datos del ticket.");
-
-      const anchoMM = 80;
-      const doc = new jsPDF({ unit: "mm", format: [anchoMM, 300] });
-      let y = 8;
-      const margen = 4;
-
-      const nombreNegocio = configNegocio.kiosco_nombre || "Mi Kiosco";
-      const direccion = configNegocio.kiosco_direccion || "";
-      const telefono = configNegocio.kiosco_telefono || "";
-
-      doc.setFontSize(14);
-      doc.setFont("helvetica", "bold");
-      doc.text(nombreNegocio.toUpperCase(), anchoMM / 2, y, { align: "center" });
-      y += 5;
-      doc.setFontSize(7);
-      doc.setFont("helvetica", "normal");
-      if (direccion) { doc.text(direccion, anchoMM / 2, y, { align: "center" }); y += 3.5; }
-      if (telefono) { doc.text(`Tel: ${telefono}`, anchoMM / 2, y, { align: "center" }); y += 3.5; }
-      y += 1;
-      doc.line(margen, y, anchoMM - margen, y); y += 4;
-
-      doc.setFontSize(8);
-      doc.text(`Fecha: ${new Date(ticket.fecha).toLocaleString("es-AR")}`, margen, y); y += 3.5;
-      doc.setFont("helvetica", "bold");
-      doc.text(`Ticket #${ticket.ticket_id}`, margen, y); y += 3.5;
-      doc.setFont("helvetica", "normal");
-      doc.text(`(REIMPRESIÓN)`, margen, y); y += 4;
-      doc.line(margen, y, anchoMM - margen, y); y += 4;
-
-      doc.setFontSize(7);
-      doc.setFont("helvetica", "bold");
-      doc.text("Cant", margen, y);
-      doc.text("Descripción", margen + 8, y);
-      doc.text("P.Unit", anchoMM - margen - 18, y, { align: "right" });
-      doc.text("Subtotal", anchoMM - margen, y, { align: "right" });
-      y += 1; doc.line(margen, y, anchoMM - margen, y); y += 3;
-
-      doc.setFont("helvetica", "normal");
-      let subtotalGen = 0;
-      (ticket.lista_productos || []).forEach(item => {
-        subtotalGen += item.subtotal;
-        doc.text(`${item.cantidad}`, margen + 2, y, { align: "center" });
-        const nombre = item.nombre.length > 20 ? item.nombre.substring(0, 20) + ".." : item.nombre;
-        doc.text(nombre, margen + 8, y);
-        doc.text(`$${item.precio_unitario.toFixed(0)}`, anchoMM - margen - 18, y, { align: "right" });
-        doc.text(`$${item.subtotal.toFixed(0)}`, anchoMM - margen, y, { align: "right" });
-        y += 3.5;
-      });
-
-      y += 1; doc.line(margen, y, anchoMM - margen, y); y += 4;
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "bold");
-      doc.text("TOTAL:", margen, y);
-      doc.text(`$${ticket.total.toFixed(0)}`, anchoMM - margen, y, { align: "right" });
-      y += 5;
-      doc.setFontSize(8);
-      doc.setFont("helvetica", "normal");
-      doc.text(`Método de pago: ${ticket.metodo}`, margen, y); y += 3.5;
-      doc.text(`Cliente: ${ticket.cliente}`, margen, y); y += 5;
-
-      // Notas si existen
-      const notasTicket = items[0]?.notas;
-      if (notasTicket && notasTicket.trim()) {
-        doc.setFontSize(7);
-        doc.text("Notas:", margen, y); y += 3;
-        const lineas = doc.splitTextToSize(notasTicket, anchoMM - margen * 2);
-        lineas.forEach(l => { doc.text(l, margen, y); y += 3; });
-        y += 2;
-      }
-
-      doc.line(margen, y, anchoMM - margen, y); y += 4;
-      doc.setFontSize(8);
-      doc.setFont("helvetica", "bold");
-      doc.text("¡Gracias por su compra!", anchoMM / 2, y, { align: "center" });
-      y += 4;
-      doc.setFontSize(6);
-      doc.setFont("helvetica", "normal");
-      doc.text("Documento no fiscal", anchoMM / 2, y, { align: "center" });
-
-      doc.internal.pageSize.height = y + 8;
-      doc.save(`ticket_${ticket.ticket_id}_reimpresion.pdf`);
-    } catch (e) {
-      console.error("Error reimprimiendo:", e);
-      alert("Error al reimprimir el ticket.");
-    }
-  };
-
-  // --- COMPARTIR TICKET POR WHATSAPP ---
-  const compartirTicket = (ticket) => {
-    const prods = (ticket.lista_productos || []).map(p => `  ${p.cantidad}x ${p.nombre} - $${p.subtotal.toFixed(0)}`).join('\n');
-    const texto = `🧾 *Ticket #${ticket.ticket_id}*\n📅 ${new Date(ticket.fecha).toLocaleString("es-AR")}\n\n${prods}\n\n💰 *Total: $${ticket.total.toFixed(0)}*\n💳 Método: ${ticket.metodo}\n👤 Cliente: ${ticket.cliente}\n\n_${configNegocio.kiosco_nombre || 'Mi Kiosco'}_`;
-    const url = `https://wa.me/?text=${encodeURIComponent(texto)}`;
-    window.open(url, '_blank');
-  };
-
-  // --- DEVOLUCIÓN PARCIAL ---
-  const abrirDevolucion = (ticket) => {
-    setModalDevolucion(ticket);
-    setItemsDevolucion(ticket.lista_productos.map(p => ({ ...p, devolver: 0 })));
-    setMotivoDevolucion("");
-    setMenuAbierto(null);
-  };
-
-  const confirmarDevolucion = async () => {
-    const itemsADevolver = itemsDevolucion.filter(i => i.devolver > 0);
-    if (itemsADevolver.length === 0) return alert("Seleccioná al menos un producto para devolver.");
-    
-    // Validar cantidades
-    for (const item of itemsADevolver) {
-      if (item.devolver > item.cantidad) return alert(`No se puede devolver más de ${item.cantidad} unidades de "${item.nombre}".`);
-    }
-
-    if (!confirm(`¿Confirmar devolución de ${itemsADevolver.length} item(s)?`)) return;
-
-    try {
-      const res = await apiFetch(`/api/ventas/${modalDevolucion.ticket_id}/devolucion`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          items: itemsADevolver.map(i => ({ producto: i.nombre, cantidad: i.devolver })),
-          motivo: motivoDevolucion
-        })
-      });
-      const data = await res.json();
-      if (data.success) {
-        alert(`Devolución realizada. Total devuelto: $${data.totalDevuelto.toFixed(0)}`);
-        setModalDevolucion(null);
-        cargarHistorial();
-      } else {
-        alert("Error: " + data.error);
-      }
-    } catch (e) {
-      console.error(e);
-      alert("Error de conexión");
-    }
-  };
-
-  const toggleExpand = (id) => {
-      if (ticketExpandido === id) setTicketExpandido(null);
-      else setTicketExpandido(id);
-  };
-
-  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
+  const [tab, setTab] = useState("comparativas");
 
   return (
-    <div className="p-6 space-y-6 animate-in fade-in duration-500">
-      
-      <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-        <div>
-            <h1 className="text-3xl font-bold text-slate-800 flex items-center gap-3">
-                <FileText className="text-blue-600" size={32}/>
-                Reportes y Estadísticas
-            </h1>
-            <p className="text-slate-500 mt-1">Visualiza el rendimiento de tu negocio</p>
-        </div>
-        <div className="flex gap-2 bg-white p-1 rounded-lg border border-slate-200 shadow-sm">
-            <button 
-                onClick={() => setActiveTab("historial")}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === "historial" ? "bg-blue-100 text-blue-700 shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}
-            >
-                Historial de Ventas
-            </button>
-            <button 
-                onClick={() => setActiveTab("graficos")}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === "graficos" ? "bg-blue-100 text-blue-700 shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}
-            >
-                Gráficos
-            </button>
-            <button 
-                onClick={() => setActiveTab("rentabilidad")}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === "rentabilidad" ? "bg-green-100 text-green-700 shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}
-            >
-                Rentabilidad
-            </button>
+    <div className="h-full flex flex-col overflow-hidden bg-slate-50">
+      {/* Header + Tabs */}
+      <div className="px-6 pt-5 pb-0">
+        <h2 className="text-2xl font-bold text-slate-800 mb-4">Reportes y Análisis</h2>
+        <div className="flex gap-1 bg-white rounded-xl p-1 shadow-sm border border-slate-200 overflow-x-auto">
+          {TABS.map((t) => {
+            const Icon = t.icon;
+            return (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
+                  tab === t.id
+                    ? "bg-blue-600 text-white shadow-md"
+                    : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                <Icon size={16} />
+                {t.label}
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {activeTab === "historial" ? (
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-            {/* BARRA DE BÚSQUEDA Y FILTROS */}
-            <div className="p-4 border-b border-slate-100 space-y-3">
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
-                    <h3 className="font-bold text-slate-700 text-lg">Últimas Ventas</h3>
-                    <div className="flex items-center gap-2 w-full md:w-auto">
-                        <div className="flex-1 md:w-64 flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-                            <Search size={16} className="text-slate-400"/>
-                            <input 
-                                className="bg-transparent outline-none text-sm w-full"
-                                placeholder="Buscar producto o cliente..."
-                                value={filtroBusqueda}
-                                onChange={e => setFiltroBusqueda(e.target.value)}
-                                onKeyDown={e => e.key === 'Enter' && aplicarFiltros()}
-                            />
-                        </div>
-                        <button 
-                            onClick={() => setMostrarFiltros(!mostrarFiltros)}
-                            className={`p-2 rounded-lg border transition-colors ${mostrarFiltros || hayFiltrosActivos ? 'bg-blue-100 border-blue-300 text-blue-700' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}
-                        >
-                            <Filter size={18}/>
-                        </button>
-                        <span className="text-sm text-slate-400">{historialVentas.length} ventas</span>
-                    </div>
-                </div>
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+        {tab === "comparativas" && <DashboardComparativas />}
+        {tab === "rentabilidad" && <Rentabilidad />}
+        {tab === "horas_pico" && <HorasPico />}
+        {tab === "tendencia" && <TendenciaMensual />}
+        {tab === "sin_movimiento" && <SinMovimiento />}
+        {tab === "exportar" && <ExportarReportes />}
+      </div>
+    </div>
+  );
+}
 
-                {/* PANEL DE FILTROS AVANZADOS */}
-                {mostrarFiltros && (
-                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 animate-in fade-in slide-in-from-top-2 duration-200">
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                            <div>
-                                <label className="text-[10px] font-bold text-slate-500 uppercase">Desde</label>
-                                <input type="date" className="w-full p-2 border rounded-lg text-sm bg-white" value={filtroDesde} onChange={e => setFiltroDesde(e.target.value)} />
-                            </div>
-                            <div>
-                                <label className="text-[10px] font-bold text-slate-500 uppercase">Hasta</label>
-                                <input type="date" className="w-full p-2 border rounded-lg text-sm bg-white" value={filtroHasta} onChange={e => setFiltroHasta(e.target.value)} />
-                            </div>
-                            <div>
-                                <label className="text-[10px] font-bold text-slate-500 uppercase">Método de Pago</label>
-                                <select className="w-full p-2 border rounded-lg text-sm bg-white" value={filtroMetodo} onChange={e => setFiltroMetodo(e.target.value)}>
-                                    <option value="">Todos</option>
-                                    <option value="Efectivo">Efectivo</option>
-                                    <option value="Mercado Pago">Mercado Pago</option>
-                                    <option value="Débito">Tarjetas</option>
-                                    <option value="Transferencia">Transferencia</option>
-                                    <option value="Fiado">Cuenta Corriente</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="text-[10px] font-bold text-slate-500 uppercase">Cliente</label>
-                                <select className="w-full p-2 border rounded-lg text-sm bg-white" value={filtroCliente} onChange={e => setFiltroCliente(e.target.value)}>
-                                    <option value="">Todos</option>
-                                    {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="text-[10px] font-bold text-slate-500 uppercase">Monto Mínimo</label>
-                                <input type="number" placeholder="$ 0" className="w-full p-2 border rounded-lg text-sm bg-white" value={filtroMin} onChange={e => setFiltroMin(e.target.value)} />
-                            </div>
-                            <div>
-                                <label className="text-[10px] font-bold text-slate-500 uppercase">Monto Máximo</label>
-                                <input type="number" placeholder="$ 999999" className="w-full p-2 border rounded-lg text-sm bg-white" value={filtroMax} onChange={e => setFiltroMax(e.target.value)} />
-                            </div>
-                            <div className="col-span-2 flex items-end gap-2">
-                                <button onClick={aplicarFiltros} className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors">
-                                    Aplicar Filtros
-                                </button>
-                                {hayFiltrosActivos && (
-                                    <button onClick={limpiarFiltros} className="py-2 px-4 rounded-lg text-sm font-medium border border-slate-300 text-slate-600 hover:bg-slate-100 transition-colors flex items-center gap-1">
-                                        <X size={14}/> Limpiar
-                                    </button>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                )}
+// ═══════════════════════════════════════════════════════════
+// 27. DASHBOARD COMPARATIVAS
+// ═══════════════════════════════════════════════════════════
+function DashboardComparativas() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const cargar = () => {
+    setLoading(true);
+    apiFetch("/api/reportes/comparativas")
+      .then((r) => r.json())
+      .then(setData)
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { cargar(); }, []);
+
+  if (loading) return <Skeleton />;
+  if (!data) return <ErrorMsg msg="No se pudieron cargar las comparativas" />;
+
+  const periodos = [
+    { key: "dia", label: "Hoy vs Ayer", iconActual: "Hoy", iconAnterior: "Ayer" },
+    { key: "semana", label: "Semana actual vs Anterior", iconActual: "Esta semana", iconAnterior: "Semana anterior" },
+    { key: "mes", label: "Mes actual vs Anterior", iconActual: "Este mes", iconAnterior: "Mes anterior" },
+  ];
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-bold text-slate-700">Dashboard Comparativo</h3>
+        <button onClick={cargar} className="text-slate-400 hover:text-blue-600 transition-colors p-2 rounded-lg hover:bg-white">
+          <RefreshCw size={18} />
+        </button>
+      </div>
+
+      {periodos.map(({ key, label, iconActual, iconAnterior }) => {
+        const d = data[key];
+        const ventasPct = pctVal(d.actual.ventas, d.anterior.ventas);
+        const ticketsPct = pctVal(d.actual.tickets, d.anterior.tickets);
+        const gastosPct = pctVal(d.actual.gastos, d.anterior.gastos);
+        const gananciActual = d.actual.ventas - d.actual.gastos;
+        const gananciAnterior = d.anterior.ventas - d.anterior.gastos;
+
+        return (
+          <div key={key} className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+            <h4 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-4">{label}</h4>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <ComparativeCard
+                title="Ventas"
+                actual={d.actual.ventas}
+                anterior={d.anterior.ventas}
+                pct={ventasPct}
+                format="money"
+                color="blue"
+              />
+              <ComparativeCard
+                title="Tickets"
+                actual={d.actual.tickets}
+                anterior={d.anterior.tickets}
+                pct={ticketsPct}
+                format="number"
+                color="indigo"
+              />
+              <ComparativeCard
+                title="Gastos"
+                actual={d.actual.gastos}
+                anterior={d.anterior.gastos}
+                pct={gastosPct}
+                format="money"
+                color="red"
+                invertColor
+              />
+              <ComparativeCard
+                title="Ganancia"
+                actual={gananciActual}
+                anterior={gananciAnterior}
+                pct={pctVal(gananciActual, gananciAnterior)}
+                format="money"
+                color="green"
+              />
             </div>
-
-            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-420px)]">
-                <table className="w-full text-left border-collapse">
-                    <thead className="bg-slate-50 text-slate-600 font-semibold text-sm uppercase tracking-wider sticky top-0 z-10">
-                        <tr>
-                            <th className="p-4 border-b border-slate-100 bg-slate-50 w-10"></th>
-                            <th className="p-4 border-b border-slate-100 bg-slate-50">Ticket ID</th>
-                            <th className="p-4 border-b border-slate-100 bg-slate-50">Fecha</th>
-                            <th className="p-4 border-b border-slate-100 bg-slate-50">Método</th>
-                            <th className="p-4 border-b border-slate-100 bg-slate-50 text-right">Total</th>
-                            <th className="p-4 border-b border-slate-100 text-center bg-slate-50">Acción</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                        {historialVentas.map((ticket) => (
-                            <React.Fragment key={ticket.ticket_id}>
-                                {/* FILA PRINCIPAL */}
-                                <tr 
-                                    className={`hover:bg-slate-50 transition-colors cursor-pointer ${ticketExpandido === ticket.ticket_id ? 'bg-blue-50/50' : ''}`}
-                                    onClick={() => toggleExpand(ticket.ticket_id)}
-                                >
-                                    <td className="p-4 text-slate-400">
-                                        {ticketExpandido === ticket.ticket_id ? <ChevronUp size={20}/> : <ChevronDown size={20}/>}
-                                    </td>
-                                    <td className="p-4 text-slate-700 font-medium">#{ticket.ticket_id}</td>
-                                    <td className="p-4 text-sm text-slate-500">
-                                        {new Date(ticket.fecha).toLocaleString()}
-                                        {ticket.editado === 1 && <span className="block text-xs text-orange-500 font-bold mt-1">(Editado)</span>}
-                                    </td>
-                                    <td className="p-4">
-                                        <span className={`px-2 py-1 rounded-full text-xs font-medium 
-                                            ${ticket.metodo === 'Efectivo' ? 'bg-green-100 text-green-700' : 
-                                              ticket.metodo === 'Fiado' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
-                                            {ticket.metodo}
-                                        </span>
-                                    </td>
-                                    <td className="p-4 text-right font-bold text-slate-700">${ticket.total.toFixed(2)}</td>
-                                    
-                                    <td className="p-4 text-center relative" onClick={(e) => e.stopPropagation()}>
-                                         <button 
-                                            onClick={() => setMenuAbierto(menuAbierto === ticket.ticket_id ? null : ticket.ticket_id)}
-                                            className="p-2 hover:bg-slate-100 rounded-full text-slate-500 transition-colors"
-                                         >
-                                            <MoreVertical size={20} />
-                                         </button>
-                                         {menuAbierto === ticket.ticket_id && (
-                                             <div className="absolute right-10 top-2 bg-white shadow-xl border border-slate-100 rounded-lg z-50 w-52 overflow-hidden flex flex-col text-left animate-in fade-in zoom-in duration-200">
-                                                 <button onClick={() => { reimprimirTicket(ticket); setMenuAbierto(null); }} className="px-4 py-3 hover:bg-slate-50 text-slate-600 text-sm font-medium flex items-center gap-2 border-b border-slate-50">
-                                                    <Printer size={16} className="text-purple-500"/> Reimprimir Ticket
-                                                 </button>
-                                                 <button onClick={() => { compartirTicket(ticket); setMenuAbierto(null); }} className="px-4 py-3 hover:bg-slate-50 text-slate-600 text-sm font-medium flex items-center gap-2 border-b border-slate-50">
-                                                    <Share2 size={16} className="text-green-500"/> Compartir WhatsApp
-                                                 </button>
-                                                 <button onClick={() => abrirDevolucion(ticket)} className="px-4 py-3 hover:bg-orange-50 text-orange-600 text-sm font-medium flex items-center gap-2 border-b border-slate-50">
-                                                    <RotateCcw size={16}/> Devolución Parcial
-                                                 </button>
-                                                 <button onClick={() => editarVenta(ticket)} className="px-4 py-3 hover:bg-slate-50 text-slate-600 text-sm font-medium flex items-center gap-2 border-b border-slate-50">
-                                                    <Edit size={16} className="text-blue-500"/> Editar / Corregir
-                                                 </button>
-                                                 <button onClick={() => eliminarVenta(ticket.ticket_id)} className="px-4 py-3 hover:bg-red-50 text-red-600 text-sm font-medium flex items-center gap-2">
-                                                    <Trash2 size={16}/> Eliminar Reporte
-                                                 </button>
-                                             </div>
-                                         )}
-                                         {menuAbierto === ticket.ticket_id && <div className="fixed inset-0 z-40" onClick={() => setMenuAbierto(null)}></div>}
-                                    </td>
-                                </tr>
-
-                                {/* FILA DE DETALLES */}
-                                {ticketExpandido === ticket.ticket_id && (
-                                    <tr className="bg-slate-50 animate-in fade-in slide-in-from-top-2 duration-300">
-                                        <td colSpan="6" className="p-0">
-                                            <div className="p-6 border-b border-slate-200 shadow-inner">
-                                                <div className="flex flex-col md:flex-row gap-8">
-                                                    {/* INFO EXTRA (Cliente y Pago) */}
-                                                    <div className="w-full md:w-1/3 space-y-6">
-                                                        {/* Sección Cliente */}
-                                                        <div>
-                                                            <h4 className="font-bold text-slate-700 flex items-center gap-2 mb-2">
-                                                                <User size={18} className="text-blue-500"/> Cliente
-                                                            </h4>
-                                                            <div className="bg-white p-3 rounded-lg border border-slate-200 text-sm text-slate-600 shadow-sm">
-                                                                {ticket.cliente}
-                                                            </div>
-                                                        </div>
-
-                                                        {/* NUEVA SECCIÓN: Detalle del Pago */}
-                                                        <div>
-                                                            <h4 className="font-bold text-slate-700 flex items-center gap-2 mb-2">
-                                                                <Wallet size={18} className="text-green-600"/> Detalle del Pago
-                                                            </h4>
-                                                            <div className="bg-white p-3 rounded-lg border border-slate-200 text-sm space-y-2 shadow-sm">
-                                                                <div className="flex justify-between items-center">
-                                                                    <span className="text-slate-500">Total Venta:</span>
-                                                                    <span className="font-bold text-slate-800 text-lg">${ticket.total.toFixed(2)}</span>
-                                                                </div>
-                                                                
-                                                                {/* Si hubo entrega (Efectivo o Digital) */}
-                                                                {(ticket.pago_efectivo > 0 || ticket.pago_digital > 0) && (
-                                                                    <div className="flex justify-between items-center pt-2 border-t border-slate-100 text-green-600">
-                                                                        <span>Entrega / Seña:</span>
-                                                                        <span className="font-medium">-${(ticket.pago_efectivo + ticket.pago_digital).toFixed(2)}</span>
-                                                                    </div>
-                                                                )}
-
-                                                                {/* Si es Fiado, mostramos lo que resta */}
-                                                                {ticket.metodo === 'Fiado' && (
-                                                                    <div className="bg-red-50 p-2 rounded border border-red-100 flex justify-between items-center text-red-700 mt-2">
-                                                                        <span className="font-semibold flex items-center gap-1"><AlertCircle size={14}/> Resta (Deuda):</span>
-                                                                        <span className="font-bold text-lg">
-                                                                            ${(ticket.total - (ticket.pago_efectivo + ticket.pago_digital)).toFixed(2)}
-                                                                        </span>
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-
-                                                    {/* TABLA PRODUCTOS */}
-                                                    <div className="w-full md:w-2/3">
-                                                        <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
-                                                            <ShoppingBag size={18} className="text-green-500"/> Productos Vendidos
-                                                        </h4>
-                                                        <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm">
-                                                            <table className="w-full text-sm">
-                                                                <thead className="bg-slate-100 text-slate-500 font-semibold">
-                                                                    <tr>
-                                                                        <th className="p-3 text-left">Producto</th>
-                                                                        <th className="p-3 text-center">Cant.</th>
-                                                                        <th className="p-3 text-right">P. Unit</th>
-                                                                        <th className="p-3 text-right">Subtotal</th>
-                                                                    </tr>
-                                                                </thead>
-                                                                <tbody className="divide-y divide-slate-100">
-                                                                    {ticket.lista_productos.map((prod, idx) => (
-                                                                        <tr key={idx} className="hover:bg-slate-50">
-                                                                            <td className="p-3 text-slate-700">{prod.nombre}</td>
-                                                                            <td className="p-3 text-center text-slate-500">x{prod.cantidad}</td>
-                                                                            <td className="p-3 text-right text-slate-500">${prod.precio_unitario.toFixed(2)}</td>
-                                                                            <td className="p-3 text-right font-medium text-slate-700">
-                                                                                ${prod.subtotal.toFixed(2)}
-                                                                            </td>
-                                                                        </tr>
-                                                                    ))}
-                                                                </tbody>
-                                                            </table>
-                                                        </div>
-
-                                                        {/* NOTAS DE LA VENTA */}
-                                                        {ticket.notas && ticket.notas.trim() && (
-                                                            <div className="mt-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                                                                <p className="text-xs font-bold text-yellow-700 uppercase mb-1">📝 Notas</p>
-                                                                <p className="text-sm text-yellow-800">{ticket.notas}</p>
-                                                            </div>
-                                                        )}
-
-                                                        {/* BOTONES DE ACCIÓN RÁPIDA */}
-                                                        <div className="mt-3 flex gap-2 flex-wrap">
-                                                            <button onClick={() => reimprimirTicket(ticket)} className="flex items-center gap-1 px-3 py-2 bg-purple-50 text-purple-700 border border-purple-200 rounded-lg text-xs font-medium hover:bg-purple-100 transition-colors">
-                                                                <Printer size={14}/> Reimprimir
-                                                            </button>
-                                                            <button onClick={() => compartirTicket(ticket)} className="flex items-center gap-1 px-3 py-2 bg-green-50 text-green-700 border border-green-200 rounded-lg text-xs font-medium hover:bg-green-100 transition-colors">
-                                                                <Share2 size={14}/> WhatsApp
-                                                            </button>
-                                                            <button onClick={() => abrirDevolucion(ticket)} className="flex items-center gap-1 px-3 py-2 bg-orange-50 text-orange-700 border border-orange-200 rounded-lg text-xs font-medium hover:bg-orange-100 transition-colors">
-                                                                <RotateCcw size={14}/> Devolución
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                )}
-                            </React.Fragment>
-                        ))}
-                    </tbody>
-                </table>
-                {historialVentas.length === 0 && (
-                    <div className="p-12 text-center text-slate-400">
-                        No hay ventas registradas aún.
-                    </div>
-                )}
-            </div>
-        </div>
-      ) : activeTab === "graficos" ? (
-        <div className="overflow-y-auto max-h-[calc(100vh-200px)] p-1">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-10">
-                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 md:col-span-2">
-                    <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><TrendingUp size={20}/> Ventas de la Semana</h3>
-                    <div className="h-72">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={ventasSemana}>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/>
-                                <XAxis dataKey="fecha" tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false}/>
-                                <YAxis tick={{fontSize: 12, fill: '#64748b'}} axisLine={false} tickLine={false} tickFormatter={(value) => `$${value}`}/>
-                                <Tooltip formatter={(value) => [`$${value}`, 'Ventas']} contentStyle={{backgroundColor: '#fff', borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}}/>
-                                <Bar dataKey="total" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={40} />
-                            </BarChart>
-                        </ResponsiveContainer>
-                    </div>
-                </div>
-                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-                    <h3 className="font-bold text-slate-700 mb-4">Métodos de Pago</h3>
-                    <div className="h-64">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <PieChart>
-                                <Pie data={metodosPago} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                                    {metodosPago.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
-                                </Pie>
-                                <Tooltip />
-                            </PieChart>
-                        </ResponsiveContainer>
-                    </div>
-                </div>
-                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 md:col-span-2">
-                    <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><ShoppingBag size={20}/> Productos Más Vendidos</h3>
-                    <div className="h-64">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={productosTop} layout="vertical" margin={{left: 20}}>
-                                <CartesianGrid strokeDasharray="3 3" horizontal={false}/>
-                                <XAxis type="number" hide/>
-                                <YAxis dataKey="name" type="category" width={150} tick={{fontSize: 12}}/>
-                                <Tooltip />
-                                <Bar dataKey="value" fill="#10b981" radius={[0, 4, 4, 0]} barSize={20}/>
-                            </BarChart>
-                        </ResponsiveContainer>
-                    </div>
-                </div>
-            </div>
-        </div>
-      ) : activeTab === "rentabilidad" ? (
-        <div className="overflow-y-auto max-h-[calc(100vh-200px)] p-1">
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-in fade-in">
-            <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-              <h3 className="font-bold text-slate-700 text-lg flex items-center gap-2">
-                <DollarSign size={20} className="text-green-600"/> Rentabilidad por Producto
-              </h3>
-              <span className="text-sm text-slate-400">{rentabilidad.length} productos con ventas</span>
-            </div>
-            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-380px)]">
-              <table className="w-full text-left border-collapse">
-                <thead className="bg-slate-50 text-slate-600 font-semibold text-xs uppercase tracking-wider sticky top-0 z-10">
-                  <tr>
-                    <th className="p-4 border-b border-slate-100 bg-slate-50">Producto</th>
-                    <th className="p-4 border-b border-slate-100 bg-slate-50 text-right">P. Venta</th>
-                    <th className="p-4 border-b border-slate-100 bg-slate-50 text-right">Costo</th>
-                    <th className="p-4 border-b border-slate-100 bg-slate-50 text-center">Uds Vendidas</th>
-                    <th className="p-4 border-b border-slate-100 bg-slate-50 text-right">Ganancia Unit.</th>
-                    <th className="p-4 border-b border-slate-100 bg-slate-50 text-right">Margen %</th>
-                    <th className="p-4 border-b border-slate-100 bg-slate-50 text-right">Ganancia Total</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-sm">
-                  {rentabilidad.length === 0 ? (
-                    <tr><td colSpan="7" className="p-12 text-center text-slate-400">No hay datos de ventas con costos registrados.</td></tr>
-                  ) : (
-                    rentabilidad.map((p, i) => (
-                      <tr key={i} className="hover:bg-slate-50 transition-colors">
-                        <td className="p-4 font-bold text-slate-700">{p.nombre}</td>
-                        <td className="p-4 text-right text-slate-600">${p.precio?.toFixed(2)}</td>
-                        <td className="p-4 text-right text-slate-500">${p.costo?.toFixed(2)}</td>
-                        <td className="p-4 text-center font-medium text-blue-600">{p.total_vendido}</td>
-                        <td className="p-4 text-right">
-                          <span className={`font-bold ${p.ganancia_unitaria > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                            ${p.ganancia_unitaria?.toFixed(2)}
-                          </span>
-                        </td>
-                        <td className="p-4 text-right">
-                          <span className={`px-2 py-1 rounded-full text-xs font-bold ${
-                            p.margen > 30 ? 'bg-green-100 text-green-700' : 
-                            p.margen > 15 ? 'bg-yellow-100 text-yellow-700' : 
-                            'bg-red-100 text-red-700'}`}>
-                            {p.margen?.toFixed(1)}%
-                          </span>
-                        </td>
-                        <td className="p-4 text-right font-bold text-slate-800">${p.ganancia_total?.toFixed(2)}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-                {rentabilidad.length > 0 && (
-                  <tfoot className="bg-slate-50 border-t-2 border-slate-200">
-                    <tr className="font-bold text-sm">
-                      <td colSpan="3" className="p-4 text-slate-600">TOTALES</td>
-                      <td className="p-4 text-center text-blue-700">{rentabilidad.reduce((a, p) => a + p.total_vendido, 0)}</td>
-                      <td className="p-4"></td>
-                      <td className="p-4"></td>
-                      <td className="p-4 text-right text-green-700 text-lg">${rentabilidad.reduce((a, p) => a + p.ganancia_total, 0).toFixed(2)}</td>
-                    </tr>
-                  </tfoot>
-                )}
-              </table>
+            {/* Mini bar chart */}
+            <div className="mt-4 h-20">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={[
+                  { name: iconAnterior, ventas: d.anterior.ventas, gastos: d.anterior.gastos },
+                  { name: iconActual, ventas: d.actual.ventas, gastos: d.actual.gastos },
+                ]}>
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "#94a3b8" }} />
+                  <Tooltip formatter={(v) => fmtMoney(v)} contentStyle={{ borderRadius: "8px", border: "none", boxShadow: "0 2px 8px rgba(0,0,0,.1)" }} />
+                  <Bar dataKey="ventas" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={28} name="Ventas" />
+                  <Bar dataKey="gastos" fill="#ef4444" radius={[4, 4, 0, 0]} barSize={28} name="Gastos" />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
           </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ComparativeCard({ title, actual, anterior, pct, format, color, invertColor }) {
+  const isPositive = invertColor ? pct <= 0 : pct >= 0;
+  const Arrow = pct >= 0 ? ArrowUpRight : ArrowDownRight;
+  const val = format === "money" ? fmtMoney(actual) : actual;
+
+  return (
+    <div className="rounded-xl bg-slate-50 p-3 space-y-1">
+      <p className="text-xs text-slate-500 font-medium">{title}</p>
+      <p className={`text-xl font-bold text-${color}-600`}>{val}</p>
+      <div className={`flex items-center gap-1 text-xs font-semibold ${isPositive ? "text-emerald-600" : "text-red-500"}`}>
+        <Arrow size={14} />
+        <span>{fmtPct(actual, anterior)}</span>
+        <span className="text-slate-400 font-normal ml-1">
+          vs {format === "money" ? fmtMoney(anterior) : anterior}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// 28. RENTABILIDAD POR PRODUCTO
+// ═══════════════════════════════════════════════════════════
+function Rentabilidad() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [filtro, setFiltro] = useState("");
+  const [ordenarPor, setOrdenarPor] = useState("ganancia_total");
+  const [categoriaFiltro, setCategoriaFiltro] = useState("Todas");
+
+  useEffect(() => {
+    apiFetch("/api/reportes/rentabilidad")
+      .then((r) => r.json())
+      .then(setData)
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, []);
+
+  const categorias = useMemo(() => {
+    if (!data) return [];
+    const cats = [...new Set(data.productos.map((p) => p.categoria))];
+    return ["Todas", ...cats];
+  }, [data]);
+
+  const productosFiltrados = useMemo(() => {
+    if (!data) return [];
+    let list = data.productos;
+    if (categoriaFiltro !== "Todas") list = list.filter((p) => p.categoria === categoriaFiltro);
+    if (filtro) list = list.filter((p) => p.nombre.toLowerCase().includes(filtro.toLowerCase()));
+    list.sort((a, b) => b[ordenarPor] - a[ordenarPor]);
+    return list;
+  }, [data, filtro, ordenarPor, categoriaFiltro]);
+
+  // Agrupar por categoría para pie chart
+  const dataPie = useMemo(() => {
+    if (!data) return [];
+    const byCat = {};
+    data.productos.forEach((p) => {
+      if (!byCat[p.categoria]) byCat[p.categoria] = 0;
+      byCat[p.categoria] += p.ganancia_total;
+    });
+    return Object.entries(byCat)
+      .map(([name, value]) => ({ name, value: Math.max(value, 0) }))
+      .filter((d) => d.value > 0)
+      .sort((a, b) => b.value - a.value);
+  }, [data]);
+
+  if (loading) return <Skeleton />;
+  if (!data) return <ErrorMsg msg="No se pudieron cargar los datos de rentabilidad" />;
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      {/* KPI Cards */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+          <p className="text-sm text-slate-500">Ingresos Totales</p>
+          <p className="text-2xl font-bold text-blue-600">{fmtMoney(data.totalIngresos)}</p>
         </div>
-      ) : null}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+          <p className="text-sm text-slate-500">Ganancia Total</p>
+          <p className="text-2xl font-bold text-emerald-600">{fmtMoney(data.totalGanancia)}</p>
+        </div>
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+          <p className="text-sm text-slate-500">Margen Promedio</p>
+          <p className="text-2xl font-bold text-amber-600">
+            {data.totalIngresos > 0 ? ((data.totalGanancia / data.totalIngresos) * 100).toFixed(1) : 0}%
+          </p>
+        </div>
+      </div>
 
-      {/* === MODAL DE DEVOLUCIÓN PARCIAL === */}
-      {modalDevolucion && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[80vh] overflow-hidden animate-in zoom-in-95 duration-200">
-            <div className="p-5 bg-orange-600 text-white flex justify-between items-center">
-              <div>
-                <h3 className="font-bold text-lg flex items-center gap-2">
-                  <RotateCcw size={20}/> Devolución Parcial
-                </h3>
-                <p className="text-orange-100 text-sm">Ticket #{modalDevolucion.ticket_id}</p>
-              </div>
-              <button onClick={() => setModalDevolucion(null)} className="p-1 hover:bg-white/20 rounded">
-                <X size={20}/>
-              </button>
-            </div>
-
-            <div className="p-5 space-y-4 overflow-y-auto max-h-[50vh]">
-              <p className="text-sm text-slate-500">Seleccioná la cantidad a devolver de cada producto:</p>
-              
-              {itemsDevolucion.map((item, idx) => (
-                <div key={idx} className="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <div className="flex-1">
-                    <p className="font-bold text-sm text-slate-700">{item.nombre}</p>
-                    <p className="text-xs text-slate-400">Vendidos: {item.cantidad} | P.Unit: ${item.precio_unitario.toFixed(0)}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button 
-                      onClick={() => setItemsDevolucion(prev => prev.map((it, i) => i === idx ? { ...it, devolver: Math.max(0, it.devolver - 1) } : it))}
-                      className="w-8 h-8 rounded-lg bg-white border border-slate-300 text-slate-600 font-bold hover:bg-slate-100"
-                    >-</button>
-                    <span className={`w-8 text-center font-bold ${item.devolver > 0 ? 'text-orange-600' : 'text-slate-400'}`}>
-                      {item.devolver}
-                    </span>
-                    <button 
-                      onClick={() => setItemsDevolucion(prev => prev.map((it, i) => i === idx ? { ...it, devolver: Math.min(it.cantidad, it.devolver + 1) } : it))}
-                      className="w-8 h-8 rounded-lg bg-white border border-slate-300 text-slate-600 font-bold hover:bg-slate-100"
-                    >+</button>
-                  </div>
-                </div>
-              ))}
-
-              <div>
-                <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Motivo de devolución (opcional)</label>
-                <textarea
-                  className="w-full p-2 border rounded-lg text-sm bg-white resize-none"
-                  rows={2}
-                  placeholder="Ej: Producto dañado, error en la venta..."
-                  value={motivoDevolucion}
-                  onChange={e => setMotivoDevolucion(e.target.value)}
-                />
-              </div>
-
-              {/* Resumen de devolución */}
-              {itemsDevolucion.some(i => i.devolver > 0) && (
-                <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-sm">
-                  <p className="font-bold text-orange-800 mb-1">Resumen de devolución:</p>
-                  {itemsDevolucion.filter(i => i.devolver > 0).map((item, idx) => (
-                    <div key={idx} className="flex justify-between text-orange-700">
-                      <span>{item.devolver}x {item.nombre}</span>
-                      <span className="font-medium">-${(item.devolver * item.precio_unitario).toFixed(0)}</span>
-                    </div>
+      {/* Pie Chart por categoría */}
+      {dataPie.length > 0 && (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+          <h4 className="text-sm font-semibold text-slate-500 mb-3">Ganancia por Categoría</h4>
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={dataPie}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={90}
+                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                  labelLine={true}
+                >
+                  {dataPie.map((_, i) => (
+                    <Cell key={i} fill={COLORS[i % COLORS.length]} />
                   ))}
-                  <div className="flex justify-between font-bold text-orange-900 border-t border-orange-200 mt-2 pt-2">
-                    <span>Total a devolver:</span>
-                    <span>${itemsDevolucion.filter(i => i.devolver > 0).reduce((acc, i) => acc + (i.devolver * i.precio_unitario), 0).toFixed(0)}</span>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="p-4 bg-slate-50 border-t border-slate-200 flex gap-3">
-              <button onClick={() => setModalDevolucion(null)} className="flex-1 py-3 rounded-xl font-bold text-slate-600 border border-slate-300 hover:bg-white transition-colors">
-                Cancelar
-              </button>
-              <button 
-                onClick={confirmarDevolucion}
-                disabled={!itemsDevolucion.some(i => i.devolver > 0)}
-                className="flex-1 py-3 rounded-xl font-bold text-white bg-orange-600 hover:bg-orange-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                Confirmar Devolución
-              </button>
-            </div>
+                </Pie>
+                <Tooltip formatter={(v) => fmtMoney(v)} />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
           </div>
         </div>
       )}
 
+      {/* Filtros */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+        <div className="flex flex-wrap gap-3 mb-4">
+          <input
+            type="text"
+            placeholder="Buscar producto..."
+            className="border border-slate-200 rounded-lg px-3 py-2 text-sm flex-1 min-w-[200px] focus:outline-none focus:ring-2 focus:ring-blue-500"
+            value={filtro}
+            onChange={(e) => setFiltro(e.target.value)}
+          />
+          <select
+            className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            value={categoriaFiltro}
+            onChange={(e) => setCategoriaFiltro(e.target.value)}
+          >
+            {categorias.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+          <select
+            className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            value={ordenarPor}
+            onChange={(e) => setOrdenarPor(e.target.value)}
+          >
+            <option value="ganancia_total">Mayor ganancia total</option>
+            <option value="margen_pct">Mayor margen %</option>
+            <option value="margen">Mayor margen unitario</option>
+            <option value="total_vendido">Más vendidos</option>
+            <option value="ingresos_totales">Más ingresos</option>
+          </select>
+        </div>
+
+        {/* Tabla */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-slate-500 border-b border-slate-100">
+                <th className="pb-2 font-medium">Producto</th>
+                <th className="pb-2 font-medium">Categoría</th>
+                <th className="pb-2 font-medium text-right">Precio</th>
+                <th className="pb-2 font-medium text-right">Costo</th>
+                <th className="pb-2 font-medium text-right">Margen</th>
+                <th className="pb-2 font-medium text-right">Margen %</th>
+                <th className="pb-2 font-medium text-right">Vendidos</th>
+                <th className="pb-2 font-medium text-right">Ganancia Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {productosFiltrados.slice(0, 50).map((p, i) => (
+                <tr key={i} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                  <td className="py-2 font-medium text-slate-800">{p.nombre}</td>
+                  <td className="py-2">
+                    <span className="bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded-full">{p.categoria}</span>
+                  </td>
+                  <td className="py-2 text-right">{fmtMoney(p.precio)}</td>
+                  <td className="py-2 text-right text-slate-500">{fmtMoney(p.costo)}</td>
+                  <td className="py-2 text-right font-medium text-emerald-600">{fmtMoney(p.margen)}</td>
+                  <td className="py-2 text-right">
+                    <span className={`font-bold ${p.margen_pct > 30 ? "text-emerald-600" : p.margen_pct > 10 ? "text-amber-600" : "text-red-500"}`}>
+                      {p.margen_pct}%
+                    </span>
+                  </td>
+                  <td className="py-2 text-right">{p.total_vendido}</td>
+                  <td className="py-2 text-right font-bold text-slate-800">{fmtMoney(p.ganancia_total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {productosFiltrados.length > 50 && (
+            <p className="text-xs text-slate-400 mt-2 text-center">Mostrando 50 de {productosFiltrados.length} productos</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// 29. HORAS PICO
+// ═══════════════════════════════════════════════════════════
+function HorasPico() {
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [dias, setDias] = useState(30);
+
+  const cargar = (d) => {
+    setLoading(true);
+    apiFetch(`/api/reportes/horas_pico?dias=${d}`)
+      .then((r) => r.json())
+      .then((rows) => {
+        // Fill all 24 hours
+        const full = Array.from({ length: 24 }, (_, i) => {
+          const found = rows.find((r) => r.hora === i);
+          return { hora: i, label: `${String(i).padStart(2, "0")}:00`, tickets: found?.tickets || 0, total: found?.total || 0 };
+        });
+        setData(full);
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { cargar(dias); }, [dias]);
+
+  const maxHora = useMemo(() => data.reduce((max, d) => (d.total > max.total ? d : max), { total: 0 }), [data]);
+  const totalVentas = data.reduce((s, d) => s + d.total, 0);
+  const totalTickets = data.reduce((s, d) => s + d.tickets, 0);
+
+  if (loading) return <Skeleton />;
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-bold text-slate-700">Reporte de Horas Pico</h3>
+        <select
+          className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          value={dias}
+          onChange={(e) => setDias(Number(e.target.value))}
+        >
+          <option value={7}>Últimos 7 días</option>
+          <option value={15}>Últimos 15 días</option>
+          <option value={30}>Últimos 30 días</option>
+          <option value={90}>Últimos 90 días</option>
+        </select>
+      </div>
+
+      {/* KPIs */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+          <p className="text-sm text-slate-500">Hora Pico</p>
+          <p className="text-2xl font-bold text-amber-600">{maxHora.label || "--:--"}</p>
+          <p className="text-xs text-slate-400">{maxHora.tickets} tickets · {fmtMoney(maxHora.total)}</p>
+        </div>
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+          <p className="text-sm text-slate-500">Total Ventas período</p>
+          <p className="text-2xl font-bold text-blue-600">{fmtMoney(totalVentas)}</p>
+        </div>
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+          <p className="text-sm text-slate-500">Total Tickets período</p>
+          <p className="text-2xl font-bold text-indigo-600">{totalTickets}</p>
+        </div>
+      </div>
+
+      {/* Gráfico de barras por hora */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+        <h4 className="text-sm font-semibold text-slate-500 mb-3">Ventas por Hora del Día</h4>
+        <div className="h-72">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+              <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: "#64748b" }} interval={1} />
+              <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "#64748b" }} tickFormatter={(v) => fmtMoney(v)} />
+              <Tooltip
+                formatter={(v, name) => [name === "total" ? fmtMoney(v) : v, name === "total" ? "Ventas" : "Tickets"]}
+                contentStyle={{ borderRadius: "8px", border: "none", boxShadow: "0 2px 8px rgba(0,0,0,.1)" }}
+              />
+              <Bar dataKey="total" fill="#3b82f6" radius={[3, 3, 0, 0]} name="total" />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Gráfico de tickets */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+        <h4 className="text-sm font-semibold text-slate-500 mb-3">Tickets por Hora</h4>
+        <div className="h-56">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+              <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: "#64748b" }} interval={1} />
+              <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "#64748b" }} />
+              <Tooltip contentStyle={{ borderRadius: "8px", border: "none", boxShadow: "0 2px 8px rgba(0,0,0,.1)" }} />
+              <Area type="monotone" dataKey="tickets" stroke="#8b5cf6" fill="#8b5cf6" fillOpacity={0.15} strokeWidth={2} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Tabla resumen top horas */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+        <h4 className="text-sm font-semibold text-slate-500 mb-3">Top Horarios</h4>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[...data].sort((a, b) => b.total - a.total).slice(0, 8).map((h, i) => (
+            <div key={h.hora} className={`rounded-lg p-3 ${i === 0 ? "bg-amber-50 border border-amber-200" : "bg-slate-50"}`}>
+              <div className="flex items-center justify-between">
+                <span className={`text-lg font-bold ${i === 0 ? "text-amber-600" : "text-slate-700"}`}>{h.label}</span>
+                {i === 0 && <span className="text-xs bg-amber-200 text-amber-800 px-2 py-0.5 rounded-full font-bold">PICO</span>}
+              </div>
+              <p className="text-sm text-slate-600">{fmtMoney(h.total)} · {h.tickets} tix</p>
+              <div className="mt-1 bg-slate-200 rounded-full h-1.5 overflow-hidden">
+                <div
+                  className={`h-full rounded-full ${i === 0 ? "bg-amber-500" : "bg-blue-500"}`}
+                  style={{ width: `${maxHora.total > 0 ? (h.total / maxHora.total) * 100 : 0}%` }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// 31. TENDENCIA MENSUAL
+// ═══════════════════════════════════════════════════════════
+function TendenciaMensual() {
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    apiFetch("/api/reportes/tendencia_mensual")
+      .then((r) => r.json())
+      .then(setData)
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <Skeleton />;
+
+  const totalVentas = data.reduce((s, d) => s + d.ventas, 0);
+  const totalGastos = data.reduce((s, d) => s + d.gastos, 0);
+  const promedioMes = data.length > 0 ? totalVentas / data.length : 0;
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <h3 className="text-lg font-bold text-slate-700">Tendencia Mensual (Últimos 12 meses)</h3>
+
+      {/* KPIs */}
+      <div className="grid grid-cols-4 gap-4">
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+          <p className="text-sm text-slate-500">Ventas Totales</p>
+          <p className="text-2xl font-bold text-blue-600">{fmtMoney(totalVentas)}</p>
+        </div>
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+          <p className="text-sm text-slate-500">Gastos Totales</p>
+          <p className="text-2xl font-bold text-red-500">{fmtMoney(totalGastos)}</p>
+        </div>
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+          <p className="text-sm text-slate-500">Ganancia Neta</p>
+          <p className={`text-2xl font-bold ${totalVentas - totalGastos >= 0 ? "text-emerald-600" : "text-red-600"}`}>{fmtMoney(totalVentas - totalGastos)}</p>
+        </div>
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+          <p className="text-sm text-slate-500">Promedio/Mes</p>
+          <p className="text-2xl font-bold text-indigo-600">{fmtMoney(promedioMes)}</p>
+        </div>
+      </div>
+
+      {/* Gráfico principal de líneas */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+        <h4 className="text-sm font-semibold text-slate-500 mb-3">Evolución Ventas vs Gastos</h4>
+        <div className="h-80">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "#64748b" }} />
+              <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "#64748b" }} tickFormatter={(v) => fmtMoney(v)} />
+              <Tooltip formatter={(v) => fmtMoney(v)} contentStyle={{ borderRadius: "8px", border: "none", boxShadow: "0 2px 8px rgba(0,0,0,.1)" }} />
+              <Legend />
+              <Line type="monotone" dataKey="ventas" stroke="#3b82f6" strokeWidth={3} dot={{ r: 4 }} name="Ventas" />
+              <Line type="monotone" dataKey="gastos" stroke="#ef4444" strokeWidth={2} dot={{ r: 3 }} name="Gastos" strokeDasharray="5 5" />
+              <Line type="monotone" dataKey="ganancia" stroke="#10b981" strokeWidth={2} dot={{ r: 3 }} name="Ganancia" />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Gráfico de barras de ganancia */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+        <h4 className="text-sm font-semibold text-slate-500 mb-3">Ganancia Neta por Mes</h4>
+        <div className="h-64">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+              <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "#64748b" }} />
+              <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "#64748b" }} tickFormatter={(v) => fmtMoney(v)} />
+              <Tooltip formatter={(v) => fmtMoney(v)} contentStyle={{ borderRadius: "8px", border: "none", boxShadow: "0 2px 8px rgba(0,0,0,.1)" }} />
+              <Bar dataKey="ganancia" name="Ganancia" radius={[4, 4, 0, 0]}>
+                {data.map((entry, i) => (
+                  <Cell key={i} fill={entry.ganancia >= 0 ? "#10b981" : "#ef4444"} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// 32. PRODUCTOS SIN MOVIMIENTO
+// ═══════════════════════════════════════════════════════════
+function SinMovimiento() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [dias, setDias] = useState(30);
+
+  const cargar = (d) => {
+    setLoading(true);
+    apiFetch(`/api/reportes/sin_movimiento?dias=${d}`)
+      .then((r) => r.json())
+      .then(setData)
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { cargar(dias); }, [dias]);
+
+  if (loading) return <Skeleton />;
+  if (!data) return <ErrorMsg msg="No se pudieron cargar los datos" />;
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-bold text-slate-700">Productos Sin Movimiento</h3>
+        <select
+          className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          value={dias}
+          onChange={(e) => { setDias(Number(e.target.value)); }}
+        >
+          <option value={15}>Sin ventas en 15 días</option>
+          <option value={30}>Sin ventas en 30 días</option>
+          <option value={60}>Sin ventas en 60 días</option>
+          <option value={90}>Sin ventas en 90 días</option>
+        </select>
+      </div>
+
+      {/* Alertas */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="bg-amber-50 rounded-2xl border border-amber-200 p-5">
+          <div className="flex items-center gap-2 mb-1">
+            <AlertTriangle size={18} className="text-amber-600" />
+            <p className="text-sm text-amber-700 font-medium">Productos Estancados</p>
+          </div>
+          <p className="text-3xl font-bold text-amber-700">{data.totalItems}</p>
+        </div>
+        <div className="bg-red-50 rounded-2xl border border-red-200 p-5">
+          <div className="flex items-center gap-2 mb-1">
+            <DollarSign size={18} className="text-red-600" />
+            <p className="text-sm text-red-700 font-medium">Capital Inmovilizado</p>
+          </div>
+          <p className="text-3xl font-bold text-red-700">{fmtMoney(data.capitalInmovilizado)}</p>
+        </div>
+        <div className="bg-slate-50 rounded-2xl border border-slate-200 p-5">
+          <div className="flex items-center gap-2 mb-1">
+            <Package size={18} className="text-slate-600" />
+            <p className="text-sm text-slate-600 font-medium">Unidades en Stock</p>
+          </div>
+          <p className="text-3xl font-bold text-slate-700">
+            {data.productos.reduce((s, p) => s + (p.stock || 0), 0)}
+          </p>
+        </div>
+      </div>
+
+      {/* Lista */}
+      {data.productos.length === 0 ? (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-10 text-center text-slate-400">
+          <Package size={48} className="mx-auto mb-3 opacity-40" />
+          <p className="text-lg font-medium">¡No hay productos sin movimiento!</p>
+          <p className="text-sm">Todos los productos se han vendido en los últimos {dias} días.</p>
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-slate-500 border-b border-slate-100">
+                  <th className="pb-2 font-medium">Producto</th>
+                  <th className="pb-2 font-medium">Categoría</th>
+                  <th className="pb-2 font-medium text-right">Stock</th>
+                  <th className="pb-2 font-medium text-right">Costo Unit.</th>
+                  <th className="pb-2 font-medium text-right">Capital Retenido</th>
+                  <th className="pb-2 font-medium text-right">Última Venta</th>
+                  <th className="pb-2 font-medium text-right">Total Vendido</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.productos.map((p, i) => (
+                  <tr key={i} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                    <td className="py-2.5 font-medium text-slate-800">{p.nombre}</td>
+                    <td className="py-2.5">
+                      <span className="bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded-full">{p.categoria}</span>
+                    </td>
+                    <td className="py-2.5 text-right font-medium">{p.stock}</td>
+                    <td className="py-2.5 text-right text-slate-500">{fmtMoney(p.costo)}</td>
+                    <td className="py-2.5 text-right font-bold text-red-600">{fmtMoney(p.stock * (p.costo || 0))}</td>
+                    <td className="py-2.5 text-right text-slate-500">
+                      {p.ultima_venta ? new Date(p.ultima_venta).toLocaleDateString("es-AR") : "Nunca"}
+                    </td>
+                    <td className="py-2.5 text-right">{p.total_vendido}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// 30. EXPORTAR REPORTES A EXCEL/PDF
+// ═══════════════════════════════════════════════════════════
+function ExportarReportes() {
+  const hoy = new Date().toISOString().split("T")[0];
+  const primerDia = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split("T")[0];
+  const [desde, setDesde] = useState(primerDia);
+  const [hasta, setHasta] = useState(hoy);
+  const [cargando, setCargando] = useState(false);
+  const [datos, setDatos] = useState(null);
+
+  const cargar = async () => {
+    setCargando(true);
+    try {
+      const [resVentas, resBalance, resRentabilidad] = await Promise.all([
+        apiFetch(`/api/reportes/ventas_rango?desde=${desde}&hasta=${hasta}`).then((r) => r.json()),
+        apiFetch(`/api/balance_rango?desde=${desde}&hasta=${hasta}`).then((r) => r.json()),
+        apiFetch("/api/reportes/rentabilidad").then((r) => r.json()),
+      ]);
+      setDatos({ ventas: resVentas, balance: resBalance, rentabilidad: resRentabilidad });
+    } catch (e) {
+      console.error(e);
+      alert("Error al cargar los datos");
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  // ── EXCEL: Ventas ──────────────────────────────────
+  const exportarVentasExcel = () => {
+    if (!datos) return;
+    const ws = XLSX.utils.json_to_sheet(
+      datos.ventas.ventas.map((v) => ({
+        Ticket: v.ticket_id,
+        Producto: v.producto,
+        Cantidad: v.cantidad,
+        "Precio Unit.": v.precio_unitario,
+        Total: v.precio_total,
+        "Método Pago": v.metodo_pago,
+        Categoría: v.categoria,
+        Fecha: new Date(v.fecha).toLocaleString("es-AR"),
+        Descuento: v.descuento || 0,
+      }))
+    );
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Ventas");
+
+    // Hoja resumen
+    const wsResumen = XLSX.utils.json_to_sheet([
+      { Concepto: "Total Ventas", Monto: datos.ventas.resumen.total_ventas },
+      { Concepto: "Total Tickets", Monto: datos.ventas.resumen.total_tickets },
+      { Concepto: "Efectivo", Monto: datos.ventas.resumen.total_efectivo },
+      { Concepto: "Digital", Monto: datos.ventas.resumen.total_digital },
+      { Concepto: "Total Gastos", Monto: datos.ventas.totalGastos },
+      { Concepto: "Ganancia Neta", Monto: datos.ventas.resumen.total_ventas - datos.ventas.totalGastos },
+    ]);
+    XLSX.utils.book_append_sheet(wb, wsResumen, "Resumen");
+
+    // Hoja gastos
+    if (datos.ventas.gastos.length > 0) {
+      const wsGastos = XLSX.utils.json_to_sheet(
+        datos.ventas.gastos.map((g) => ({
+          Descripción: g.descripcion,
+          Monto: g.monto,
+          Categoría: g.categoria,
+          "Método Pago": g.metodo_pago,
+          Fecha: new Date(g.fecha).toLocaleString("es-AR"),
+        }))
+      );
+      XLSX.utils.book_append_sheet(wb, wsGastos, "Gastos");
+    }
+
+    XLSX.writeFile(wb, `Ventas_${desde}_al_${hasta}.xlsx`);
+  };
+
+  // ── EXCEL: Balance ─────────────────────────────────
+  const exportarBalanceExcel = () => {
+    if (!datos) return;
+    const b = datos.balance;
+    const ws = XLSX.utils.json_to_sheet([
+      { Tipo: "INGRESO", Concepto: "Ventas Kiosco (Efectivo)", Monto: b.ingresos?.kiosco_efvo || 0 },
+      { Tipo: "INGRESO", Concepto: "Ventas Cigarrillos (Efectivo)", Monto: b.ingresos?.cigarros_efvo || 0 },
+      { Tipo: "INGRESO", Concepto: "Ventas Digitales", Monto: b.ingresos?.digital || 0 },
+      { Tipo: "INGRESO", Concepto: "Cobros Deudas", Monto: b.ingresos?.cobros_deuda || 0 },
+      { Tipo: "INGRESO", Concepto: "TOTAL INGRESOS", Monto: b.total_ingresos || 0 },
+      { Tipo: "", Concepto: "", Monto: "" },
+      { Tipo: "EGRESO", Concepto: "Gastos Operativos", Monto: b.egresos?.gastos_varios || 0 },
+      { Tipo: "EGRESO", Concepto: "Pagos Proveedores", Monto: b.egresos?.pagos_proveedores || 0 },
+      { Tipo: "EGRESO", Concepto: "TOTAL EGRESOS", Monto: b.total_egresos || 0 },
+      { Tipo: "", Concepto: "", Monto: "" },
+      { Tipo: "RESULTADO", Concepto: "Balance Neto", Monto: b.balance || (b.total_ingresos - b.total_egresos) || 0 },
+    ]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Balance");
+    XLSX.writeFile(wb, `Balance_${desde}_al_${hasta}.xlsx`);
+  };
+
+  // ── EXCEL: Rentabilidad ────────────────────────────
+  const exportarRentabilidadExcel = () => {
+    if (!datos) return;
+    const ws = XLSX.utils.json_to_sheet(
+      datos.rentabilidad.productos.map((p) => ({
+        Producto: p.nombre,
+        Categoría: p.categoria,
+        Precio: p.precio,
+        Costo: p.costo,
+        "Margen $": p.margen,
+        "Margen %": `${p.margen_pct}%`,
+        "Uds. Vendidas": p.total_vendido,
+        "Ganancia Total": p.ganancia_total,
+        Stock: p.stock,
+      }))
+    );
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Rentabilidad");
+    XLSX.writeFile(wb, `Rentabilidad_Productos.xlsx`);
+  };
+
+  // ── PDF: Ventas completo ──────────────────────────
+  const exportarVentasPDF = () => {
+    if (!datos) return;
+    const doc = new jsPDF();
+    doc.setFontSize(18);
+    doc.text("Reporte de Ventas", 105, 18, null, null, "center");
+    doc.setFontSize(11);
+    doc.text(
+      `Período: ${new Date(desde + "T00:00:00").toLocaleDateString("es-AR")} al ${new Date(hasta + "T00:00:00").toLocaleDateString("es-AR")}`,
+      105, 26, null, null, "center"
+    );
+    doc.line(14, 30, 196, 30);
+
+    // Resumen
+    doc.setFontSize(13);
+    doc.text("Resumen", 14, 38);
+    autoTable(doc, {
+      startY: 42,
+      head: [["Concepto", "Valor"]],
+      body: [
+        ["Total Ventas", `$ ${datos.ventas.resumen.total_ventas?.toLocaleString()}`],
+        ["Tickets", datos.ventas.resumen.total_tickets],
+        ["Efectivo", `$ ${datos.ventas.resumen.total_efectivo?.toLocaleString()}`],
+        ["Digital", `$ ${datos.ventas.resumen.total_digital?.toLocaleString()}`],
+        ["Gastos", `$ ${datos.ventas.totalGastos?.toLocaleString()}`],
+        ["Ganancia Neta", `$ ${(datos.ventas.resumen.total_ventas - datos.ventas.totalGastos)?.toLocaleString()}`],
+      ],
+      theme: "striped",
+      headStyles: { fillColor: [37, 99, 235] },
+    });
+
+    // Detalle ventas (top 100)
+    const topVentas = datos.ventas.ventas.slice(0, 100);
+    if (topVentas.length > 0) {
+      const finalY = doc.lastAutoTable.finalY + 10;
+      doc.setFontSize(13);
+      doc.text("Detalle de Ventas", 14, finalY);
+      autoTable(doc, {
+        startY: finalY + 4,
+        head: [["Ticket", "Producto", "Cant.", "Total", "Método", "Fecha"]],
+        body: topVentas.map((v) => [
+          v.ticket_id,
+          v.producto?.substring(0, 25),
+          v.cantidad,
+          `$ ${v.precio_total?.toLocaleString()}`,
+          v.metodo_pago,
+          new Date(v.fecha).toLocaleDateString("es-AR"),
+        ]),
+        theme: "striped",
+        headStyles: { fillColor: [37, 99, 235] },
+        styles: { fontSize: 8 },
+      });
+    }
+
+    doc.save(`Ventas_${desde}_al_${hasta}.pdf`);
+  };
+
+  // ── PDF: Balance ───────────────────────────────────
+  const exportarBalancePDF = () => {
+    if (!datos) return;
+    const doc = new jsPDF();
+    const b = datos.balance;
+    doc.setFontSize(20);
+    doc.text("Balance General", 105, 18, null, null, "center");
+    doc.setFontSize(11);
+    doc.text(
+      `Período: ${new Date(desde + "T00:00:00").toLocaleDateString("es-AR")} al ${new Date(hasta + "T00:00:00").toLocaleDateString("es-AR")}`,
+      105, 26, null, null, "center"
+    );
+    doc.line(14, 30, 196, 30);
+
+    doc.setFontSize(14);
+    doc.setTextColor(0, 150, 0);
+    doc.text("INGRESOS", 14, 40);
+    autoTable(doc, {
+      startY: 44,
+      head: [["Concepto", "Monto"]],
+      body: [
+        ["Ventas Kiosco (Efectivo)", `$ ${(b.ingresos?.kiosco_efvo || 0).toLocaleString()}`],
+        ["Ventas Cigarrillos (Efectivo)", `$ ${(b.ingresos?.cigarros_efvo || 0).toLocaleString()}`],
+        ["Ventas Digitales", `$ ${(b.ingresos?.digital || 0).toLocaleString()}`],
+        ["Cobros Deudas", `$ ${(b.ingresos?.cobros_deuda || 0).toLocaleString()}`],
+        ["TOTAL INGRESOS", `$ ${(b.total_ingresos || 0).toLocaleString()}`],
+      ],
+      theme: "striped",
+      headStyles: { fillColor: [46, 204, 113] },
+    });
+
+    const y2 = doc.lastAutoTable.finalY + 10;
+    doc.setTextColor(200, 0, 0);
+    doc.text("EGRESOS", 14, y2);
+    autoTable(doc, {
+      startY: y2 + 4,
+      head: [["Concepto", "Monto"]],
+      body: [
+        ["Gastos Operativos", `$ ${(b.egresos?.gastos_varios || 0).toLocaleString()}`],
+        ["Pagos Proveedores", `$ ${(b.egresos?.pagos_proveedores || 0).toLocaleString()}`],
+        ["TOTAL EGRESOS", `$ ${(b.total_egresos || 0).toLocaleString()}`],
+      ],
+      theme: "striped",
+      headStyles: { fillColor: [231, 76, 60] },
+    });
+
+    const y3 = doc.lastAutoTable.finalY + 15;
+    doc.setFontSize(16);
+    doc.setTextColor(0, 0, 0);
+    const neto = b.balance ?? (b.total_ingresos - b.total_egresos);
+    doc.text(`RESULTADO: $ ${neto?.toLocaleString()}`, 105, y3, null, null, "center");
+    doc.save(`Balance_${desde}_al_${hasta}.pdf`);
+  };
+
+  // ── PDF: Rentabilidad ──────────────────────────────
+  const exportarRentabilidadPDF = () => {
+    if (!datos) return;
+    const doc = new jsPDF("landscape");
+    doc.setFontSize(18);
+    doc.text("Reporte de Rentabilidad por Producto", 148, 18, null, null, "center");
+    doc.line(14, 22, 283, 22);
+    autoTable(doc, {
+      startY: 28,
+      head: [["Producto", "Categoría", "Precio", "Costo", "Margen", "Margen%", "Vendidos", "Ganancia"]],
+      body: datos.rentabilidad.productos.slice(0, 80).map((p) => [
+        p.nombre?.substring(0, 30),
+        p.categoria,
+        `$ ${p.precio?.toLocaleString()}`,
+        `$ ${p.costo?.toLocaleString()}`,
+        `$ ${p.margen?.toLocaleString()}`,
+        `${p.margen_pct}%`,
+        p.total_vendido,
+        `$ ${p.ganancia_total?.toLocaleString()}`,
+      ]),
+      theme: "striped",
+      headStyles: { fillColor: [16, 185, 129] },
+      styles: { fontSize: 8 },
+    });
+    doc.save(`Rentabilidad_Productos.pdf`);
+  };
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <h3 className="text-lg font-bold text-slate-700">Exportar Reportes</h3>
+
+      {/* Selector de rango */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+        <p className="text-sm text-slate-500 mb-3 font-medium">Seleccioná el período para los reportes de Ventas y Balance:</p>
+        <div className="flex flex-wrap gap-4 items-end">
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">Desde</label>
+            <input
+              type="date"
+              className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              value={desde}
+              onChange={(e) => setDesde(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">Hasta</label>
+            <input
+              type="date"
+              className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              value={hasta}
+              onChange={(e) => setHasta(e.target.value)}
+            />
+          </div>
+          <button
+            onClick={cargar}
+            disabled={cargando}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg text-sm font-semibold transition-all disabled:bg-slate-300 flex items-center gap-2"
+          >
+            {cargando ? <RefreshCw size={16} className="animate-spin" /> : <Download size={16} />}
+            {cargando ? "Cargando..." : "Cargar Datos"}
+          </button>
+        </div>
+      </div>
+
+      {/* Botones de exportación */}
+      {datos ? (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* VENTAS */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <div className="bg-blue-100 p-2 rounded-lg"><BarChart3 size={20} className="text-blue-600" /></div>
+              <div>
+                <h4 className="font-bold text-slate-700">Reporte de Ventas</h4>
+                <p className="text-xs text-slate-400">{datos.ventas.resumen.total_tickets} tickets · {fmtMoney(datos.ventas.resumen.total_ventas)}</p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={exportarVentasExcel} className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-all">
+                <FileSpreadsheet size={16} /> Excel
+              </button>
+              <button onClick={exportarVentasPDF} className="flex-1 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-all">
+                <FileText size={16} /> PDF
+              </button>
+            </div>
+          </div>
+
+          {/* BALANCE */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <div className="bg-green-100 p-2 rounded-lg"><DollarSign size={20} className="text-green-600" /></div>
+              <div>
+                <h4 className="font-bold text-slate-700">Balance General</h4>
+                <p className="text-xs text-slate-400">Ingresos vs Egresos</p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={exportarBalanceExcel} className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-all">
+                <FileSpreadsheet size={16} /> Excel
+              </button>
+              <button onClick={exportarBalancePDF} className="flex-1 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-all">
+                <FileText size={16} /> PDF
+              </button>
+            </div>
+          </div>
+
+          {/* RENTABILIDAD */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <div className="bg-amber-100 p-2 rounded-lg"><TrendingUp size={20} className="text-amber-600" /></div>
+              <div>
+                <h4 className="font-bold text-slate-700">Rentabilidad</h4>
+                <p className="text-xs text-slate-400">{datos.rentabilidad.productos.length} productos · {fmtMoney(datos.rentabilidad.totalGanancia)} ganancia</p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={exportarRentabilidadExcel} className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-all">
+                <FileSpreadsheet size={16} /> Excel
+              </button>
+              <button onClick={exportarRentabilidadPDF} className="flex-1 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-all">
+                <FileText size={16} /> PDF
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-10 text-center text-slate-400">
+          <Download size={48} className="mx-auto mb-3 opacity-30" />
+          <p className="text-lg font-medium">Cargá los datos primero</p>
+          <p className="text-sm">Seleccioná un rango de fechas y hacé clic en "Cargar Datos"</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// COMPONENTES AUXILIARES
+// ═══════════════════════════════════════════════════════════
+function Skeleton() {
+  return (
+    <div className="space-y-4 animate-pulse">
+      <div className="h-8 bg-slate-200 rounded-lg w-1/3" />
+      <div className="grid grid-cols-3 gap-4">
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="h-24 bg-slate-200 rounded-2xl" />
+        ))}
+      </div>
+      <div className="h-64 bg-slate-200 rounded-2xl" />
+    </div>
+  );
+}
+
+function ErrorMsg({ msg }) {
+  return (
+    <div className="bg-red-50 border border-red-200 rounded-2xl p-6 text-center">
+      <AlertTriangle size={32} className="text-red-400 mx-auto mb-2" />
+      <p className="text-red-600 font-medium">{msg}</p>
     </div>
   );
 }
