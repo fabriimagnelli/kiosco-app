@@ -83,7 +83,7 @@ function Ventas() {
       const clients = Array.isArray(clientsRes) ? clientsRes : [];
 
       const productos = prods.map(x => ({...x, tipo: 'Producto'}));
-      const cigarrillos = cigs.map(x => ({...x, tipo: 'Cigarrillo'}));
+      const cigarrillos = cigs.map(x => ({...x, tipo: 'Cigarrillo', precio_qr: x.precio_qr || x.precio}));
       const promosList = promos.map(x => ({...x, tipo: 'Promo'}));
 
       setProductos([...productos, ...cigarrillos, ...promosList]);
@@ -132,6 +132,10 @@ function Ventas() {
       }
     }
 
+    // Determinar precio según método de pago para cigarrillos
+    const esMetodoDigital = ['Mercado Pago', 'Débito', 'Transferencia'].includes(metodo);
+    const precioFinal = (prod.tipo === 'Cigarrillo' && esMetodoDigital && prod.precio_qr) ? prod.precio_qr : prod.precio;
+
     const existe = carrito.find(item => item.nombre === prod.nombre);
     if (existe) {
       if (prod.tipo !== 'Manual' && prod.stock !== '-') {
@@ -142,7 +146,7 @@ function Ventas() {
       }
       setCarrito(carrito.map(item => item.nombre === prod.nombre ? { ...item, cantidad: item.cantidad + 1 } : item));
     } else {
-      setCarrito([...carrito, { ...prod, cantidad: 1, descuento_item: 0, descuento_item_tipo: '$' }]);
+      setCarrito([...carrito, { ...prod, precio: precioFinal, precio_original: prod.precio, precio_qr: prod.precio_qr || prod.precio, cantidad: 1, descuento_item: 0, descuento_item_tipo: '$' }]);
     }
   };
 
@@ -496,13 +500,20 @@ function Ventas() {
                className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 hover:border-blue-400 hover:shadow-md transition-all flex flex-col justify-between text-left group h-fit"
              >
                <div>
-                 <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${prod.tipo === 'Cigarrillo' ? 'bg-orange-100 text-orange-600' : 'bg-blue-100 text-blue-600'}`}>
+                 <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${prod.tipo === 'Cigarrillo' ? 'bg-orange-100 text-orange-600' : prod.tipo === 'Promo' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
                     {prod.tipo}
                  </span>
                  <p className="font-bold text-slate-700 mt-2 leading-tight group-hover:text-blue-600">{prod.nombre}</p>
                  <p className="text-xs text-slate-400 mt-1">Stock: {prod.stock}</p>
                </div>
-               <p className="text-xl font-black text-slate-800 mt-3">$ {prod.precio}</p>
+               {prod.tipo === 'Cigarrillo' && prod.precio_qr && prod.precio_qr !== prod.precio ? (
+                 <div className="mt-3">
+                   <p className={`text-xl font-black ${['Mercado Pago', 'Débito', 'Transferencia'].includes(metodo) ? 'text-slate-400 text-sm line-through' : 'text-green-700'}`}>$ {prod.precio} <span className="text-[10px] font-normal">Efvo</span></p>
+                   <p className={`text-xl font-black ${['Mercado Pago', 'Débito', 'Transferencia'].includes(metodo) ? 'text-blue-600' : 'text-slate-400 text-sm line-through'}`}>$ {prod.precio_qr} <span className="text-[10px] font-normal">Digital</span></p>
+                 </div>
+               ) : (
+                 <p className="text-xl font-black text-slate-800 mt-3">$ {prod.precio}</p>
+               )}
              </button>
           ))}
         </div>
@@ -529,6 +540,9 @@ function Ventas() {
                     <p className="font-bold text-sm text-slate-700">
                       {item.nombre} 
                       {item.tipo === 'Manual' && <span className="text-[10px] bg-slate-200 text-slate-500 px-1 ml-1 rounded">Manual</span>}
+                      {item.tipo === 'Cigarrillo' && item.precio_qr && item.precio !== item.precio_original && (
+                        <span className="text-[10px] bg-blue-100 text-blue-600 px-1 ml-1 rounded">QR</span>
+                      )}
                     </p>
                     <p className="text-xs text-slate-500">$ {item.precio} x {item.cantidad}</p>
                   </div>
@@ -619,7 +633,18 @@ function Ventas() {
                 <select 
                     className="w-full p-3 border rounded-xl font-bold text-slate-700 bg-white"
                     value={metodo}
-                    onChange={e => setMetodo(e.target.value)}
+                    onChange={e => {
+                      const nuevoMetodo = e.target.value;
+                      setMetodo(nuevoMetodo);
+                      // Actualizar precios de cigarrillos según método de pago
+                      const esDigital = ['Mercado Pago', 'Débito', 'Transferencia'].includes(nuevoMetodo);
+                      setCarrito(prev => prev.map(item => {
+                        if (item.tipo === 'Cigarrillo' && item.precio_qr) {
+                          return { ...item, precio: esDigital ? item.precio_qr : item.precio_original };
+                        }
+                        return item;
+                      }));
+                    }}
                 >
                     <option value="Efectivo">Efectivo</option>
                     <option value="Mercado Pago">Mercado Pago</option>
