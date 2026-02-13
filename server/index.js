@@ -81,6 +81,8 @@ const dbAll = (sql, params = []) => new Promise((resolve, reject) => {
 // --- HELPERS LÓGICA ---
 const obtenerSiguienteTicket = async () => {
     try {
+        // Secuencial diario: reinicia cada día con formato día-secuencia
+        // Pero mantiene un número global secuencial simple (1, 2, 3...)
         const row = await dbGet("SELECT MAX(ticket_id) as maxId FROM ventas");
         return (row && row.maxId) ? row.maxId + 1 : 1;
     } catch (e) { return 1; }
@@ -1980,6 +1982,11 @@ app.get("/api/config", async (req, res) => {
         if (!configObj.admin_user) configObj.admin_user = "admin";
         if (!configObj.kiosco_nombre) configObj.kiosco_nombre = "Mi Kiosco";
         if (!configObj.kiosco_direccion) configObj.kiosco_direccion = "";
+        if (!configObj.mp_alias) configObj.mp_alias = "";
+        if (!configObj.mp_nombre) configObj.mp_nombre = "";
+        if (!configObj.whatsapp_numero) configObj.whatsapp_numero = "";
+        if (!configObj.sync_url) configObj.sync_url = "";
+        if (!configObj.sync_token) configObj.sync_token = "";
 
         // NO devolver el hash de la contraseña al frontend
         configObj.admin_password = "";
@@ -1992,7 +1999,7 @@ app.get("/api/config", async (req, res) => {
 
 // Guardar configuración
 app.post("/api/config", async (req, res) => {
-    const { admin_user, admin_password, kiosco_nombre, kiosco_direccion, kiosco_telefono } = req.body;
+    const { admin_user, admin_password, kiosco_nombre, kiosco_direccion, kiosco_telefono, mp_alias, mp_nombre, whatsapp_numero, sync_url, sync_token } = req.body;
     try {
         await dbRun("BEGIN TRANSACTION");
         await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('admin_user', ?)", [admin_user]);
@@ -2006,6 +2013,12 @@ app.post("/api/config", async (req, res) => {
         await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('kiosco_nombre', ?)", [kiosco_nombre]);
         await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('kiosco_direccion', ?)", [kiosco_direccion]);
         await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('kiosco_telefono', ?)", [kiosco_telefono]);
+        // Integraciones
+        if (mp_alias !== undefined) await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('mp_alias', ?)", [mp_alias || '']);
+        if (mp_nombre !== undefined) await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('mp_nombre', ?)", [mp_nombre || '']);
+        if (whatsapp_numero !== undefined) await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('whatsapp_numero', ?)", [whatsapp_numero || '']);
+        if (sync_url !== undefined) await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('sync_url', ?)", [sync_url || '']);
+        if (sync_token !== undefined) await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('sync_token', ?)", [sync_token || '']);
         await dbRun("COMMIT");
         res.json({ success: true });
     } catch (e) {
@@ -2190,6 +2203,110 @@ app.post("/api/backup/restore", async (req, res) => {
         }
     } catch (e) { console.error("[BACKUP] Error:", e.message); }
 })();
+
+// --- SINCRONIZACIÓN EN LA NUBE ---
+// Exportar base de datos como archivo para sync
+app.get("/api/sync/export", async (req, res) => {
+    try {
+        if (!fs.existsSync(dbPath)) return res.status(404).json({ error: "Base de datos no encontrada" });
+        res.download(dbPath, `kiosco_sync_${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.db`);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Subir backup al servidor remoto configurado
+app.post("/api/sync/push", async (req, res) => {
+    try {
+        const configSyncUrl = await dbGet("SELECT value FROM configuracion WHERE key='sync_url'");
+        const configSyncToken = await dbGet("SELECT value FROM configuracion WHERE key='sync_token'");
+        const syncUrl = configSyncUrl?.value;
+        const syncToken = configSyncToken?.value || '';
+
+        if (!syncUrl) return res.status(400).json({ error: "No hay URL de sincronización configurada. Configurala en Ajustes." });
+
+        // Leer DB como buffer
+        const dbBuffer = fs.readFileSync(dbPath);
+        const base64 = dbBuffer.toString('base64');
+
+        const configNombre = await dbGet("SELECT value FROM configuracion WHERE key='kiosco_nombre'");
+        const nombre = configNombre?.value || 'kiosco';
+
+        const response = await fetch(syncUrl + '/upload', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${syncToken}`
+            },
+            body: JSON.stringify({
+                nombre: nombre,
+                fecha: new Date().toISOString(),
+                data: base64,
+                size: dbBuffer.length
+            })
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            return res.status(response.status).json({ error: `Error del servidor remoto: ${errorText}` });
+        }
+
+        const result = await response.json();
+        res.json({ success: true, message: "Backup subido exitosamente", ...result });
+    } catch (e) {
+        res.status(500).json({ error: `Error de sincronización: ${e.message}` });
+    }
+});
+
+// Descargar backup del servidor remoto
+app.post("/api/sync/pull", async (req, res) => {
+    try {
+        const configSyncUrl = await dbGet("SELECT value FROM configuracion WHERE key='sync_url'");
+        const configSyncToken = await dbGet("SELECT value FROM configuracion WHERE key='sync_token'");
+        const syncUrl = configSyncUrl?.value;
+        const syncToken = configSyncToken?.value || '';
+
+        if (!syncUrl) return res.status(400).json({ error: "No hay URL de sincronización configurada" });
+
+        const response = await fetch(syncUrl + '/download', {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${syncToken}` }
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            return res.status(response.status).json({ error: `Error del servidor remoto: ${errorText}` });
+        }
+
+        const result = await response.json();
+        if (!result.data) return res.status(400).json({ error: "No hay backup disponible en el servidor remoto" });
+
+        // Hacer backup local antes de restaurar
+        const backupDir = path.join(path.dirname(dbPath), "backups");
+        if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+        const fecha = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        fs.copyFileSync(dbPath, path.join(backupDir, `pre_sync_${fecha}.db`));
+
+        // Restaurar
+        const dbBuffer = Buffer.from(result.data, 'base64');
+        fs.writeFileSync(dbPath, dbBuffer);
+
+        res.json({ success: true, message: "Base de datos sincronizada. Reinicie la app.", fecha: result.fecha });
+    } catch (e) {
+        res.status(500).json({ error: `Error de sincronización: ${e.message}` });
+    }
+});
+
+// Estado de última sincronización
+app.get("/api/sync/status", async (req, res) => {
+    try {
+        const configSyncUrl = await dbGet("SELECT value FROM configuracion WHERE key='sync_url'");
+        const lastSync = await dbGet("SELECT value FROM configuracion WHERE key='last_sync'");
+        res.json({
+            configured: !!(configSyncUrl?.value),
+            last_sync: lastSync?.value || null,
+            url: configSyncUrl?.value || ''
+        });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // --- HISTORIAL DE CIERRES ---
 app.get("/api/historial_cierres", async (req, res) => {

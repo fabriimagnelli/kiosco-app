@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from "react";
-import { Settings, Save, User, Key, Building2, Phone, MapPin, LogOut, Eye, EyeOff, Database, Download, RotateCcw, Loader2, CheckCircle, AlertTriangle, Users, Plus, Trash2, Shield, RefreshCw } from "lucide-react";
+import { Settings, Save, User, Key, Building2, Phone, MapPin, LogOut, Eye, EyeOff, Database, Download, RotateCcw, Loader2, CheckCircle, AlertTriangle, Users, Plus, Trash2, Shield, RefreshCw, BookOpen, QrCode, MessageCircle, Cloud, CloudUpload, CloudDownload, ExternalLink, Printer } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "../lib/api";
+import { QRCodeSVG } from "qrcode.react";
 
 function Configuracion() {
   const { logout, rol: rolActual } = useAuth();
@@ -23,13 +24,22 @@ function Configuracion() {
   // Update state
   const [updateAvailable, setUpdateAvailable] = useState(null);
 
+  // Sync states
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [syncMsg, setSyncMsg] = useState(null);
+
   // Estados de datos
   const [datos, setDatos] = useState({
     admin_user: "",
     admin_password: "",
     kiosco_nombre: "",
     kiosco_direccion: "",
-    kiosco_telefono: ""
+    kiosco_telefono: "",
+    mp_alias: "",
+    mp_nombre: "",
+    whatsapp_numero: "",
+    sync_url: "",
+    sync_token: ""
   });
 
   useEffect(() => {
@@ -168,6 +178,33 @@ function Configuracion() {
     }
   };
 
+  const syncPush = async () => {
+    setSyncLoading(true);
+    setSyncMsg(null);
+    try {
+      const res = await apiFetch("/api/sync/push", { method: "POST" });
+      const data = await res.json();
+      if (data.success) { setSyncMsg({ tipo: "ok", texto: "Backup subido al servidor remoto exitosamente" }); }
+      else { setSyncMsg({ tipo: "err", texto: data.error || "Error al subir" }); }
+    } catch (e) { setSyncMsg({ tipo: "err", texto: "Error de conexión con el servidor" }); }
+    finally { setSyncLoading(false); }
+  };
+
+  const syncPull = async () => {
+    if (!confirm("¿Descargar y restaurar la base de datos desde el servidor remoto?\nEsto reemplazará TODOS los datos locales.")) return;
+    setSyncLoading(true);
+    setSyncMsg(null);
+    try {
+      const res = await apiFetch("/api/sync/pull", { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        alert("Base de datos sincronizada. La app se recargará.");
+        window.location.reload();
+      } else { setSyncMsg({ tipo: "err", texto: data.error || "Error al descargar" }); }
+    } catch (e) { setSyncMsg({ tipo: "err", texto: "Error de conexión" }); }
+    finally { setSyncLoading(false); }
+  };
+
   const manejarCierreSesion = () => {
     if (confirm("¿Estás seguro que quieres cerrar sesión?")) {
       logout();
@@ -186,7 +223,7 @@ function Configuracion() {
     <div className="p-6 max-w-4xl mx-auto animate-in fade-in duration-500 h-full overflow-y-auto">
       
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-slate-800 flex items-center gap-3">
+        <h1 className="text-3xl font-extrabold text-slate-800 flex items-center gap-3 tracking-tight">
           <Settings className="text-purple-600" size={32} />
           Configuración y Administración
         </h1>
@@ -282,6 +319,123 @@ function Configuracion() {
                     </div>
                 </div>
 
+                <hr className="my-6 border-slate-100"/>
+
+                <h2 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
+                    <QrCode size={20} className="text-cyan-500"/> MercadoPago (QR)
+                </h2>
+                <p className="text-xs text-slate-400 mb-3">Configurá tu alias para generar un QR fijo que podés imprimir y pegar en el mostrador.</p>
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-1">Alias de MercadoPago</label>
+                        <input 
+                            name="mp_alias"
+                            value={datos.mp_alias}
+                            onChange={handleChange}
+                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-cyan-500 outline-none"
+                            placeholder="Ej: mikiosco.mp"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-1">Nombre del titular</label>
+                        <input 
+                            name="mp_nombre"
+                            value={datos.mp_nombre}
+                            onChange={handleChange}
+                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-cyan-500 outline-none"
+                            placeholder="Ej: Juan Pérez"
+                        />
+                    </div>
+                </div>
+
+                {/* Vista previa del QR para imprimir */}
+                {datos.mp_alias && (
+                  <div className="mt-4 bg-cyan-50 border border-cyan-200 rounded-xl p-4 text-center space-y-3">
+                    <p className="text-sm font-bold text-cyan-800">Tu QR de cobro</p>
+                    <div id="qr-mp-preview" className="bg-white p-4 rounded-lg inline-block mx-auto">
+                      <p className="text-xs font-bold text-slate-600 mb-2">{datos.mp_nombre || datos.kiosco_nombre || 'Mi Kiosco'}</p>
+                      <QRCodeSVG
+                        value={`https://link.mercadopago.com.ar/${datos.mp_alias}`}
+                        size={200}
+                        level="M"
+                        includeMargin={true}
+                      />
+                      <p className="text-xs text-slate-500 mt-2">Alias: <strong>{datos.mp_alias}</strong></p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const printW = window.open('', '_blank', 'width=400,height=600');
+                        const el = document.getElementById('qr-mp-preview');
+                        printW.document.write(`
+                          <html><head><title>QR MercadoPago</title>
+                          <style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:Arial,sans-serif;margin:0;}
+                          h2{margin-bottom:4px} p{margin:4px 0;color:#666;font-size:14px;}</style></head>
+                          <body>
+                            <h2>${datos.mp_nombre || datos.kiosco_nombre || 'Mi Kiosco'}</h2>
+                            <p>Escaneá para pagar</p>
+                            ${el.innerHTML}
+                            <p style="margin-top:12px;font-size:12px;color:#999;">Alias: ${datos.mp_alias}</p>
+                          </body></html>`);
+                        printW.document.close();
+                        setTimeout(() => { printW.print(); }, 500);
+                      }}
+                      className="flex items-center justify-center gap-2 bg-cyan-600 hover:bg-cyan-700 text-white px-4 py-2 rounded-lg font-bold text-sm transition-colors mx-auto"
+                    >
+                      <Printer size={14}/> Imprimir QR para el mostrador
+                    </button>
+                  </div>
+                )}
+
+                <hr className="my-6 border-slate-100"/>
+
+                <h2 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
+                    <MessageCircle size={20} className="text-green-500"/> WhatsApp
+                </h2>
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-1">Número de WhatsApp del negocio</label>
+                        <input 
+                            name="whatsapp_numero"
+                            value={datos.whatsapp_numero}
+                            onChange={handleChange}
+                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none"
+                            placeholder="Ej: 5491112345678 (con código de país)"
+                        />
+                        <p className="text-[10px] text-slate-400 mt-1">Formato internacional sin + ni espacios. Ej: 5491112345678</p>
+                    </div>
+                </div>
+
+                <hr className="my-6 border-slate-100"/>
+
+                <h2 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
+                    <Cloud size={20} className="text-blue-500"/> Sincronización en la Nube
+                </h2>
+                <p className="text-xs text-slate-400 mb-3">Configura un servidor para respaldar tus datos automáticamente.</p>
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-1">URL del servidor de sync</label>
+                        <input 
+                            name="sync_url"
+                            value={datos.sync_url}
+                            onChange={handleChange}
+                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                            placeholder="https://mi-servidor.com/api/sync"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-1">Token de autenticación (opcional)</label>
+                        <input 
+                            name="sync_token"
+                            value={datos.sync_token}
+                            onChange={handleChange}
+                            type="password"
+                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                            placeholder="Token secreto"
+                        />
+                    </div>
+                </div>
+
                 <div className="mt-8">
                     <button 
                         type="submit" 
@@ -323,6 +477,20 @@ function Configuracion() {
                     className="w-full border border-slate-300 text-slate-700 py-2 rounded-lg font-bold hover:bg-slate-50 transition-colors flex justify-center items-center gap-2"
                 >
                     <LogOut size={18}/> Cerrar Sesión
+                </button>
+            </div>
+
+            {/* TARJETA TUTORIAL */}
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                <h3 className="font-bold text-slate-700 mb-2 flex items-center gap-2">
+                    <BookOpen size={20} className="text-indigo-500"/> Guía de Inicio
+                </h3>
+                <p className="text-sm text-slate-500 mb-4">¿Necesitás repasar las funciones principales? Volvé a ver el tutorial de bienvenida.</p>
+                <button 
+                    onClick={() => { localStorage.removeItem("sacware_tutorial_visto"); window.location.reload(); }}
+                    className="w-full border border-indigo-300 text-indigo-700 py-2 rounded-lg font-bold hover:bg-indigo-50 transition-colors flex justify-center items-center gap-2"
+                >
+                    <BookOpen size={18}/> Ver Tutorial
                 </button>
             </div>
 
@@ -372,6 +540,42 @@ function Configuracion() {
                   </div>
                 )}
             </div>
+
+            {/* TARJETA SINCRONIZACIÓN EN LA NUBE */}
+            {datos.sync_url && (
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                <h3 className="font-bold text-slate-700 mb-2 flex items-center gap-2">
+                    <Cloud size={20} className="text-blue-500"/> Sincronización en la Nube
+                </h3>
+                <p className="text-sm text-slate-500 mb-4">Subí o descargá tu base de datos del servidor remoto.</p>
+                
+                {syncMsg && (
+                  <div className={`mb-3 p-2 rounded-lg text-sm flex items-center gap-2 ${syncMsg.tipo === "ok" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
+                    {syncMsg.tipo === "ok" ? <CheckCircle size={16}/> : <AlertTriangle size={16}/>}
+                    {syncMsg.texto}
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <button 
+                    onClick={syncPush}
+                    disabled={syncLoading}
+                    className="w-full bg-blue-600 text-white py-2.5 rounded-lg font-bold hover:bg-blue-700 transition-colors flex justify-center items-center gap-2 disabled:opacity-60"
+                  >
+                    {syncLoading ? <Loader2 size={16} className="animate-spin"/> : <CloudUpload size={16}/>}
+                    Subir backup al servidor
+                  </button>
+                  <button 
+                    onClick={syncPull}
+                    disabled={syncLoading}
+                    className="w-full border border-blue-300 text-blue-700 py-2.5 rounded-lg font-bold hover:bg-blue-50 transition-colors flex justify-center items-center gap-2 disabled:opacity-60"
+                  >
+                    {syncLoading ? <Loader2 size={16} className="animate-spin"/> : <CloudDownload size={16}/>}
+                    Descargar desde el servidor
+                  </button>
+                </div>
+            </div>
+            )}
 
             {/* TARJETA GESTIÓN DE USUARIOS (Solo Admin) */}
             {rolActual === "admin" && (

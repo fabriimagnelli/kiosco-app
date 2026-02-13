@@ -46,13 +46,13 @@ function Login() {
                 <img src="/logo.png" alt="SACWare Logo" className="h-20 w-auto object-contain drop-shadow-md" />
             </div>
 
-            <h1 className="text-3xl font-bold text-slate-800 tracking-tight">SACWare</h1>
-            <p className="text-slate-500 text-sm mt-1">Bienvenido a tu Sistema de Gestión</p>
+            <h1 className="text-3xl font-extrabold text-slate-800 tracking-tight">SACWare</h1>
+            <p className="text-slate-400 text-sm mt-1.5 font-medium tracking-wide">Bienvenido a tu Sistema de Gestión</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
             <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Usuario</label>
+                <label className="block text-xs font-semibold text-slate-500 mb-2 uppercase tracking-wide">Usuario</label>
                 <div className="relative">
                     <User className="absolute left-3 top-3 text-slate-400" size={20} />
                     <input 
@@ -66,7 +66,7 @@ function Login() {
             </div>
 
             <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Contraseña</label>
+                <label className="block text-xs font-semibold text-slate-500 mb-2 uppercase tracking-wide">Contraseña</label>
                 <div className="relative">
                     <Lock className="absolute left-3 top-3 text-slate-400" size={20} />
                     <input 

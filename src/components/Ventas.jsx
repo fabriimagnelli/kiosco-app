@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Search, ShoppingCart, Trash2, CreditCard, User, RefreshCw, Plus, Printer, Percent, DollarSign, MessageSquare, Tag } from "lucide-react";
+import { Search, ShoppingCart, Trash2, CreditCard, User, RefreshCw, Plus, Printer, Percent, DollarSign, MessageSquare, Tag, CheckCircle, X, QrCode, MessageCircle } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiFetch } from "../lib/api";
+import { beepScan, successSound, errorSound } from "../lib/sounds";
 import jsPDF from "jspdf";
+import { QRCodeSVG } from "qrcode.react";
 
 function Ventas() {
   const location = useLocation();
@@ -39,6 +41,12 @@ function Ventas() {
 
   // Datos del negocio para ticket
   const [configNegocio, setConfigNegocio] = useState({ kiosco_nombre: "", kiosco_direccion: "", kiosco_telefono: "" });
+
+  // Modal de éxito post-venta
+  const [modalExito, setModalExito] = useState(null); // { ticketId, items, metodo, total, descuento, notas }
+
+  // Modal QR MercadoPago
+  const [modalQR, setModalQR] = useState(null); // { monto, alias, nombre }
 
   useEffect(() => {
     cargarDatos();
@@ -136,6 +144,9 @@ function Ventas() {
     const esMetodoDigital = ['Mercado Pago', 'Débito', 'Transferencia'].includes(metodo);
     const precioFinal = (prod.tipo === 'Cigarrillo' && esMetodoDigital && prod.precio_qr) ? prod.precio_qr : prod.precio;
 
+    // Sonido de escaneo/agregado
+    beepScan();
+
     const existe = carrito.find(item => item.nombre === prod.nombre);
     if (existe) {
       if (prod.tipo !== 'Manual' && prod.stock !== '-') {
@@ -232,7 +243,7 @@ function Ventas() {
       doc.text(`Fecha: ${new Date().toLocaleString("es-AR")}`, margen, y);
       y += 3.5;
       doc.setFont("helvetica", "bold");
-      doc.text(`Ticket #${ticketId}`, margen, y);
+      doc.text(`Ticket #${String(ticketId).padStart(4, '0')}`, margen, y);
       y += 4;
 
       doc.line(margen, y, anchoMM - margen, y);
@@ -367,7 +378,7 @@ function Ventas() {
     };
 
     if (ticketEditando) {
-        if(!confirm(`ESTÁS EDITANDO EL TICKET #${ticketEditando}\n\n¿Continuar?`)) return;
+        if(!confirm(`ESTÁS EDITANDO EL TICKET #${String(ticketEditando).padStart(4, '0')}\n\n¿Continuar?`)) return;
     }
 
     const res = await apiFetch("/api/ventas", {
@@ -378,11 +389,37 @@ function Ventas() {
 
     const data = await res.json();
     if (data.success) {
-      // Generar ticket PDF
       const ticketNum = data.ticket_id || ticketEditando || "?";
-      generarTicketPDF(ticketNum, carrito, metodo, total, descuentoNum, notas);
+      
+      successSound();
+      
+      // Guardar datos para el modal (antes de limpiar carrito)
+      const clienteNombre = clientes.find(c => String(c.id) === String(clienteSelec))?.nombre || '';
+      const clienteTelefono = clientes.find(c => String(c.id) === String(clienteSelec))?.telefono || '';
+      
+      setModalExito({
+        ticketId: ticketNum,
+        items: [...carrito],
+        metodo: metodo,
+        total: total,
+        descuento: descuentoNum,
+        notas: notas,
+        esEdicion: !!ticketEditando,
+        clienteNombre,
+        clienteTelefono
+      });
 
-      alert(ticketEditando ? "Venta corregida." : "Venta registrada!");
+      // Mostrar QR si es método digital y hay alias de MercadoPago configurado
+      const esDigital = ['Mercado Pago', 'Transferencia'].includes(metodo);
+      if (esDigital && configNegocio.mp_alias) {
+        setModalQR({
+          monto: total,
+          alias: configNegocio.mp_alias,
+          nombre: configNegocio.mp_nombre || configNegocio.kiosco_nombre || ''
+        });
+      }
+
+      // Limpiar estado
       setCarrito([]);
       setTicketEditando(null);
       setClienteSelec("");
@@ -451,7 +488,7 @@ function Ventas() {
         {ticketEditando && (
             <div className="bg-orange-100 border border-orange-300 text-orange-800 p-3 rounded-xl flex items-center gap-3 font-bold animate-pulse">
                 <RefreshCw className="animate-spin-slow"/>
-                <span>MODO EDICIÓN: Ticket #{ticketEditando}</span>
+                <span>MODO EDICIÓN: Ticket #{String(ticketEditando).padStart(4, '0')}</span>
                 <button onClick={() => { setTicketEditando(null); setCarrito([]); navigate("/ventas", {state:{}}); }} className="ml-auto text-xs bg-white border border-orange-300 px-3 py-1 rounded hover:bg-orange-50">
                     Cancelar
                 </button>
@@ -512,7 +549,7 @@ function Ventas() {
                    <p className={`text-xl font-black ${['Mercado Pago', 'Débito', 'Transferencia'].includes(metodo) ? 'text-blue-600' : 'text-slate-400 text-sm line-through'}`}>$ {prod.precio_qr} <span className="text-[10px] font-normal">Digital</span></p>
                  </div>
                ) : (
-                 <p className="text-xl font-black text-slate-800 mt-3">$ {prod.precio}</p>
+               <p className="text-xl font-extrabold text-slate-800 mt-3">$ {prod.precio}</p>
                )}
              </button>
           ))}
@@ -522,7 +559,7 @@ function Ventas() {
       {/* DERECHA: CARRITO */}
       <div className="w-full lg:w-96 bg-white rounded-2xl shadow-xl flex flex-col border border-slate-200">
         <div className={`p-5 text-white flex justify-between items-center rounded-t-2xl ${ticketEditando ? 'bg-orange-600' : 'bg-slate-900'}`}>
-          <h2 className="font-bold flex items-center gap-2"><ShoppingCart /> Carrito</h2>
+          <h2 className="font-bold flex items-center gap-2 tracking-tight"><ShoppingCart /> Carrito</h2>
           <span className="bg-white/20 px-3 py-1 rounded-full text-xs font-bold">{carrito.length} items</span>
         </div>
 
@@ -701,7 +738,7 @@ function Ventas() {
                   </div>
                 )}
                 <span className="text-slate-500 font-bold">{descuentoNum <= 0 ? "Total" : ""}</span>
-                <span className="text-3xl font-black text-slate-800">$ {total.toFixed(0)}</span>
+                <span className="text-3xl font-extrabold text-slate-800 tracking-tight">$ {total.toFixed(0)}</span>
             </div>
 
             <button 
@@ -712,6 +749,100 @@ function Ventas() {
             </button>
         </div>
       </div>
+
+      {/* MODAL DE ÉXITO POST-VENTA */}
+      {modalExito && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => { setModalExito(null); setModalQR(null); }}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-5 animate-in fade-in zoom-in max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="text-center">
+              <div className="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-3">
+                <CheckCircle className="text-green-600" size={36} />
+              </div>
+              <h3 className="text-xl font-bold text-slate-800">
+                {modalExito.esEdicion ? '¡Venta corregida!' : '¡Venta registrada!'}
+              </h3>
+              <p className="text-slate-500 text-sm mt-1">
+                Ticket #{String(modalExito.ticketId).padStart(4, '0')} — Total: ${modalExito.total.toFixed(0)}
+              </p>
+            </div>
+
+            {/* QR estático de MercadoPago — mismo que el impreso en el mostrador */}
+            {modalQR && (
+              <div className="bg-cyan-50 border border-cyan-200 rounded-xl p-4 text-center space-y-2">
+                <p className="text-sm font-bold text-cyan-800 flex items-center justify-center gap-2">
+                  <QrCode size={16}/> Cobrar con MercadoPago
+                </p>
+                <div className="bg-white p-3 rounded-lg inline-block mx-auto">
+                  <QRCodeSVG 
+                    value={`https://link.mercadopago.com.ar/${modalQR.alias}`}
+                    size={160}
+                    level="M"
+                    includeMargin={true}
+                  />
+                </div>
+                <p className="text-xs text-cyan-600">
+                  Alias: <strong>{modalQR.alias}</strong>
+                </p>
+                <div className="bg-cyan-100 rounded-lg py-2 px-4">
+                  <p className="text-xs text-cyan-600">Monto a cobrar</p>
+                  <p className="text-2xl font-black text-cyan-800">${modalQR.monto.toFixed(0)}</p>
+                </div>
+                {modalQR.nombre && (
+                  <p className="text-xs text-cyan-500">{modalQR.nombre}</p>
+                )}
+              </div>
+            )}
+            
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => {
+                  generarTicketPDF(modalExito.ticketId, modalExito.items, modalExito.metodo, modalExito.total, modalExito.descuento, modalExito.notas);
+                }}
+                className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold transition-colors text-sm"
+              >
+                <Printer size={16} />
+                Imprimir
+              </button>
+              
+              {/* Botón WhatsApp */}
+              <button
+                onClick={() => {
+                  const ticketNum = String(modalExito.ticketId).padStart(4, '0');
+                  const items = modalExito.items.map(i => `  ${i.cantidad}x ${i.nombre} $${(i.precio * i.cantidad).toFixed(0)}`).join('\n');
+                  const msg = `🧾 *Comprobante de compra*\n` +
+                    `📍 ${configNegocio.kiosco_nombre || 'Mi Kiosco'}\n` +
+                    `📅 ${new Date().toLocaleString('es-AR')}\n` +
+                    `🎫 Ticket #${ticketNum}\n\n` +
+                    `${items}\n\n` +
+                    `💰 *TOTAL: $${modalExito.total.toFixed(0)}*\n` +
+                    `💳 Método: ${modalExito.metodo}\n` +
+                    (modalExito.notas ? `📝 Notas: ${modalExito.notas}\n` : '') +
+                    `\n¡Gracias por su compra!`;
+                  
+                  // Si hay teléfono del cliente, usar ese; sino abrir sin número
+                  const tel = modalExito.clienteTelefono || '';
+                  const url = tel 
+                    ? `https://wa.me/${tel.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(msg)}`
+                    : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+                  window.open(url, '_blank');
+                }}
+                className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-bold transition-colors text-sm"
+              >
+                <MessageCircle size={16} />
+                WhatsApp
+              </button>
+            </div>
+
+            <button
+              onClick={() => { setModalExito(null); setModalQR(null); }}
+              className="w-full flex items-center justify-center gap-2 bg-slate-200 hover:bg-slate-300 text-slate-700 py-3 rounded-xl font-bold transition-colors"
+            >
+              <X size={18} />
+              Cerrar
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

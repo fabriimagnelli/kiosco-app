@@ -7,7 +7,7 @@ import {
   TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, Clock,
   Package, AlertTriangle, Download, FileSpreadsheet, FileText, Calendar,
   DollarSign, BarChart3, PieChart as PieIcon, Activity, Archive,
-  ChevronDown, RefreshCw, Filter
+  ChevronDown, RefreshCw, Filter, Printer, Search, Eye, ChevronRight, Receipt, MessageCircle
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -33,6 +33,7 @@ const pctVal = (actual, anterior) => {
 
 // ─── Tab definitions ────────────────────────────────────────
 const TABS = [
+  { id: "historial", label: "Historial", icon: Receipt },
   { id: "comparativas", label: "Dashboard", icon: BarChart3 },
   { id: "rentabilidad", label: "Rentabilidad", icon: DollarSign },
   { id: "horas_pico", label: "Horas Pico", icon: Clock },
@@ -45,13 +46,13 @@ const TABS = [
 // COMPONENTE PRINCIPAL
 // ═══════════════════════════════════════════════════════════
 function Reportes() {
-  const [tab, setTab] = useState("comparativas");
+  const [tab, setTab] = useState("historial");
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-slate-50">
       {/* Header + Tabs */}
       <div className="px-6 pt-5 pb-0">
-        <h2 className="text-2xl font-bold text-slate-800 mb-4">Reportes y Análisis</h2>
+        <h2 className="text-2xl font-extrabold text-slate-800 mb-4 tracking-tight">Reportes y Análisis</h2>
         <div className="flex gap-1 bg-white rounded-xl p-1 shadow-sm border border-slate-200 overflow-x-auto">
           {TABS.map((t) => {
             const Icon = t.icon;
@@ -75,6 +76,7 @@ function Reportes() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+        {tab === "historial" && <HistorialVentas />}
         {tab === "comparativas" && <DashboardComparativas />}
         {tab === "rentabilidad" && <Rentabilidad />}
         {tab === "horas_pico" && <HorasPico />}
@@ -1067,6 +1069,355 @@ function ExportarReportes() {
           <Download size={48} className="mx-auto mb-3 opacity-30" />
           <p className="text-lg font-medium">Cargá los datos primero</p>
           <p className="text-sm">Seleccioná un rango de fechas y hacé clic en "Cargar Datos"</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// HISTORIAL DE VENTAS / TICKETS
+// ═══════════════════════════════════════════════════════════
+function HistorialVentas() {
+  const [ventas, setVentas] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [busqueda, setBusqueda] = useState("");
+  const [desde, setDesde] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 7);
+    return d.toISOString().split("T")[0];
+  });
+  const [hasta, setHasta] = useState(() => new Date().toISOString().split("T")[0]);
+  const [metodoFiltro, setMetodoFiltro] = useState("");
+  const [ticketExpandido, setTicketExpandido] = useState(null);
+  const [configNegocio, setConfigNegocio] = useState({ kiosco_nombre: "", kiosco_direccion: "", kiosco_telefono: "" });
+
+  useEffect(() => {
+    apiFetch("/api/config").then(r => r.json()).then(setConfigNegocio).catch(() => {});
+    cargarHistorial();
+  }, []);
+
+  const cargarHistorial = async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (desde) params.append("desde", desde);
+      if (hasta) params.append("hasta", hasta);
+      if (metodoFiltro) params.append("metodo", metodoFiltro);
+      if (busqueda) params.append("busqueda", busqueda);
+
+      const res = await apiFetch(`/api/ventas/historial?${params.toString()}`);
+      const data = await res.json();
+      setVentas(Array.isArray(data) ? data : []);
+    } catch (e) { console.error(e); setVentas([]); }
+    setLoading(false);
+  };
+
+  // Agrupar ventas por ticket_id
+  const ticketsAgrupados = useMemo(() => {
+    const agrupado = {};
+    ventas.forEach(v => {
+      if (!agrupado[v.ticket_id]) {
+        agrupado[v.ticket_id] = {
+          ticket_id: v.ticket_id,
+          fecha: v.fecha,
+          metodo_pago: v.metodo_pago,
+          cliente: v.nombre_cliente || "Consumidor Final",
+          notas: v.notas,
+          items: [],
+          total: 0,
+          descuento: 0
+        };
+      }
+      agrupado[v.ticket_id].items.push(v);
+      agrupado[v.ticket_id].total += Number(v.precio_total) || 0;
+      agrupado[v.ticket_id].descuento += Number(v.descuento_item) || 0;
+    });
+    // Ordenar por fecha descendente
+    return Object.values(agrupado).sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+  }, [ventas]);
+
+  const imprimirTicket = (ticket) => {
+    try {
+      const anchoMM = 80;
+      const doc = new jsPDF({ unit: "mm", format: [anchoMM, 250] });
+      let y = 8;
+      const margen = 4;
+
+      const nombreNegocio = configNegocio.kiosco_nombre || "Mi Kiosco";
+      const direccion = configNegocio.kiosco_direccion || "";
+      const telefono = configNegocio.kiosco_telefono || "";
+
+      // Encabezado
+      doc.setFontSize(14);
+      doc.setFont("helvetica", "bold");
+      doc.text(nombreNegocio.toUpperCase(), anchoMM / 2, y, { align: "center" });
+      y += 5;
+      doc.setFontSize(7);
+      doc.setFont("helvetica", "normal");
+      if (direccion) { doc.text(direccion, anchoMM / 2, y, { align: "center" }); y += 3.5; }
+      if (telefono) { doc.text(`Tel: ${telefono}`, anchoMM / 2, y, { align: "center" }); y += 3.5; }
+      y += 1;
+      doc.setLineWidth(0.3);
+      doc.line(margen, y, anchoMM - margen, y);
+      y += 4;
+
+      // Fecha y ticket
+      doc.setFontSize(8);
+      const fechaTicket = ticket.fecha ? new Date(ticket.fecha).toLocaleString("es-AR") : new Date().toLocaleString("es-AR");
+      doc.text(`Fecha: ${fechaTicket}`, margen, y);
+      y += 3.5;
+      doc.setFont("helvetica", "bold");
+      doc.text(`Ticket #${String(ticket.ticket_id).padStart(4, '0')}`, margen, y);
+      y += 4;
+      doc.line(margen, y, anchoMM - margen, y);
+      y += 4;
+
+      // Columnas
+      doc.setFontSize(7);
+      doc.setFont("helvetica", "bold");
+      doc.text("Cant", margen, y);
+      doc.text("Descripción", margen + 8, y);
+      doc.text("P.Unit", anchoMM - margen - 18, y, { align: "right" });
+      doc.text("Subtotal", anchoMM - margen, y, { align: "right" });
+      y += 1;
+      doc.line(margen, y, anchoMM - margen, y);
+      y += 3;
+
+      doc.setFont("helvetica", "normal");
+      let subtotalGeneral = 0;
+      ticket.items.forEach(item => {
+        const cant = Number(item.cantidad) || 1;
+        const precioUnit = Number(item.precio_unitario) || (Number(item.precio_total) / cant);
+        const subtotal = Number(item.precio_total) || 0;
+        subtotalGeneral += subtotal;
+
+        doc.text(`${cant}`, margen + 2, y, { align: "center" });
+        const nombre = (item.producto || "Producto").length > 20 ? (item.producto || "Producto").substring(0, 20) + ".." : (item.producto || "Producto");
+        doc.text(nombre, margen + 8, y);
+        doc.text(`$${precioUnit.toFixed(0)}`, anchoMM - margen - 18, y, { align: "right" });
+        doc.text(`$${subtotal.toFixed(0)}`, anchoMM - margen, y, { align: "right" });
+        y += 3.5;
+
+        if (Number(item.descuento_item) > 0) {
+          doc.setFontSize(6);
+          doc.setTextColor(100, 100, 100);
+          doc.text(`  Dto: -$${Number(item.descuento_item).toFixed(0)}`, margen + 8, y);
+          doc.setTextColor(0, 0, 0);
+          doc.setFontSize(7);
+          y += 3;
+        }
+      });
+
+      y += 1;
+      doc.line(margen, y, anchoMM - margen, y);
+      y += 4;
+
+      // Total
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
+      doc.text("TOTAL:", margen, y);
+      doc.text(`$${ticket.total.toFixed(0)}`, anchoMM - margen, y, { align: "right" });
+      y += 5;
+
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "normal");
+      doc.text(`Método de pago: ${ticket.metodo_pago}`, margen, y);
+      y += 4;
+      if (ticket.cliente !== "Consumidor Final") {
+        doc.text(`Cliente: ${ticket.cliente}`, margen, y);
+        y += 4;
+      }
+      if (ticket.notas && ticket.notas.trim()) {
+        doc.setFontSize(7);
+        doc.text("Notas:", margen, y); y += 3;
+        const lineas = doc.splitTextToSize(ticket.notas, anchoMM - margen * 2);
+        lineas.forEach(l => { doc.text(l, margen, y); y += 3; });
+        y += 2;
+      }
+
+      doc.line(margen, y, anchoMM - margen, y);
+      y += 4;
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "bold");
+      doc.text("¡Gracias por su compra!", anchoMM / 2, y, { align: "center" });
+      y += 4;
+      doc.setFontSize(6);
+      doc.setFont("helvetica", "normal");
+      doc.text("Documento no fiscal — Reimpresión", anchoMM / 2, y, { align: "center" });
+
+      doc.internal.pageSize.height = y + 8;
+      doc.save(`ticket_${ticket.ticket_id}.pdf`);
+    } catch (e) { console.error("Error imprimiendo ticket:", e); }
+  };
+
+  const metodoColor = (m) => {
+    const map = { "Efectivo": "bg-green-100 text-green-700", "Mercado Pago": "bg-blue-100 text-blue-700", "Débito": "bg-purple-100 text-purple-700", "Transferencia": "bg-cyan-100 text-cyan-700", "Fiado": "bg-red-100 text-red-700" };
+    return map[m] || "bg-slate-100 text-slate-600";
+  };
+
+  return (
+    <div className="space-y-4 animate-fade-in">
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-bold text-slate-700">Historial de Ventas</h3>
+        <button onClick={cargarHistorial} className="text-slate-400 hover:text-blue-600 transition-colors p-2 rounded-lg hover:bg-white">
+          <RefreshCw size={18} className={loading ? "animate-spin" : ""} />
+        </button>
+      </div>
+
+      {/* Filtros */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4">
+        <div className="flex flex-wrap gap-3 items-end">
+          <div>
+            <label className="text-xs font-bold text-slate-500 uppercase">Desde</label>
+            <input type="date" className="block w-full p-2 border rounded-lg text-sm" value={desde} onChange={e => setDesde(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-slate-500 uppercase">Hasta</label>
+            <input type="date" className="block w-full p-2 border rounded-lg text-sm" value={hasta} onChange={e => setHasta(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-slate-500 uppercase">Método</label>
+            <select className="block w-full p-2 border rounded-lg text-sm bg-white" value={metodoFiltro} onChange={e => setMetodoFiltro(e.target.value)}>
+              <option value="">Todos</option>
+              <option value="Efectivo">Efectivo</option>
+              <option value="Mercado Pago">Mercado Pago</option>
+              <option value="Débito">Tarjetas</option>
+              <option value="Transferencia">Transferencia</option>
+              <option value="Fiado">Cuenta Corriente</option>
+            </select>
+          </div>
+          <div className="flex-1 min-w-[200px]">
+            <label className="text-xs font-bold text-slate-500 uppercase">Buscar</label>
+            <div className="flex items-center gap-2 border rounded-lg px-3 py-2 bg-white">
+              <Search size={14} className="text-slate-400" />
+              <input type="text" placeholder="Producto o cliente..." className="w-full outline-none text-sm" value={busqueda} onChange={e => setBusqueda(e.target.value)} onKeyDown={e => e.key === 'Enter' && cargarHistorial()} />
+            </div>
+          </div>
+          <button onClick={cargarHistorial} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg font-semibold text-sm transition-colors flex items-center gap-2">
+            <Filter size={14} /> Filtrar
+          </button>
+        </div>
+      </div>
+
+      {/* Resumen rápido */}
+      {ticketsAgrupados.length > 0 && (
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-white rounded-xl p-3 border border-slate-100 text-center">
+            <p className="text-2xl font-bold text-blue-600">{ticketsAgrupados.length}</p>
+            <p className="text-xs text-slate-500">Tickets</p>
+          </div>
+          <div className="bg-white rounded-xl p-3 border border-slate-100 text-center">
+            <p className="text-2xl font-bold text-green-600">{fmtMoney(ticketsAgrupados.reduce((s, t) => s + t.total, 0))}</p>
+            <p className="text-xs text-slate-500">Total vendido</p>
+          </div>
+          <div className="bg-white rounded-xl p-3 border border-slate-100 text-center">
+            <p className="text-2xl font-bold text-slate-600">{fmtMoney(ticketsAgrupados.reduce((s, t) => s + t.total, 0) / ticketsAgrupados.length)}</p>
+            <p className="text-xs text-slate-500">Ticket promedio</p>
+          </div>
+        </div>
+      )}
+
+      {/* Lista de tickets */}
+      {loading ? (
+        <Skeleton />
+      ) : ticketsAgrupados.length === 0 ? (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-10 text-center text-slate-400">
+          <Receipt size={48} className="mx-auto mb-3 opacity-30" />
+          <p className="text-lg font-medium">No hay ventas en este período</p>
+          <p className="text-sm">Ajustá los filtros o el rango de fechas</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {ticketsAgrupados.map(ticket => {
+            const expandido = ticketExpandido === ticket.ticket_id;
+            return (
+              <div key={ticket.ticket_id} className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden transition-all">
+                {/* Fila principal del ticket */}
+                <div
+                  className="flex items-center gap-3 p-4 cursor-pointer hover:bg-slate-50 transition-colors"
+                  onClick={() => setTicketExpandido(expandido ? null : ticket.ticket_id)}
+                >
+                  <ChevronRight size={16} className={`text-slate-400 transition-transform ${expandido ? "rotate-90" : ""}`} />
+                  <div className="flex-1 flex items-center gap-3 flex-wrap">
+                    <span className="font-bold text-slate-800 min-w-[80px]">#{String(ticket.ticket_id).padStart(4, '0')}</span>
+                    <span className="text-sm text-slate-500">
+                      {new Date(ticket.fecha).toLocaleDateString("es-AR")} {new Date(ticket.fecha).toLocaleTimeString("es-AR", { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${metodoColor(ticket.metodo_pago)}`}>
+                      {ticket.metodo_pago}
+                    </span>
+                    {ticket.cliente !== "Consumidor Final" && (
+                      <span className="text-xs text-slate-500">• {ticket.cliente}</span>
+                    )}
+                    <span className="text-xs text-slate-400">{ticket.items.length} item{ticket.items.length !== 1 ? 's' : ''}</span>
+                  </div>
+                  <span className="font-bold text-lg text-slate-800">{fmtMoney(ticket.total)}</span>
+                  <button
+                    onClick={e => { e.stopPropagation(); imprimirTicket(ticket); }}
+                    className="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                    title="Imprimir ticket"
+                  >
+                    <Printer size={16} />
+                  </button>
+                </div>
+
+                {/* Detalle expandido */}
+                {expandido && (
+                  <div className="border-t border-slate-100 bg-slate-50 p-4 animate-in fade-in slide-in-from-top-1">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-xs text-slate-500 uppercase">
+                          <th className="text-left pb-2">Producto</th>
+                          <th className="text-center pb-2">Cant</th>
+                          <th className="text-right pb-2">P. Unit</th>
+                          <th className="text-right pb-2">Subtotal</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ticket.items.map((item, idx) => (
+                          <tr key={idx} className="border-t border-slate-200">
+                            <td className="py-1.5 text-slate-700">{item.producto}</td>
+                            <td className="py-1.5 text-center text-slate-600">{item.cantidad}</td>
+                            <td className="py-1.5 text-right text-slate-600">{fmtMoney(item.precio_unitario || (item.precio_total / item.cantidad))}</td>
+                            <td className="py-1.5 text-right font-medium text-slate-800">{fmtMoney(item.precio_total)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {ticket.notas && (
+                      <p className="mt-2 text-xs text-slate-500 italic">Notas: {ticket.notas}</p>
+                    )}
+                    <div className="mt-3 flex justify-end gap-2">
+                      <button
+                        onClick={() => {
+                          const ticketNum = String(ticket.ticket_id).padStart(4, '0');
+                          const items = ticket.items.map(i => `  ${i.cantidad}x ${i.producto} $${Number(i.precio_total).toFixed(0)}`).join('\n');
+                          const msg = `🧾 *Comprobante de compra*\n` +
+                            `📍 ${configNegocio.kiosco_nombre || 'Mi Kiosco'}\n` +
+                            `📅 ${new Date(ticket.fecha).toLocaleString('es-AR')}\n` +
+                            `🎫 Ticket #${ticketNum}\n\n` +
+                            `${items}\n\n` +
+                            `💰 *TOTAL: ${fmtMoney(ticket.total)}*\n` +
+                            `💳 Método: ${ticket.metodo_pago}\n` +
+                            `\n¡Gracias por su compra!`;
+                          window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+                        }}
+                        className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                      >
+                        <MessageCircle size={14} /> WhatsApp
+                      </button>
+                      <button
+                        onClick={() => imprimirTicket(ticket)}
+                        className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                      >
+                        <Printer size={14} /> Reimprimir Ticket
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

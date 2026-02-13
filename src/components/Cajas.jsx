@@ -91,7 +91,7 @@ function Cajas() {
       <div className="max-w-3xl mx-auto">
         
         <div className="mb-6">
-          <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-3">
+          <h1 className="text-2xl font-extrabold text-slate-800 flex items-center gap-3 tracking-tight">
             <Monitor className="text-blue-600" size={28} />
             Gestión de Cajas
           </h1>

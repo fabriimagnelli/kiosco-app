@@ -124,26 +124,26 @@ function Inicio() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4 hover:shadow-md transition-shadow">
           <div className="bg-blue-100 p-3 rounded-xl text-blue-600"><DollarSign size={28} /></div>
-          <div><p className="text-slate-500 text-sm font-bold uppercase">Ventas Hoy</p><p className="text-2xl font-bold text-slate-800">$ {dashboard.ventas_hoy?.toLocaleString()}</p></div>
+          <div><p className="text-slate-400 text-[11px] font-bold uppercase tracking-wider">Ventas Hoy</p><p className="text-2xl font-extrabold text-slate-800 tracking-tight">$ {dashboard.ventas_hoy?.toLocaleString()}</p></div>
         </div>
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4 hover:shadow-md transition-shadow">
           <div className="bg-purple-100 p-3 rounded-xl text-purple-600"><ShoppingCart size={28} /></div>
-          <div><p className="text-slate-500 text-sm font-bold uppercase">Tickets Hoy</p><p className="text-2xl font-bold text-slate-800">{dashboard.tickets_hoy}</p></div>
+          <div><p className="text-slate-400 text-[11px] font-bold uppercase tracking-wider">Tickets Hoy</p><p className="text-2xl font-extrabold text-slate-800 tracking-tight">{dashboard.tickets_hoy}</p></div>
         </div>
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4 hover:shadow-md transition-shadow">
           <div className="bg-red-100 p-3 rounded-xl text-red-600"><TrendingDown size={28} /></div>
-          <div><p className="text-slate-500 text-sm font-bold uppercase">Gastos Hoy</p><p className="text-2xl font-bold text-slate-800">$ {dashboard.gastos_hoy?.toLocaleString()}</p></div>
+          <div><p className="text-slate-400 text-[11px] font-bold uppercase tracking-wider">Gastos Hoy</p><p className="text-2xl font-extrabold text-slate-800 tracking-tight">$ {dashboard.gastos_hoy?.toLocaleString()}</p></div>
         </div>
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4 hover:shadow-md transition-shadow">
           <div className="bg-orange-100 p-3 rounded-xl text-orange-600"><AlertTriangle size={28} /></div>
-          <div><p className="text-slate-500 text-sm font-bold uppercase">Stock Bajo</p><p className="text-2xl font-bold text-slate-800">{dashboard.bajo_stock?.length} Prod.</p></div>
+          <div><p className="text-slate-400 text-[11px] font-bold uppercase tracking-wider">Stock Bajo</p><p className="text-2xl font-extrabold text-slate-800 tracking-tight">{dashboard.bajo_stock?.length} Prod.</p></div>
         </div>
       </div>
 
       {/* GRÁFICOS */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-            <h3 className="font-bold text-slate-700 mb-6 flex items-center gap-2"><TrendingUp className="text-blue-500"/> Evolución de Ventas (7 días)</h3>
+            <h3 className="font-bold text-slate-700 mb-6 flex items-center gap-2 tracking-tight"><TrendingUp className="text-blue-500"/> Evolución de Ventas (7 días)</h3>
             <div className="h-64 w-full">
                 {ventasSemana.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
@@ -159,7 +159,7 @@ function Inicio() {
             </div>
         </div>
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col">
-            <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><PieIcon className="text-purple-500"/> Métodos de Pago</h3>
+            <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2 tracking-tight"><PieIcon className="text-purple-500"/> Métodos de Pago</h3>
             <div className="flex-1 min-h-[200px] relative">
                  {metodosPago.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
@@ -179,7 +179,7 @@ function Inicio() {
       {/* LISTAS INFERIORES */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-            <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><Award className="text-yellow-500"/> Productos Más Vendidos</h3>
+            <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2 tracking-tight"><Award className="text-yellow-500"/> Productos Más Vendidos</h3>
             <div className="space-y-3">
                 {productosTop.map((prod, index) => (
                     <div key={index} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
@@ -195,7 +195,7 @@ function Inicio() {
         </div>
 
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-            <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><AlertTriangle className="text-red-500"/> Alerta de Reposición</h3>
+            <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2 tracking-tight"><AlertTriangle className="text-red-500"/> Alerta de Reposición</h3>
             <div className="space-y-2 overflow-y-auto max-h-64 custom-scrollbar pr-2">
                 {dashboard.bajo_stock?.length > 0 ? (
                     dashboard.bajo_stock.map((item, index) => (

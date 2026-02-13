@@ -95,7 +95,7 @@ function Balance() {
 
   return (
     <div className="p-6 h-full flex flex-col overflow-y-auto">
-      <h2 className="text-3xl font-bold text-gray-800 mb-6">Balance por Período</h2>
+      <h2 className="text-3xl font-extrabold text-gray-800 mb-6 tracking-tight">Balance por Período</h2>
 
       {/* FILTROS DE FECHA */}
       <div className="bg-white p-6 rounded-lg shadow-md flex gap-4 items-end mb-6">

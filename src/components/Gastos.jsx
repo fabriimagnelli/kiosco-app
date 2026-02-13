@@ -162,7 +162,7 @@ function Gastos() {
       {/* HEADER Y TOTAL DEL MES */}
       <div className="flex flex-col md:flex-row justify-between items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-slate-800 flex items-center gap-2">
+          <h1 className="text-3xl font-extrabold text-slate-800 flex items-center gap-2 tracking-tight">
             <TrendingDown className="text-red-600" size={32} /> Control de Gastos
           </h1>
           <p className="text-slate-500">Registra las salidas de dinero de tu caja.</p>
@@ -174,7 +174,7 @@ function Gastos() {
             </div>
             <div>
                 <p className="text-xs font-bold text-red-400 uppercase tracking-wider">Total Gastos ({new Date().toLocaleString('es-AR', { month: 'long' })})</p>
-                <p className="text-2xl font-black text-slate-800">$ {calcularTotalMes().toLocaleString()}</p>
+                <p className="text-2xl font-extrabold text-slate-800">$ {calcularTotalMes().toLocaleString()}</p>
             </div>
         </div>
       </div>

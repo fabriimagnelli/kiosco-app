@@ -10,19 +10,106 @@ html, body, #root {
 }
 
 body {
-  /* Usamos Outfit como fuente principal */
-  font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  
-  /* Slate-50: Un fondo un poco más luminoso y limpio */
+  font-family: 'Montserrat', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background-color: #f8fafc; 
-  
-  /* Slate-700: Texto gris suave para mejor lectura */
   color: #334155; 
-  
-  /* Suavizado de fuente para que se vea más "fina" */
   -webkit-font-smoothing: antialiased; 
   -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  text-rendering: optimizeLegibility;
 }
+
+/* Tipografía refinada para Montserrat */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 700;
+  letter-spacing: -0.025em;
+}
+
+.font-black {
+  letter-spacing: -0.03em;
+}
+
+.font-extrabold {
+  letter-spacing: -0.025em;
+}
+
+.text-2xl, .text-3xl, .text-4xl, .text-5xl, .text-6xl {
+  letter-spacing: -0.025em;
+}
+
+/* Labels y textos pequeños uppercase - más legibles con Montserrat */
+.uppercase {
+  letter-spacing: 0.05em;
+}
+
+/* Transición suave para todos los textos */
+* {
+  text-rendering: optimizeLegibility;
+}
+
+/* ─── Dark Mode (Global overrides) ─── */
+html.dark {
+  color-scheme: dark;
+}
+html.dark body {
+  background-color: #0f172a;
+  color: #e2e8f0;
+}
+
+/* Fondos principales */
+html.dark .bg-slate-100 { background-color: #0f172a !important; }
+html.dark .bg-slate-50 { background-color: #1e293b !important; }
+html.dark .bg-white { background-color: #1e293b !important; }
+html.dark .bg-gray-50 { background-color: #1e293b !important; }
+html.dark .bg-gray-100 { background-color: #0f172a !important; }
+
+/* Textos */
+html.dark .text-slate-900 { color: #f1f5f9 !important; }
+html.dark .text-slate-800 { color: #e2e8f0 !important; }
+html.dark .text-slate-700 { color: #cbd5e1 !important; }
+html.dark .text-slate-600 { color: #94a3b8 !important; }
+html.dark .text-gray-800 { color: #e2e8f0 !important; }
+html.dark .text-gray-700 { color: #cbd5e1 !important; }
+html.dark .text-gray-600 { color: #94a3b8 !important; }
+
+/* Bordes */
+html.dark .border-slate-200 { border-color: #334155 !important; }
+html.dark .border-slate-100 { border-color: #1e293b !important; }
+html.dark .border-slate-300 { border-color: #475569 !important; }
+html.dark .border-gray-200 { border-color: #334155 !important; }
+html.dark .border-gray-100 { border-color: #1e293b !important; }
+
+/* Inputs y formularios */
+html.dark input, html.dark select, html.dark textarea {
+  background-color: #0f172a !important;
+  color: #e2e8f0 !important;
+  border-color: #334155 !important;
+}
+html.dark input::placeholder, html.dark textarea::placeholder {
+  color: #64748b !important;
+}
+html.dark input:focus, html.dark select:focus, html.dark textarea:focus {
+  border-color: #3b82f6 !important;
+}
+
+/* Sombras */
+html.dark .shadow-sm { box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.3) !important; }
+html.dark .shadow-md { box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.4) !important; }
+html.dark .shadow-lg { box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.4) !important; }
+
+/* Hover states */
+html.dark .hover\:bg-slate-50:hover { background-color: #334155 !important; }
+html.dark .hover\:bg-gray-50:hover { background-color: #334155 !important; }
+
+/* Tables */
+html.dark table th { background-color: #1e293b !important; color: #94a3b8 !important; }
+html.dark table td { border-color: #1e293b !important; }
+html.dark table tr:hover td { background-color: #162032 !important; }
+
+/* Scrollbar dark */
+html.dark ::-webkit-scrollbar-track { background: #0f172a; }
+html.dark ::-webkit-scrollbar-thumb { background: #334155; }
+html.dark ::-webkit-scrollbar-thumb:hover { background: #475569; }
 
 /* Scrollbar personalizada */
 ::-webkit-scrollbar {

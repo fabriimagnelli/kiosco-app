@@ -2,8 +2,11 @@ import React, { useState, useEffect, Component } from "react";
 // CORRECCIÓN CLAVE: Usamos HashRouter en lugar de BrowserRouter
 import { HashRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import { ThemeProvider } from "./context/ThemeContext";
 import Sidebar from "./components/Sidebar";
 import Login from "./components/Login";
+import BusquedaGlobal from "./components/BusquedaGlobal";
+import Tutorial from "./components/Tutorial";
 import { Download, X, RefreshCw } from "lucide-react";
 
 import Inicio from "./components/Inicio";
@@ -22,6 +25,7 @@ import Retiros from "./components/Retiros";
 import Configuracion from "./components/Configuracion";
 import Cajas from "./components/Cajas";
 import Conciliacion from "./components/Conciliacion";
+import Calculadora from "./components/Calculadora";
 
 const SplashScreen = () => (
   <div className="fixed inset-0 bg-slate-900 flex flex-col items-center justify-center z-50">
@@ -31,7 +35,7 @@ const SplashScreen = () => (
     </div>
     <div className="mt-8 flex flex-col items-center gap-2">
        <div className="w-12 h-12 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin"></div>
-       <p className="text-slate-400 text-sm font-medium tracking-widest animate-pulse">CARGANDO...</p>
+       <p className="text-slate-400 text-xs font-semibold tracking-[0.25em] uppercase animate-pulse">CARGANDO...</p>
     </div>
   </div>
 );
@@ -46,6 +50,14 @@ const Layout = ({ children }) => {
   // --- Estado de actualización ---
   const [updateAvailable, setUpdateAvailable] = useState(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
+
+  // --- Búsqueda global ---
+  const [busquedaAbierta, setBusquedaAbierta] = useState(false);
+
+  // --- Tutorial / Onboarding ---
+  const [mostrarTutorial, setMostrarTutorial] = useState(() => {
+    return !localStorage.getItem("sacware_tutorial_visto");
+  });
 
   useEffect(() => {
     localStorage.setItem("sidebarOpen", JSON.stringify(sidebarOpen));
@@ -86,7 +98,14 @@ const Layout = ({ children }) => {
   // Atajos de teclado globales
   useEffect(() => {
     const handleKeyDown = (e) => {
-      // No activar si el foco está en un input/textarea/select
+      // Ctrl+K / Cmd+K para búsqueda global (siempre activo)
+      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+        e.preventDefault();
+        setBusquedaAbierta(prev => !prev);
+        return;
+      }
+
+      // No activar atajos F si el foco está en un input/textarea/select
       const tag = document.activeElement?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
 
@@ -98,7 +117,9 @@ const Layout = ({ children }) => {
         F5: "/stock",
         F6: "/reportes",
         F7: "/gastos",
-        F8: "/configuracion"
+        F8: "/configuracion",
+        F9: "/calculadora",
+        F10: "/clientes",
       };
 
       if (atajos[e.key]) {
@@ -113,7 +134,11 @@ const Layout = ({ children }) => {
 
   return (
     <div className="flex h-screen bg-slate-100 overflow-hidden font-sans text-slate-900">
-      <Sidebar isOpen={sidebarOpen} toggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
+      <Sidebar 
+        isOpen={sidebarOpen} 
+        toggleSidebar={() => setSidebarOpen(!sidebarOpen)} 
+        onOpenSearch={() => setBusquedaAbierta(true)}
+      />
       <div className="flex-1 flex flex-col h-full overflow-hidden relative transition-all duration-300">
         
         {/* BANNER DE ACTUALIZACIÓN PERSISTENTE */}
@@ -139,6 +164,12 @@ const Layout = ({ children }) => {
         </main>
       </div>
 
+      {/* BÚSQUEDA GLOBAL (Ctrl+K) */}
+      <BusquedaGlobal isOpen={busquedaAbierta} onClose={() => setBusquedaAbierta(false)} />
+
+      {/* TUTORIAL / ONBOARDING (primera vez) */}
+      {mostrarTutorial && <Tutorial onClose={() => setMostrarTutorial(false)} />}
+
       {/* MODAL DE ALERTA DE ACTUALIZACIÓN (una vez por sesión) */}
       {showUpdateModal && updateAvailable && (
         <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4 animate-in fade-in duration-300">
@@ -147,7 +178,7 @@ const Layout = ({ children }) => {
               <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3">
                 <Download size={32} className="text-white"/>
               </div>
-              <h2 className="text-xl font-bold text-white">¡Nueva Actualización Disponible!</h2>
+              <h2 className="text-xl font-extrabold text-white tracking-tight">¡Nueva Actualización Disponible!</h2>
             </div>
             <div className="p-6 text-center">
               <p className="text-slate-600 mb-2">
@@ -215,6 +246,7 @@ function RutasApp() {
             <Route path="/retiros" element={<RutaProtegida><Retiros /></RutaProtegida>} />
             <Route path="/cajas" element={<RutaProtegida><Cajas /></RutaProtegida>} />
             <Route path="/conciliacion" element={<RutaProtegida><Conciliacion /></RutaProtegida>} />
+            <Route path="/calculadora" element={<RutaProtegida><Calculadora /></RutaProtegida>} />
             <Route path="/configuracion" element={<RutaProtegida><Configuracion /></RutaProtegida>} />
             <Route path="*" element={<Navigate to="/" />} />
         </Routes>
@@ -237,8 +269,8 @@ class ErrorBoundary extends Component {
     if (this.state.hasError) {
       return (
         <div className="fixed inset-0 bg-slate-900 flex flex-col items-center justify-center text-white p-8">
-          <h1 className="text-2xl font-bold mb-4">Ocurrió un error inesperado</h1>
-          <p className="text-slate-400 mb-6 text-center max-w-md">{this.state.error?.message || "Error desconocido"}</p>
+          <h1 className="text-2xl font-extrabold mb-4 tracking-tight">Ocurrió un error inesperado</h1>
+          <p className="text-slate-400 mb-6 text-center max-w-md font-medium">{this.state.error?.message || "Error desconocido"}</p>
           <button onClick={() => { this.setState({ hasError: false, error: null }); window.location.hash = "#/login"; window.location.reload(); }}
             className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-xl transition-all">
             Reiniciar Aplicación
@@ -253,11 +285,13 @@ class ErrorBoundary extends Component {
 function App() {
   return (
     <ErrorBoundary>
-      <AuthProvider>
-        <HashRouter>
-          <RutasApp />
-        </HashRouter>
-      </AuthProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <HashRouter>
+            <RutasApp />
+          </HashRouter>
+        </AuthProvider>
+      </ThemeProvider>
     </ErrorBoundary>
   );
 }

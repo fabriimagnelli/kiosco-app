@@ -31,7 +31,7 @@ function Proveedores() {
   return (
     <div className="h-full flex flex-col overflow-hidden bg-slate-50">
       <div className="px-6 pt-5 pb-0">
-        <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2 mb-4">
+        <h2 className="text-2xl font-extrabold text-slate-800 flex items-center gap-2 mb-4 tracking-tight">
           <Truck className="text-indigo-600" size={28} /> Proveedores y Compras
         </h2>
         <div className="flex gap-1 bg-white rounded-xl p-1 shadow-sm border border-slate-200 overflow-x-auto">

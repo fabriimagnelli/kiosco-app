@@ -321,7 +321,7 @@ function Productos() {
       {/* HEADER */}
       <div className="flex flex-col md:flex-row justify-between items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-slate-800 flex items-center gap-3">
+          <h1 className="text-3xl font-extrabold text-slate-800 flex items-center gap-3 tracking-tight">
             <Package className="text-purple-600" size={32} />
             Inventario de Productos
           </h1>

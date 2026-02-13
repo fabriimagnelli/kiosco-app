@@ -1,6 +1,6 @@
 {
   "name": "sacware-kiosco",
-  "version": "1.6.2",
+  "version": "2.0.0",
   "description": "Sistema de Gestión Comercial para Kioscos",
   "private": true,
   "main": "electron-main.js",
@@ -8,7 +8,7 @@
   "type": "commonjs",
   "scripts": {
     "dev": "concurrently \"npm run server\" \"vite\"",
-    "server": "cd server && npm start",
+    "server": "nodemon --watch server server/index.js",
     "build": "vite build",
     "version:patch": "npm version patch --no-git-tag-version",
     "version:minor": "npm version minor --no-git-tag-version",
@@ -83,6 +83,7 @@
     "express": "^4.22.1",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2",
+    "qrcode.react": "^4.2.0",
     "sharp": "^0.34.5",
     "sqlite3": "^5.1.6"
   },

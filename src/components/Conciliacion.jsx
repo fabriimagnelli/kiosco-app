@@ -90,7 +90,7 @@ function Conciliacion() {
       <div className="max-w-5xl mx-auto">
         
         <div className="mb-6">
-          <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-3">
+          <h1 className="text-2xl font-extrabold text-slate-800 flex items-center gap-3 tracking-tight">
             <Building2 className="text-indigo-600" size={28} />
             Conciliación Bancaria
           </h1>

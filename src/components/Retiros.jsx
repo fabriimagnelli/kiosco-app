@@ -84,7 +84,7 @@ function Retiros() {
       <div className="bg-slate-800 text-white p-8 rounded-2xl shadow-xl flex flex-col items-center relative overflow-hidden">
         <div className="absolute top-0 right-0 p-6 opacity-10"><TrendingUp size={120}/></div>
         <h2 className="text-sm font-bold uppercase tracking-widest text-slate-400">Fondo Acumulado (Retiros)</h2>
-        <p className="text-6xl font-bold mt-2 text-green-400">$ {totalAcumulado.toLocaleString()}</p>
+        <p className="text-6xl font-extrabold mt-2 text-green-400 tracking-tight">$ {totalAcumulado.toLocaleString()}</p>
         <p className="mt-2 text-sm text-slate-400">Dinero total retirado de la caja y guardado.</p>
       </div>
 

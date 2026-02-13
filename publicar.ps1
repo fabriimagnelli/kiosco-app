@@ -172,7 +172,16 @@ if (Test-Path $BuildDir) {
 New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null
 
 Write-Host "  Copiando proyecto a $BuildDir..." -ForegroundColor Gray
+# Robocopy usa exit codes especiales: 0-7 = éxito, 8+ = error
+# PowerShell interpreta cualquier exit code != 0 como error, así que manejamos manualmente
+$ErrorActionPreference = "Continue"
 robocopy $ProjectDir $BuildDir /mir /xd "dist_electron" ".git" /xf "*.db" /njh /njs /np /ndl /nfl | Out-Null
+$robocopyExit = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+if ($robocopyExit -ge 8) {
+    Write-Host "  ERROR: Robocopy fallo con codigo $robocopyExit" -ForegroundColor Red
+    exit 1
+}
 
 if (-not (Test-Path "$BuildDir\package.json")) {
     Write-Host "  ERROR: No se pudo copiar el proyecto." -ForegroundColor Red

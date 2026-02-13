@@ -214,7 +214,7 @@ function Deudores() {
       {/* HEADER */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-slate-800 flex items-center gap-3">
+          <h1 className="text-3xl font-extrabold text-slate-800 flex items-center gap-3 tracking-tight">
             <User className="text-blue-600" size={32} /> Clientes y Fidelización
           </h1>
           <p className="text-slate-500 mt-1">Gestiona clientes, créditos, puntos y deudas.</p>

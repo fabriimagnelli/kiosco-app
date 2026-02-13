@@ -52,7 +52,7 @@ function Cierre() {
       
       {/* --- ENCABEZADO CON PESTAÑAS --- */}
       <div className="bg-white border-b border-slate-200 px-6 pt-6 pb-0 shadow-sm z-10">
-        <h1 className="text-2xl font-bold text-slate-800 mb-6">Cierre de Caja</h1>
+        <h1 className="text-2xl font-extrabold text-slate-800 mb-6 tracking-tight">Cierre de Caja</h1>
         
         <div className="flex gap-8">
           <button
