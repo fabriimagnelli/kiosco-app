@@ -7,7 +7,7 @@ import {
   TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, Clock,
   Package, AlertTriangle, Download, FileSpreadsheet, FileText, Calendar,
   DollarSign, BarChart3, PieChart as PieIcon, Activity, Archive,
-  ChevronDown, RefreshCw, Filter, Printer, Search, Eye, ChevronRight, Receipt, MessageCircle
+  ChevronDown, RefreshCw, Filter, Printer, Search, Eye, ChevronRight, Receipt, MessageCircle, Trash2
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -264,7 +264,7 @@ function Rentabilidad() {
   return (
     <div className="space-y-6 animate-fade-in">
       {/* KPI Cards */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
           <p className="text-sm text-slate-500">Ingresos Totales</p>
           <p className="text-2xl font-bold text-blue-600">{fmtMoney(data.totalIngresos)}</p>
@@ -436,7 +436,7 @@ function HorasPico() {
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
           <p className="text-sm text-slate-500">Hora Pico</p>
           <p className="text-2xl font-bold text-amber-600">{maxHora.label || "--:--"}</p>
@@ -538,7 +538,7 @@ function TendenciaMensual() {
       <h3 className="text-lg font-bold text-slate-700">Tendencia Mensual (Últimos 12 meses)</h3>
 
       {/* KPIs */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
           <p className="text-sm text-slate-500">Ventas Totales</p>
           <p className="text-2xl font-bold text-blue-600">{fmtMoney(totalVentas)}</p>
@@ -638,7 +638,7 @@ function SinMovimiento() {
       </div>
 
       {/* Alertas */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-amber-50 rounded-2xl border border-amber-200 p-5">
           <div className="flex items-center gap-2 mb-1">
             <AlertTriangle size={18} className="text-amber-600" />
@@ -1090,6 +1090,8 @@ function HistorialVentas() {
   const [metodoFiltro, setMetodoFiltro] = useState("");
   const [ticketExpandido, setTicketExpandido] = useState(null);
   const [configNegocio, setConfigNegocio] = useState({ kiosco_nombre: "", kiosco_direccion: "", kiosco_telefono: "" });
+  const [ticketAEliminar, setTicketAEliminar] = useState(null);
+  const [eliminando, setEliminando] = useState(false);
 
   useEffect(() => {
     apiFetch("/api/config").then(r => r.json()).then(setConfigNegocio).catch(() => {});
@@ -1250,6 +1252,24 @@ function HistorialVentas() {
     } catch (e) { console.error("Error imprimiendo ticket:", e); }
   };
 
+  const eliminarTicket = async (ticketId) => {
+    setEliminando(true);
+    try {
+      const res = await apiFetch(`/api/ventas/${ticketId}`, { method: "DELETE" });
+      if (res.ok) {
+        setTicketAEliminar(null);
+        cargarHistorial();
+      } else {
+        const data = await res.json();
+        alert("Error al eliminar: " + (data.error || "Error desconocido"));
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Error al eliminar el ticket");
+    }
+    setEliminando(false);
+  };
+
   const metodoColor = (m) => {
     const map = { "Efectivo": "bg-green-100 text-green-700", "Mercado Pago": "bg-blue-100 text-blue-700", "Débito": "bg-purple-100 text-purple-700", "Transferencia": "bg-cyan-100 text-cyan-700", "Fiado": "bg-red-100 text-red-700" };
     return map[m] || "bg-slate-100 text-slate-600";
@@ -1301,7 +1321,7 @@ function HistorialVentas() {
 
       {/* Resumen rápido */}
       {ticketsAgrupados.length > 0 && (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="bg-white rounded-xl p-3 border border-slate-100 text-center">
             <p className="text-2xl font-bold text-blue-600">{ticketsAgrupados.length}</p>
             <p className="text-xs text-slate-500">Tickets</p>
@@ -1359,6 +1379,13 @@ function HistorialVentas() {
                   >
                     <Printer size={16} />
                   </button>
+                  <button
+                    onClick={e => { e.stopPropagation(); setTicketAEliminar(ticket); }}
+                    className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                    title="Eliminar ticket"
+                  >
+                    <Trash2 size={16} />
+                  </button>
                 </div>
 
                 {/* Detalle expandido */}
@@ -1388,6 +1415,12 @@ function HistorialVentas() {
                       <p className="mt-2 text-xs text-slate-500 italic">Notas: {ticket.notas}</p>
                     )}
                     <div className="mt-3 flex justify-end gap-2">
+                      <button
+                        onClick={() => setTicketAEliminar(ticket)}
+                        className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                      >
+                        <Trash2 size={14} /> Eliminar
+                      </button>
                       <button
                         onClick={() => {
                           const ticketNum = String(ticket.ticket_id).padStart(4, '0');
@@ -1420,6 +1453,63 @@ function HistorialVentas() {
           })}
         </div>
       )}
+
+      {/* Modal de confirmación de eliminación */}
+      {ticketAEliminar && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => !eliminando && setTicketAEliminar(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-md w-full mx-4 animate-in fade-in zoom-in-95" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center">
+                <Trash2 size={24} className="text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">Eliminar Ticket</h3>
+                <p className="text-sm text-slate-500">#{String(ticketAEliminar.ticket_id).padStart(4, '0')}</p>
+              </div>
+            </div>
+            <p className="text-slate-600 mb-2">
+              ¿Estás seguro de que querés eliminar este ticket?
+            </p>
+            <div className="bg-slate-50 rounded-lg p-3 mb-4 text-sm">
+              <div className="flex justify-between mb-1">
+                <span className="text-slate-500">Total:</span>
+                <span className="font-bold text-slate-800">{fmtMoney(ticketAEliminar.total)}</span>
+              </div>
+              <div className="flex justify-between mb-1">
+                <span className="text-slate-500">Método:</span>
+                <span className="text-slate-700">{ticketAEliminar.metodo_pago}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Items:</span>
+                <span className="text-slate-700">{ticketAEliminar.items.length} producto{ticketAEliminar.items.length !== 1 ? 's' : ''}</span>
+              </div>
+            </div>
+            <p className="text-xs text-amber-600 bg-amber-50 rounded-lg p-2 mb-4">
+              ⚠️ Esta acción es irreversible. El stock de los productos será restaurado.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setTicketAEliminar(null)}
+                disabled={eliminando}
+                className="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100 font-medium text-sm transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => eliminarTicket(ticketAEliminar.ticket_id)}
+                disabled={eliminando}
+                className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white font-semibold text-sm transition-colors flex items-center gap-2 disabled:opacity-50"
+              >
+                {eliminando ? (
+                  <><RefreshCw size={14} className="animate-spin" /> Eliminando...</>
+                ) : (
+                  <><Trash2 size={14} /> Eliminar</>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1431,7 +1521,7 @@ function Skeleton() {
   return (
     <div className="space-y-4 animate-pulse">
       <div className="h-8 bg-slate-200 rounded-lg w-1/3" />
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[1, 2, 3].map((i) => (
           <div key={i} className="h-24 bg-slate-200 rounded-2xl" />
         ))}

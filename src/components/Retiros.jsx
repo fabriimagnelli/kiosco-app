@@ -78,13 +78,13 @@ function Retiros() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-100 p-6 gap-6">
+    <div className="flex flex-col h-full bg-slate-100 p-4 md:p-6 gap-4 md:gap-6">
       
       {/* TARJETA BALANCE */}
-      <div className="bg-slate-800 text-white p-8 rounded-2xl shadow-xl flex flex-col items-center relative overflow-hidden">
+      <div className="bg-slate-800 text-white p-6 md:p-8 rounded-2xl shadow-xl flex flex-col items-center relative overflow-hidden">
         <div className="absolute top-0 right-0 p-6 opacity-10"><TrendingUp size={120}/></div>
         <h2 className="text-sm font-bold uppercase tracking-widest text-slate-400">Fondo Acumulado (Retiros)</h2>
-        <p className="text-6xl font-extrabold mt-2 text-green-400 tracking-tight">$ {totalAcumulado.toLocaleString()}</p>
+        <p className="text-3xl md:text-6xl font-extrabold mt-2 text-green-400 tracking-tight">$ {totalAcumulado.toLocaleString()}</p>
         <p className="mt-2 text-sm text-slate-400">Dinero total retirado de la caja y guardado.</p>
       </div>
 
@@ -101,8 +101,8 @@ function Retiros() {
             <RefreshCw size={20} className={cargando ? "animate-spin" : ""} />
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto">
-          <table className="w-full text-left">
+        <div className="flex-1 overflow-x-auto overflow-y-auto">
+          <table className="w-full text-left min-w-[600px]">
             <thead className="bg-slate-50 text-xs font-bold text-slate-500 uppercase sticky top-0">
               <tr>
                 <th className="p-4">Fecha</th>

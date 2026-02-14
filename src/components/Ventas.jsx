@@ -481,7 +481,7 @@ function Ventas() {
   const total = Math.max(0, subtotal - descuentoNum);
 
   return (
-    <div className="flex flex-col lg:flex-row h-full bg-slate-100 p-4 gap-4 overflow-hidden">
+    <div className="flex flex-col lg:flex-row h-full bg-slate-100 p-2 md:p-4 gap-3 md:gap-4 overflow-hidden">
       
       {/* IZQUIERDA: BUSCADOR Y PRODUCTOS */}
       <div className="flex-1 flex flex-col gap-4 overflow-hidden">
@@ -509,17 +509,17 @@ function Ventas() {
         </div>
 
         {/* CARGA MANUAL */}
-        <form onSubmit={agregarManual} className="bg-white p-4 rounded-2xl shadow-sm flex items-center gap-2 border border-slate-200">
+        <form onSubmit={agregarManual} className="bg-white p-3 md:p-4 rounded-2xl shadow-sm flex flex-wrap items-center gap-2 border border-slate-200">
             <Plus className="text-slate-400" />
             <input 
-                className="flex-1 outline-none text-lg" 
-                placeholder="Ingresar nombre producto manual..." 
+                className="flex-1 min-w-[120px] outline-none text-base md:text-lg" 
+                placeholder="Producto manual..." 
                 value={manualNombre}
                 onChange={e => setManualNombre(e.target.value)}
             />
             <input 
                 type="number"
-                className="w-32 outline-none text-lg border-l border-slate-200 pl-4" 
+                className="w-24 md:w-32 outline-none text-base md:text-lg border-l border-slate-200 pl-4" 
                 placeholder="$ Precio"
                 value={manualPrecio}
                 onChange={e => setManualPrecio(e.target.value)}

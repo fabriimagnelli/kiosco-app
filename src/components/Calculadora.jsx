@@ -14,13 +14,13 @@ function Calculadora() {
   const precioFinal = subtotalConIva + montoGanancia;
 
   return (
-    <div className="p-6">
-      <h2 className="text-3xl font-semibold text-gray-800 mb-6">Calculadora de Precios</h2>
+    <div className="p-4 md:p-6 h-full overflow-y-auto">
+      <h2 className="text-2xl md:text-3xl font-semibold text-gray-800 mb-4 md:mb-6">Calculadora de Precios</h2>
 
-      <div className="flex gap-8">
+      <div className="flex flex-col lg:flex-row gap-4 lg:gap-8">
         
         {/* IZQUIERDA: FORMULARIO */}
-        <div className="w-1/2 bg-white p-8 rounded-lg shadow-md">
+        <div className="w-full lg:w-1/2 bg-white p-6 md:p-8 rounded-lg shadow-md">
           
           {/* 1. COSTO DEL PRODUCTO */}
           <div className="mb-6">
@@ -76,7 +76,7 @@ function Calculadora() {
         </div>
 
         {/* DERECHA: RESULTADO EN TIEMPO REAL */}
-        <div className="w-1/2 bg-gray-800 text-white p-8 rounded-lg shadow-md flex flex-col justify-center space-y-6">
+        <div className="w-full lg:w-1/2 bg-gray-800 text-white p-6 md:p-8 rounded-lg shadow-md flex flex-col justify-center space-y-6">
             
             <div className="flex justify-between border-b border-gray-600 pb-2">
                 <span className="text-gray-400">Costo Base:</span>
@@ -95,7 +95,7 @@ function Calculadora() {
 
             <div className="pt-4 text-center">
                 <p className="text-gray-400 text-sm uppercase tracking-wider mb-1">Precio de Venta Sugerido</p>
-                <p className="text-6xl font-bold text-white">${Math.ceil(precioFinal)}</p>
+                <p className="text-4xl md:text-6xl font-bold text-white">${Math.ceil(precioFinal)}</p>
                 <p className="text-xs text-gray-500 mt-2">*Redondeado hacia arriba</p>
             </div>
 

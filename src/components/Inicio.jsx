@@ -91,7 +91,7 @@ function Inicio() {
   if (!dashboard) return <div className="p-10 text-center text-slate-500">Cargando tablero...</div>;
 
   return (
-    <div className="h-full overflow-y-auto custom-scrollbar p-6 space-y-6 bg-slate-50 relative">
+    <div className="h-full overflow-y-auto custom-scrollbar p-4 md:p-6 space-y-4 md:space-y-6 bg-slate-50 relative">
       
       {showUpdateModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">

@@ -87,7 +87,7 @@ function Cajas() {
   if (cargando) return <div className="flex justify-center items-center h-full"><div className="w-10 h-10 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin"></div></div>;
 
   return (
-    <div className="p-6 h-full overflow-y-auto">
+    <div className="p-4 md:p-6 h-full overflow-y-auto">
       <div className="max-w-3xl mx-auto">
         
         <div className="mb-6">

@@ -94,11 +94,11 @@ function Balance() {
   };
 
   return (
-    <div className="p-6 h-full flex flex-col overflow-y-auto">
-      <h2 className="text-3xl font-extrabold text-gray-800 mb-6 tracking-tight">Balance por Período</h2>
+    <div className="p-4 md:p-6 h-full flex flex-col overflow-y-auto">
+      <h2 className="text-2xl md:text-3xl font-extrabold text-gray-800 mb-4 md:mb-6 tracking-tight">Balance por Período</h2>
 
       {/* FILTROS DE FECHA */}
-      <div className="bg-white p-6 rounded-lg shadow-md flex gap-4 items-end mb-6">
+      <div className="bg-white p-4 md:p-6 rounded-lg shadow-md flex flex-col sm:flex-row gap-3 sm:gap-4 sm:items-end mb-6">
         <div>
             <label className="block text-gray-600 text-sm font-bold mb-1">Desde:</label>
             <input type="date" className="border p-2 rounded" value={desde} onChange={e => setDesde(e.target.value)} />
@@ -120,10 +120,10 @@ function Balance() {
       
       {datos && (
         <div className="animate-fade-in">
-            <div className="flex gap-6 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 mb-6">
                 
                 {/* TARJETA VERDE (INGRESOS) */}
-                <div className="w-1/3 bg-green-50 border-l-4 border-green-500 p-4 rounded shadow-sm">
+                <div className="bg-green-50 border-l-4 border-green-500 p-4 rounded shadow-sm">
                     <h3 className="text-green-800 font-bold text-lg mb-3">Ingresos</h3>
                     <div className="space-y-2 text-sm">
                         <div className="flex justify-between"><span>Ventas Kiosco</span> <span className="font-bold">$ {datos.ingresos.kiosco_efvo?.toLocaleString()}</span></div>
@@ -136,7 +136,7 @@ function Balance() {
                 </div>
 
                 {/* TARJETA ROJA (EGRESOS) */}
-                <div className="w-1/3 bg-red-50 border-l-4 border-red-500 p-4 rounded shadow-sm">
+                <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded shadow-sm">
                     <h3 className="text-red-800 font-bold text-lg mb-3">Egresos</h3>
                     <div className="space-y-2 text-sm">
                         <div className="flex justify-between"><span>Gastos Operativos</span> <span className="font-bold">$ {datos.egresos.gastos_varios?.toLocaleString()}</span></div>
@@ -147,9 +147,9 @@ function Balance() {
                 </div>
 
                 {/* TARJETA AZUL (RESULTADO) */}
-                <div className="w-1/3 bg-white border border-gray-200 p-4 rounded shadow-sm flex flex-col justify-center items-center text-center">
+                <div className="bg-white border border-gray-200 p-4 rounded shadow-sm flex flex-col justify-center items-center text-center">
                     <h3 className="text-gray-500 font-bold uppercase text-sm mb-2">Resultado Neto</h3>
-                    <p className={`text-4xl font-bold ${datos.balance_neto >= 0 ? "text-blue-600" : "text-red-600"}`}>
+                    <p className={`text-3xl md:text-4xl font-bold ${datos.balance_neto >= 0 ? "text-blue-600" : "text-red-600"}`}>
                         $ {datos.balance_neto?.toLocaleString()}
                     </p>
                     <p className="text-xs text-gray-400 mt-2">{datos.balance_neto >= 0 ? "Ganancia" : "Pérdida"}</p>

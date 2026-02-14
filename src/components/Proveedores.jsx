@@ -51,7 +51,7 @@ function Proveedores() {
           })}
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-6">
         {tab === "proveedores" && <TabProveedores />}
         {tab === "ordenes" && <TabOrdenes />}
         {tab === "calendario" && <TabCalendario />}
@@ -243,8 +243,8 @@ function TabProveedores() {
           </div>
 
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="overflow-x-auto overflow-y-auto max-h-[600px]">
-              <table className="w-full text-left border-collapse">
+            <div className="overflow-x-auto overflow-y-auto max-h-[50vh] md:max-h-[600px]">
+              <table className="w-full text-left border-collapse min-w-[650px]">
                 <thead className="bg-slate-50 text-slate-600 font-semibold text-xs uppercase tracking-wider sticky top-0 z-10">
                   <tr>
                     <th className="p-4 border-b border-slate-200 bg-slate-50">Proveedor</th>
@@ -357,7 +357,7 @@ function TabProveedores() {
                       <option value="pago">Pago (Reduce deuda)</option>
                     </select>
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-bold text-slate-500 mb-1">Monto *</label>
                       <input type="number" step="0.01" placeholder="Monto" className="w-full p-2 rounded border border-indigo-200 outline-none" value={montoDeuda} onChange={(e) => setMontoDeuda(e.target.value)} disabled={procesandoDeuda} required />
@@ -565,7 +565,7 @@ function TabOrdenes() {
               <button onClick={() => setMostrarFormOrden(false)} className="p-2 hover:bg-slate-100 rounded-lg"><X size={20} /></button>
             </div>
             <form onSubmit={crearOrden} className="p-6 overflow-y-auto flex-1 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-500 mb-1">Proveedor *</label>
                   <select className="w-full p-2 border rounded-lg outline-none" value={proveedorId} onChange={e => setProveedorId(e.target.value)} required>

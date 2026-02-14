@@ -68,7 +68,7 @@ function Stock() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-100 p-6 gap-6 overflow-hidden relative">
+    <div className="flex flex-col h-full bg-slate-100 p-4 md:p-6 gap-4 md:gap-6 overflow-hidden relative">
       
       {/* 1. TARJETAS SUPERIORES (KPIs) */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-shrink-0">
@@ -112,7 +112,7 @@ function Stock() {
             />
         </div>
 
-        <div className="flex bg-slate-100 p-1 rounded-lg">
+        <div className="flex bg-slate-100 p-1 rounded-lg flex-wrap">
             {["todos", "bajo", "general", "cigarrillos"].map(f => (
                 <button 
                     key={f}
@@ -136,8 +136,8 @@ function Stock() {
 
       {/* 3. TABLA UNIFICADA */}
       <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
-        <div className="overflow-y-auto custom-scrollbar flex-1">
-            <table className="w-full text-left border-collapse">
+        <div className="overflow-x-auto overflow-y-auto custom-scrollbar flex-1">
+            <table className="w-full text-left border-collapse min-w-[600px]">
                 <thead className="bg-slate-50 text-slate-500 text-xs uppercase font-bold sticky top-0 shadow-sm z-10">
                     <tr>
                         <th className="p-4">Producto</th>

@@ -141,11 +141,11 @@ function Cigarrillos() {
   );
 
   return (
-    <div className="p-6 space-y-6 animate-in fade-in duration-500">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-6 animate-in fade-in duration-500">
       
       <div className="flex flex-col md:flex-row justify-between items-center gap-4">
         <div>
-            <h1 className="text-3xl font-bold text-slate-800 flex items-center gap-3">
+            <h1 className="text-2xl md:text-3xl font-bold text-slate-800 flex items-center gap-3">
                 <Cigarette className="text-yellow-600" size={32}/>
                 Inventario de Cigarrillos
             </h1>
@@ -177,7 +177,7 @@ function Cigarrillos() {
                         />
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         {/* PRECIO EFECTIVO */}
                         <div>
                             <label className="block text-xs font-bold text-slate-500 mb-1">Precio Efectivo</label>
@@ -208,7 +208,7 @@ function Cigarrillos() {
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         {/* STOCK */}
                         <div>
                             <label className="block text-xs font-bold text-slate-500 mb-1">Stock</label>
@@ -273,8 +273,8 @@ function Cigarrillos() {
             </div>
 
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                <div className="overflow-x-auto overflow-y-auto max-h-[600px]">
-                    <table className="w-full text-left border-collapse">
+                <div className="overflow-x-auto overflow-y-auto max-h-[50vh] md:max-h-[600px]">
+                    <table className="w-full text-left border-collapse min-w-[650px]">
                         <thead className="bg-slate-50 text-slate-600 font-semibold text-xs uppercase tracking-wider sticky top-0 z-10">
                             <tr>
                                 <th className="p-4 border-b border-slate-200 bg-slate-50">Marca / Variedad</th>

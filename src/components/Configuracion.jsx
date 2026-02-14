@@ -220,10 +220,10 @@ function Configuracion() {
 
   return (
     // AGREGADO: h-full y overflow-y-auto para permitir hacer scroll
-    <div className="p-6 max-w-4xl mx-auto animate-in fade-in duration-500 h-full overflow-y-auto">
+    <div className="p-4 md:p-6 max-w-4xl mx-auto animate-in fade-in duration-500 h-full overflow-y-auto">
       
-      <div className="mb-8">
-        <h1 className="text-3xl font-extrabold text-slate-800 flex items-center gap-3 tracking-tight">
+      <div className="mb-6 md:mb-8">
+        <h1 className="text-2xl md:text-3xl font-extrabold text-slate-800 flex items-center gap-3 tracking-tight">
           <Settings className="text-purple-600" size={32} />
           Configuración y Administración
         </h1>

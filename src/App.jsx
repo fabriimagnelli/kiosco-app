@@ -7,7 +7,7 @@ import Sidebar from "./components/Sidebar";
 import Login from "./components/Login";
 import BusquedaGlobal from "./components/BusquedaGlobal";
 import Tutorial from "./components/Tutorial";
-import { Download, X, RefreshCw } from "lucide-react";
+import { Download, X, RefreshCw, Menu } from "lucide-react";
 
 import Inicio from "./components/Inicio";
 import Ventas from "./components/Ventas";
@@ -45,6 +45,7 @@ const Layout = ({ children }) => {
     const saved = localStorage.getItem("sidebarOpen");
     return saved !== null ? JSON.parse(saved) : true;
   });
+  const [mobileOpen, setMobileOpen] = useState(false);
   const navigate = useNavigate();
 
   // --- Estado de actualización ---
@@ -138,8 +139,21 @@ const Layout = ({ children }) => {
         isOpen={sidebarOpen} 
         toggleSidebar={() => setSidebarOpen(!sidebarOpen)} 
         onOpenSearch={() => setBusquedaAbierta(true)}
+        mobileOpen={mobileOpen}
+        setMobileOpen={setMobileOpen}
       />
       <div className="flex-1 flex flex-col h-full overflow-hidden relative transition-all duration-300">
+        
+        {/* BOTÓN HAMBURGUESA MOBILE */}
+        <div className="md:hidden flex items-center gap-3 px-4 py-3 bg-white border-b border-slate-200 shadow-sm">
+          <button onClick={() => setMobileOpen(true)} className="p-2 rounded-lg hover:bg-slate-100 text-slate-700 transition-colors">
+            <Menu size={22} />
+          </button>
+          <div className="flex items-center gap-2">
+            <img src="/logo.png" alt="Logo" className="w-7 h-7 object-contain" />
+            <span className="font-bold text-sm text-slate-800">SAC<span className="text-blue-500">Ware</span></span>
+          </div>
+        </div>
         
         {/* BANNER DE ACTUALIZACIÓN PERSISTENTE */}
         {updateAvailable && (

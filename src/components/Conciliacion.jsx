@@ -86,7 +86,7 @@ function Conciliacion() {
   const diferencia = datos ? (parseFloat(montoBanco) || 0) - datos.total_sistema : 0;
 
   return (
-    <div className="p-6 h-full overflow-y-auto">
+    <div className="p-4 md:p-6 h-full overflow-y-auto">
       <div className="max-w-5xl mx-auto">
         
         <div className="mb-6">

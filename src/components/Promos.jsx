@@ -132,10 +132,10 @@ function Promos() {
   ).slice(0, 10);
 
   return (
-    <div className="flex flex-col h-full bg-slate-100 p-6 gap-6">
+    <div className="flex flex-col h-full bg-slate-100 p-4 md:p-6 gap-4 md:gap-6">
       
       {/* Header */}
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Promos y Combos</h1>
           <p className="text-slate-500">Crea paquetes que descuenten stock automáticamente.</p>

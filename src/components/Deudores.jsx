@@ -209,12 +209,12 @@ function Deudores() {
   const deudaActualSel = historialFiados.reduce((acc, m) => acc + m.monto, 0);
 
   return (
-    <div className="p-6 space-y-6 animate-in fade-in duration-500 h-full overflow-y-auto">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-6 animate-in fade-in duration-500 h-full overflow-y-auto">
       
       {/* HEADER */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-extrabold text-slate-800 flex items-center gap-3 tracking-tight">
+          <h1 className="text-2xl md:text-3xl font-extrabold text-slate-800 flex items-center gap-3 tracking-tight">
             <User className="text-blue-600" size={32} /> Clientes y Fidelización
           </h1>
           <p className="text-slate-500 mt-1">Gestiona clientes, créditos, puntos y deudas.</p>
@@ -406,8 +406,8 @@ function Deudores() {
 
           {/* TABLA */}
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="overflow-x-auto overflow-y-auto max-h-[600px]">
-              <table className="w-full text-left border-collapse">
+            <div className="overflow-x-auto overflow-y-auto max-h-[50vh] md:max-h-[600px]">
+              <table className="w-full text-left border-collapse min-w-[600px]">
                 <thead className="bg-slate-50 text-slate-600 font-semibold text-xs uppercase tracking-wider sticky top-0 z-10">
                   <tr>
                     <th className="p-4 border-b border-slate-200 bg-slate-50">Cliente</th>

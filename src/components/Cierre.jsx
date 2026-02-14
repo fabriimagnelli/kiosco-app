@@ -51,10 +51,10 @@ function Cierre() {
     <div className="flex flex-col h-full bg-slate-50">
       
       {/* --- ENCABEZADO CON PESTAÑAS --- */}
-      <div className="bg-white border-b border-slate-200 px-6 pt-6 pb-0 shadow-sm z-10">
-        <h1 className="text-2xl font-extrabold text-slate-800 mb-6 tracking-tight">Cierre de Caja</h1>
+      <div className="bg-white border-b border-slate-200 px-4 md:px-6 pt-4 md:pt-6 pb-0 shadow-sm z-10">
+        <h1 className="text-xl md:text-2xl font-extrabold text-slate-800 mb-4 md:mb-6 tracking-tight">Cierre de Caja</h1>
         
-        <div className="flex gap-8">
+        <div className="flex gap-2 sm:gap-4 md:gap-8 flex-wrap overflow-x-auto">
           <button
             onClick={() => setTabActiva("general")}
             className={`flex items-center gap-2 pb-4 text-sm font-bold border-b-2 transition-all ${
@@ -156,7 +156,7 @@ function Cierre() {
                               </p>
                             </div>
                           </div>
-                          <div className="flex gap-6 text-sm items-center">
+                          <div className="flex flex-wrap gap-3 md:gap-6 text-sm items-center">
                             <div className="text-center">
                               <p className="text-slate-400 text-xs font-bold">Ventas</p>
                               <p className="font-bold text-green-600 flex items-center gap-1"><TrendingUp size={14}/> ${(c.total_ventas || 0).toLocaleString()}</p>

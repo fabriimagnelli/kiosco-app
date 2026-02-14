@@ -316,12 +316,12 @@ function Productos() {
   // =================== RENDER ===================
 
   return (
-    <div className="p-6 space-y-6 animate-in fade-in duration-500 h-full overflow-y-auto">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-6 animate-in fade-in duration-500 h-full overflow-y-auto">
 
       {/* HEADER */}
       <div className="flex flex-col md:flex-row justify-between items-center gap-4">
         <div>
-          <h1 className="text-3xl font-extrabold text-slate-800 flex items-center gap-3 tracking-tight">
+          <h1 className="text-2xl md:text-3xl font-extrabold text-slate-800 flex items-center gap-3 tracking-tight">
             <Package className="text-purple-600" size={32} />
             Inventario de Productos
           </h1>
@@ -412,7 +412,7 @@ function Productos() {
                 <input autoFocus={modoEdicion} className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none" placeholder="Ej: Alfajor Jorgito" value={nombre} onChange={e => setNombre(e.target.value)} />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-500 mb-1">Precio Venta</label>
                   <div className="relative">
@@ -429,7 +429,7 @@ function Productos() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-500 mb-1">Stock Inicial</label>
                   <input type="number" className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none" placeholder="0" value={stock} onChange={e => setStock(e.target.value)} />
@@ -474,7 +474,7 @@ function Productos() {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-500 mb-1">Stock Mínimo</label>
                   <div className="relative">
@@ -554,8 +554,8 @@ function Productos() {
           </div>
 
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="overflow-x-auto overflow-y-auto max-h-[600px]">
-              <table className="w-full text-left border-collapse">
+            <div className="overflow-x-auto overflow-y-auto max-h-[50vh] md:max-h-[600px]">
+              <table className="w-full text-left border-collapse min-w-[700px]">
                 <thead className="bg-slate-50 text-slate-600 font-semibold text-xs uppercase tracking-wider sticky top-0 z-10">
                   <tr>
                     {mostrarEtiquetas && <th className="p-3 border-b border-slate-200 bg-slate-50 w-10"></th>}

@@ -7,15 +7,20 @@ import {
   Home, ShoppingCart, Package, Users, Truck, DollarSign, LogOut, Archive, PieChart,
   FileText, Scale, Cigarette, ShoppingBag, TrendingUp, Settings,
   ChevronLeft, ChevronRight, ChevronDown, LockOpen, Monitor, Building2, Calculator,
-  Search, Moon, Sun, Volume2, VolumeX
+  Search, Moon, Sun, Volume2, VolumeX, Menu, X
 } from "lucide-react";
 
-function Sidebar({ isOpen, toggleSidebar, onOpenSearch }) {
+function Sidebar({ isOpen, toggleSidebar, onOpenSearch, mobileOpen, setMobileOpen }) {
   const { logout, usuario, rol } = useAuth();
   const { tema, toggleTema } = useTheme();
   const [sonidoActivo, setSonidoActivo] = useState(isSoundEnabled());
   const location = useLocation();
   const navigate = useNavigate();
+
+  // Cerrar sidebar mobile al navegar
+  useEffect(() => {
+    if (mobileOpen) setMobileOpen(false);
+  }, [location.pathname]);
 
   const handleLogout = () => {
     logout();
@@ -46,11 +51,30 @@ function Sidebar({ isOpen, toggleSidebar, onOpenSearch }) {
   const subBtnInactive = "text-slate-400 hover:bg-slate-800 hover:text-white";
 
   return (
-    <div className={`${isOpen ? "w-64" : "w-20"} bg-slate-900 h-full flex flex-col justify-between transition-all duration-300 flex-shrink-0 relative z-20 border-r border-slate-800 shadow-xl`}>
+    <>
+    {/* Overlay para mobile */}
+    {mobileOpen && (
+      <div className="fixed inset-0 bg-black/60 z-30 md:hidden" onClick={() => setMobileOpen(false)} />
+    )}
+
+    <div className={`
+      ${isOpen ? "w-64" : "w-20"} 
+      bg-slate-900 h-full flex flex-col justify-between transition-all duration-300 flex-shrink-0 relative z-40 border-r border-slate-800 shadow-xl
+      fixed md:relative
+      ${mobileOpen ? "translate-x-0 w-64" : "-translate-x-full md:translate-x-0"}
+    `}>
       
+      {/* Botón cerrar en mobile */}
+      <button 
+        onClick={() => setMobileOpen(false)}
+        className="absolute top-4 right-4 bg-slate-700 text-white p-1.5 rounded-lg md:hidden z-50 hover:bg-slate-600"
+      >
+        <X size={18} />
+      </button>
+
       <button 
         onClick={toggleSidebar}
-        className="absolute -right-3 top-9 bg-blue-600 text-white p-1 rounded-full shadow-lg border-2 border-slate-900 hover:bg-blue-500 transition-colors z-50"
+        className="absolute -right-3 top-9 bg-blue-600 text-white p-1 rounded-full shadow-lg border-2 border-slate-900 hover:bg-blue-500 transition-colors z-50 hidden md:block"
       >
         {isOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
       </button>
@@ -251,6 +275,7 @@ function Sidebar({ isOpen, toggleSidebar, onOpenSearch }) {
       </div>
 
     </div>
+    </>
   );
 }
 
