@@ -501,18 +501,39 @@ function Ventas() {
   };
 
   const handleBusquedaKeyDown = async (e) => {
-    if (e.key === 'Enter' && busqueda.trim()) {
+    if (e.key === 'Enter') {
+      // Usar el valor real del input (e.target.value) en vez del estado,
+      // porque el escáner de código de barras escribe muy rápido y React
+      // puede no haber actualizado el estado aún cuando llega el Enter.
+      const valorActual = (e.target.value || '').trim();
+      if (!valorActual) return;
       e.preventDefault();
+
+      // Filtrar productos con el valor actual del input
+      const filtrados = productos.filter(p =>
+        p.nombre.toLowerCase().includes(valorActual.toLowerCase()) ||
+        (p.codigo_barras && p.codigo_barras.includes(valorActual))
+      );
+
       // Si hay exactamente 1 resultado en filtro local, agregarlo
-      if (productosFiltrados.length === 1) {
-        agregarAlCarrito(productosFiltrados[0]);
+      if (filtrados.length === 1) {
+        agregarAlCarrito(filtrados[0]);
         setBusqueda("");
         return;
       }
+
+      // Buscar coincidencia exacta por código de barras
+      const exacto = productos.find(p => p.codigo_barras && p.codigo_barras === valorActual);
+      if (exacto) {
+        agregarAlCarrito(exacto);
+        setBusqueda("");
+        return;
+      }
+
       // Si no, buscar por código secundario en el servidor
-      const found = await buscarPorCodigo(busqueda.trim());
-      if (!found && productosFiltrados.length > 0) {
-        agregarAlCarrito(productosFiltrados[0]);
+      const found = await buscarPorCodigo(valorActual);
+      if (!found && filtrados.length > 0) {
+        agregarAlCarrito(filtrados[0]);
         setBusqueda("");
       }
     }
