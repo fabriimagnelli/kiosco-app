@@ -243,7 +243,8 @@ function Ventas() {
       doc.text(`Fecha: ${new Date().toLocaleString("es-AR")}`, margen, y);
       y += 3.5;
       doc.setFont("helvetica", "bold");
-      doc.text(`Ticket #${String(ticketId).padStart(4, '0')}`, margen, y);
+      const ticketNumStr = String(parseInt(ticketId, 10) || ticketId).padStart(4, '0');
+      doc.text(`Ticket #${ticketNumStr}`, margen, y);
       y += 4;
 
       doc.line(margen, y, anchoMM - margen, y);
@@ -378,7 +379,7 @@ function Ventas() {
     };
 
     if (ticketEditando) {
-        if(!confirm(`ESTÁS EDITANDO EL TICKET #${String(ticketEditando).padStart(4, '0')}\n\n¿Continuar?`)) return;
+        if(!confirm(`ESTÁS EDITANDO EL TICKET #${String(parseInt(ticketEditando, 10) || ticketEditando).padStart(4, '0')}\n\n¿Continuar?`)) return;
     }
 
     const res = await apiFetch("/api/ventas", {
@@ -488,7 +489,7 @@ function Ventas() {
         {ticketEditando && (
             <div className="bg-orange-100 border border-orange-300 text-orange-800 p-3 rounded-xl flex items-center gap-3 font-bold animate-pulse">
                 <RefreshCw className="animate-spin-slow"/>
-                <span>MODO EDICIÓN: Ticket #{String(ticketEditando).padStart(4, '0')}</span>
+                <span>MODO EDICIÓN: Ticket #{String(parseInt(ticketEditando, 10) || ticketEditando).padStart(4, '0')}</span>
                 <button onClick={() => { setTicketEditando(null); setCarrito([]); navigate("/ventas", {state:{}}); }} className="ml-auto text-xs bg-white border border-orange-300 px-3 py-1 rounded hover:bg-orange-50">
                     Cancelar
                 </button>
@@ -762,7 +763,7 @@ function Ventas() {
                 {modalExito.esEdicion ? '¡Venta corregida!' : '¡Venta registrada!'}
               </h3>
               <p className="text-slate-500 text-sm mt-1">
-                Ticket #{String(modalExito.ticketId).padStart(4, '0')} — Total: ${modalExito.total.toFixed(0)}
+                Ticket #{String(parseInt(modalExito.ticketId, 10) || modalExito.ticketId).padStart(4, '0')} — Total: ${modalExito.total.toFixed(0)}
               </p>
             </div>
 
@@ -807,7 +808,7 @@ function Ventas() {
               {/* Botón WhatsApp */}
               <button
                 onClick={() => {
-                  const ticketNum = String(modalExito.ticketId).padStart(4, '0');
+                  const ticketNum = String(parseInt(modalExito.ticketId, 10) || modalExito.ticketId).padStart(4, '0');
                   const items = modalExito.items.map(i => `  ${i.cantidad}x ${i.nombre} $${(i.precio * i.cantidad).toFixed(0)}`).join('\n');
                   const msg = `🧾 *Comprobante de compra*\n` +
                     `📍 ${configNegocio.kiosco_nombre || 'Mi Kiosco'}\n` +

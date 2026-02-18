@@ -1169,7 +1169,7 @@ function HistorialVentas() {
       doc.text(`Fecha: ${fechaTicket}`, margen, y);
       y += 3.5;
       doc.setFont("helvetica", "bold");
-      doc.text(`Ticket #${String(ticket.ticket_id).padStart(4, '0')}`, margen, y);
+      doc.text(`Ticket #${String(parseInt(ticket.ticket_id, 10) || ticket.ticket_id).padStart(4, '0')}`, margen, y);
       y += 4;
       doc.line(margen, y, anchoMM - margen, y);
       y += 4;
@@ -1359,7 +1359,7 @@ function HistorialVentas() {
                 >
                   <ChevronRight size={16} className={`text-slate-400 transition-transform ${expandido ? "rotate-90" : ""}`} />
                   <div className="flex-1 flex items-center gap-3 flex-wrap">
-                    <span className="font-bold text-slate-800 min-w-[80px]">#{String(ticket.ticket_id).padStart(4, '0')}</span>
+                    <span className="font-bold text-slate-800 min-w-[80px]">#{String(parseInt(ticket.ticket_id, 10) || ticket.ticket_id).padStart(4, '0')}</span>
                     <span className="text-sm text-slate-500">
                       {new Date(ticket.fecha).toLocaleDateString("es-AR")} {new Date(ticket.fecha).toLocaleTimeString("es-AR", { hour: '2-digit', minute: '2-digit' })}
                     </span>
@@ -1423,7 +1423,7 @@ function HistorialVentas() {
                       </button>
                       <button
                         onClick={() => {
-                          const ticketNum = String(ticket.ticket_id).padStart(4, '0');
+                          const ticketNum = String(parseInt(ticket.ticket_id, 10) || ticket.ticket_id).padStart(4, '0');
                           const items = ticket.items.map(i => `  ${i.cantidad}x ${i.producto} $${Number(i.precio_total).toFixed(0)}`).join('\n');
                           const msg = `🧾 *Comprobante de compra*\n` +
                             `📍 ${configNegocio.kiosco_nombre || 'Mi Kiosco'}\n` +
@@ -1464,7 +1464,7 @@ function HistorialVentas() {
               </div>
               <div>
                 <h3 className="text-lg font-bold text-slate-800">Eliminar Ticket</h3>
-                <p className="text-sm text-slate-500">#{String(ticketAEliminar.ticket_id).padStart(4, '0')}</p>
+                <p className="text-sm text-slate-500">#{String(parseInt(ticketAEliminar.ticket_id, 10) || ticketAEliminar.ticket_id).padStart(4, '0')}</p>
               </div>
             </div>
             <p className="text-slate-600 mb-2">

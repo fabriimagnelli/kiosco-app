@@ -81,10 +81,9 @@ const dbAll = (sql, params = []) => new Promise((resolve, reject) => {
 // --- HELPERS LÓGICA ---
 const obtenerSiguienteTicket = async () => {
     try {
-        // Secuencial diario: reinicia cada día con formato día-secuencia
-        // Pero mantiene un número global secuencial simple (1, 2, 3...)
-        const row = await dbGet("SELECT MAX(ticket_id) as maxId FROM ventas");
-        return (row && row.maxId) ? row.maxId + 1 : 1;
+        // Secuencial global simple (1, 2, 3...)
+        const row = await dbGet("SELECT MAX(CAST(ticket_id AS INTEGER)) as maxId FROM ventas");
+        return (row && row.maxId) ? parseInt(row.maxId, 10) + 1 : 1;
     } catch (e) { return 1; }
 };
 
@@ -200,6 +199,32 @@ const initDB = async () => {
         await ensureColumn("ventas", "descuento", "REAL DEFAULT 0");
         await ensureColumn("ventas", "notas", "TEXT DEFAULT ''");
         await ensureColumn("ventas", "descuento_item", "REAL DEFAULT 0");
+
+        // --- MIGRACIÓN: Corregir ticket_ids corruptos (strings de "1" repetidos) ---
+        try {
+            // Detectar tickets con ticket_id que son strings de solo "1"s repetidos (ej: "11", "111", "1111"...)
+            // Estos se generaron por un bug de concatenación de strings
+            const ticketsCorruptos = await dbAll(
+                `SELECT DISTINCT ticket_id FROM ventas WHERE typeof(ticket_id) = 'text' OR length(CAST(ticket_id AS TEXT)) > 6`
+            );
+            if (ticketsCorruptos && ticketsCorruptos.length > 0) {
+                // Obtener todos los ticket_id únicos ordenados por fecha
+                const todosTickets = await dbAll(
+                    `SELECT DISTINCT ticket_id, MIN(fecha) as primera_fecha FROM ventas GROUP BY ticket_id ORDER BY MIN(fecha) ASC`
+                );
+                let nuevoId = 1;
+                for (const t of todosTickets) {
+                    const idActual = t.ticket_id;
+                    // Reasignar un número secuencial correcto
+                    await dbRun(`UPDATE ventas SET ticket_id = ? WHERE ticket_id = ?`, [nuevoId, idActual]);
+                    // También actualizar referencias en fiados y puntos_historial
+                    await dbRun(`UPDATE fiados SET descripcion = REPLACE(descripcion, 'Ticket ' || ?, 'Ticket ' || ?) WHERE descripcion LIKE '%Ticket ' || ? || '%'`, [String(idActual), String(nuevoId), String(idActual)]);
+                    await dbRun(`UPDATE puntos_historial SET ticket_id = ?, descripcion = REPLACE(descripcion, 'Ticket #' || ?, 'Ticket #' || ?) WHERE ticket_id = ?`, [nuevoId, String(idActual), String(nuevoId), idActual]);
+                    nuevoId++;
+                }
+                console.log(`[MIGRACIÓN] Se corrigieron ${todosTickets.length} ticket_ids (renumerados 1 a ${nuevoId - 1})`);
+            }
+        } catch (migErr) { console.error('[MIGRACIÓN] Error corrigiendo ticket_ids:', migErr.message); }
 
         // Nuevas columnas para productos (imagen, unidad de medida)
         await ensureColumn("productos", "imagen", "TEXT DEFAULT ''");
