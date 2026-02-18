@@ -1271,7 +1271,7 @@ function HistorialVentas() {
   };
 
   const metodoColor = (m) => {
-    const map = { "Efectivo": "bg-green-100 text-green-700", "Mercado Pago": "bg-blue-100 text-blue-700", "Débito": "bg-purple-100 text-purple-700", "Transferencia": "bg-cyan-100 text-cyan-700", "Fiado": "bg-red-100 text-red-700" };
+    const map = { "Efectivo": "bg-green-100 text-green-700", "Mercado Pago": "bg-blue-100 text-blue-700", "Débito": "bg-purple-100 text-purple-700", "Transferencia": "bg-cyan-100 text-cyan-700", "Fiado": "bg-red-100 text-red-700", "Mixto": "bg-indigo-100 text-indigo-700" };
     return map[m] || "bg-slate-100 text-slate-600";
   };
 
@@ -1303,6 +1303,7 @@ function HistorialVentas() {
               <option value="Mercado Pago">Mercado Pago</option>
               <option value="Débito">Tarjetas</option>
               <option value="Transferencia">Transferencia</option>
+              <option value="Mixto">Mixto</option>
               <option value="Fiado">Cuenta Corriente</option>
             </select>
           </div>

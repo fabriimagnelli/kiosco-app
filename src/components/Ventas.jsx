@@ -26,6 +26,12 @@ function Ventas() {
   const [pagoAnticipado, setPagoAnticipado] = useState("");
   const [metodoAnticipo, setMetodoAnticipo] = useState("Efectivo");
 
+  // Pago Mixto (split payment)
+  const [pagoMixto, setPagoMixto] = useState(false);
+  const [mixtoMetodo1, setMixtoMetodo1] = useState("Efectivo");
+  const [mixtoMonto1, setMixtoMonto1] = useState("");
+  const [mixtoMetodo2, setMixtoMetodo2] = useState("Mercado Pago");
+
   // Estado para Edición
   const [ticketEditando, setTicketEditando] = useState(null);
   
@@ -364,18 +370,50 @@ function Ventas() {
         return alert("Para fiar, debes seleccionar un CLIENTE obligatoriamente.");
     }
 
+    // Calcular montos para pago mixto
+    const montoMixto1 = parseFloat(mixtoMonto1) || 0;
+    const montoMixto2 = total - montoMixto1;
+
+    // Validar pago mixto
+    if (pagoMixto) {
+      if (montoMixto1 <= 0 || montoMixto1 >= total) {
+        return alert(`El monto del primer método debe ser entre $1 y $${(total - 1).toFixed(0)}`);
+      }
+      if (mixtoMetodo1 === mixtoMetodo2) {
+        return alert("Los dos métodos de pago deben ser diferentes.");
+      }
+    }
+
+    // Determinar método de pago y montos
+    const metodoPagoFinal = pagoMixto ? 'Mixto' : metodo;
+    const esEfectivo = (m) => m === 'Efectivo';
+    let pagoEfectivoMixto = 0;
+    let pagoDigitalMixto = 0;
+
+    if (pagoMixto) {
+      if (esEfectivo(mixtoMetodo1)) pagoEfectivoMixto += montoMixto1;
+      else pagoDigitalMixto += montoMixto1;
+      if (esEfectivo(mixtoMetodo2)) pagoEfectivoMixto += montoMixto2;
+      else pagoDigitalMixto += montoMixto2;
+    }
+
     let body = {
       productos: carrito.map(item => ({
         ...item,
         descuento_item: calcularDescuentoItem(item)
       })),
-      metodo_pago: metodo,
+      metodo_pago: metodoPagoFinal,
       cliente_id: clienteSelec || null,
       pago_anticipado: pagoAnticipado || 0,
       metodo_anticipo: metodoAnticipo,
       ticket_a_corregir: ticketEditando,
       descuento: descuentoNum,
-      notas: notas
+      notas: notas,
+      ...(pagoMixto ? {
+        pago_efectivo: pagoEfectivoMixto,
+        pago_digital: pagoDigitalMixto,
+        mixto_detalle: `${mixtoMetodo1}: $${montoMixto1.toFixed(0)} + ${mixtoMetodo2}: $${montoMixto2.toFixed(0)}`
+      } : {})
     };
 
     if (ticketEditando) {
@@ -401,7 +439,7 @@ function Ventas() {
       setModalExito({
         ticketId: ticketNum,
         items: [...carrito],
-        metodo: metodo,
+        metodo: pagoMixto ? `${mixtoMetodo1} ($${montoMixto1.toFixed(0)}) + ${mixtoMetodo2} ($${montoMixto2.toFixed(0)})` : metodo,
         total: total,
         descuento: descuentoNum,
         notas: notas,
@@ -412,9 +450,12 @@ function Ventas() {
 
       // Mostrar QR si es método digital y hay alias de MercadoPago configurado
       const esDigital = ['Mercado Pago', 'Transferencia'].includes(metodo);
-      if (esDigital && configNegocio.mp_alias) {
+      const montoQR = pagoMixto 
+        ? (['Mercado Pago', 'Transferencia'].includes(mixtoMetodo1) ? montoMixto1 : (['Mercado Pago', 'Transferencia'].includes(mixtoMetodo2) ? montoMixto2 : 0))
+        : total;
+      if ((esDigital || (pagoMixto && montoQR > 0)) && configNegocio.mp_alias) {
         setModalQR({
-          monto: total,
+          monto: montoQR,
           alias: configNegocio.mp_alias,
           nombre: configNegocio.mp_nombre || configNegocio.kiosco_nombre || ''
         });
@@ -428,6 +469,10 @@ function Ventas() {
       setDescuento("");
       setNotas("");
       setMetodo("Efectivo");
+      setPagoMixto(false);
+      setMixtoMonto1("");
+      setMixtoMetodo1("Efectivo");
+      setMixtoMetodo2("Mercado Pago");
       navigate("/ventas", { state: {} });
     } else {
       alert("Error: " + data.error);
@@ -558,13 +603,13 @@ function Ventas() {
       </div>
 
       {/* DERECHA: CARRITO */}
-      <div className="w-full lg:w-96 bg-white rounded-2xl shadow-xl flex flex-col border border-slate-200">
-        <div className={`p-5 text-white flex justify-between items-center rounded-t-2xl ${ticketEditando ? 'bg-orange-600' : 'bg-slate-900'}`}>
-          <h2 className="font-bold flex items-center gap-2 tracking-tight"><ShoppingCart /> Carrito</h2>
-          <span className="bg-white/20 px-3 py-1 rounded-full text-xs font-bold">{carrito.length} items</span>
+      <div className="w-full lg:w-96 bg-white rounded-2xl shadow-xl flex flex-col border border-slate-200 max-h-[calc(100vh-2rem)]">
+        <div className={`px-4 py-2.5 text-white flex justify-between items-center rounded-t-2xl ${ticketEditando ? 'bg-orange-600' : 'bg-slate-900'}`}>
+          <h2 className="font-bold text-sm flex items-center gap-2 tracking-tight"><ShoppingCart size={16}/> Carrito</h2>
+          <span className="bg-white/20 px-2 py-0.5 rounded-full text-xs font-bold">{carrito.length} items</span>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        <div className="flex-1 overflow-y-auto p-3 space-y-2">
           {carrito.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-slate-400 opacity-50">
                 <ShoppingCart size={48} />
@@ -572,37 +617,37 @@ function Ventas() {
             </div>
           ) : (
             carrito.map((item, index) => (
-              <div key={index} className="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-1">
+              <div key={index} className="bg-slate-50 p-2 rounded-lg border border-slate-100 space-y-0.5">
                 <div className="flex justify-between items-center">
-                  <div className="flex-1">
-                    <p className="font-bold text-sm text-slate-700">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-xs text-slate-700 truncate">
                       {item.nombre} 
                       {item.tipo === 'Manual' && <span className="text-[10px] bg-slate-200 text-slate-500 px-1 ml-1 rounded">Manual</span>}
                       {item.tipo === 'Cigarrillo' && item.precio_qr && item.precio !== item.precio_original && (
                         <span className="text-[10px] bg-blue-100 text-blue-600 px-1 ml-1 rounded">QR</span>
                       )}
                     </p>
-                    <p className="text-xs text-slate-500">$ {item.precio} x {item.cantidad}</p>
+                    <p className="text-[11px] text-slate-500">$ {item.precio} x {item.cantidad}</p>
                   </div>
-                  <div className="flex items-center gap-3">
-                      <p className="font-bold text-slate-800">$ {(item.precio * item.cantidad - calcularDescuentoItem(item)).toFixed(0)}</p>
-                      <button onClick={() => eliminarDelCarrito(index)} className="text-red-400 hover:text-red-600"><Trash2 size={18}/></button>
+                  <div className="flex items-center gap-2">
+                      <p className="font-bold text-sm text-slate-800">$ {(item.precio * item.cantidad - calcularDescuentoItem(item)).toFixed(0)}</p>
+                      <button onClick={() => eliminarDelCarrito(index)} className="text-red-400 hover:text-red-600"><Trash2 size={15}/></button>
                   </div>
                 </div>
                 {/* Descuento por ítem */}
-                <div className="flex items-center gap-1 pt-1">
-                  <Tag size={12} className="text-green-500"/>
+                <div className="flex items-center gap-1">
+                  <Tag size={10} className="text-green-500"/>
                   <input
                     type="number"
                     placeholder="Dto"
                     min="0"
-                    className="w-16 p-1 text-xs border rounded bg-white"
+                    className="w-14 px-1 py-0.5 text-[11px] border rounded bg-white"
                     value={item.descuento_item || ''}
                     onChange={e => actualizarDescuentoItem(index, e.target.value)}
                   />
                   <button
                     onClick={() => toggleDescuentoItemTipo(index)}
-                    className={`px-2 py-1 text-[10px] font-bold rounded border transition-colors ${
+                    className={`px-1.5 py-0.5 text-[10px] font-bold rounded border transition-colors ${
                       item.descuento_item_tipo === '%' ? 'bg-green-100 text-green-700 border-green-300' : 'bg-slate-100 text-slate-600 border-slate-300'
                     }`}
                   >
@@ -617,15 +662,15 @@ function Ventas() {
           )}
         </div>
 
-        <div className="p-5 bg-slate-50 border-t border-slate-200 space-y-4">
+        <div className="px-3 py-2 bg-slate-50 border-t border-slate-200 space-y-2">
             
             {/* CLIENTE (Opcional o Requerido si es Fiado) */}
             <div>
-                <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1 mb-1">
-                    <User size={12}/> Cliente {metodo === 'Fiado' ? '(Obligatorio)' : '(Opcional)'}
+                <label className="text-[11px] font-bold text-slate-500 uppercase flex items-center gap-1 mb-0.5">
+                    <User size={11}/> Cliente {metodo === 'Fiado' ? '(Obligatorio)' : '(Opcional)'}
                 </label>
                 <select 
-                    className={`w-full p-2 border rounded-lg text-sm bg-white ${metodo === 'Fiado' && !clienteSelec ? 'border-red-500 ring-1 ring-red-500' : ''}`}
+                    className={`w-full p-1.5 border rounded-lg text-xs bg-white ${metodo === 'Fiado' && !clienteSelec ? 'border-red-500 ring-1 ring-red-500' : ''}`}
                     value={clienteSelec}
                     onChange={e => setClienteSelec(e.target.value)}
                 >
@@ -635,13 +680,13 @@ function Ventas() {
                 
                 {/* ENTREGA / PAGO ANTICIPADO (Solo si hay cliente seleccionado) */}
                 {clienteSelec && (
-                   <div className="mt-2 flex gap-2 animate-in fade-in slide-in-from-top-1">
+                   <div className="mt-1 flex gap-2 animate-in fade-in slide-in-from-top-1">
                       <div className="flex-1">
                           <label className="text-[10px] font-bold text-slate-400">Entrega</label>
                           <input 
                             type="number" 
                             placeholder="$ 0.00" 
-                            className="w-full p-2 border rounded-lg text-sm"
+                            className="w-full p-1.5 border rounded-lg text-xs"
                             value={pagoAnticipado}
                             onChange={e => setPagoAnticipado(e.target.value)}
                           />
@@ -649,7 +694,7 @@ function Ventas() {
                       <div>
                           <label className="text-[10px] font-bold text-slate-400">Método Entrega</label>
                           <select 
-                            className="p-2 border rounded-lg text-sm bg-white w-full"
+                            className="p-1.5 border rounded-lg text-xs bg-white w-full"
                             value={metodoAnticipo}
                             onChange={e => setMetodoAnticipo(e.target.value)}
                           >
@@ -665,11 +710,11 @@ function Ventas() {
 
             {/* MÉTODO DE PAGO */}
             <div>
-                <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1 mb-1">
-                    <CreditCard size={12}/> Método de Pago
+                <label className="text-[11px] font-bold text-slate-500 uppercase flex items-center gap-1 mb-0.5">
+                    <CreditCard size={11}/> Método de Pago
                 </label>
                 <select 
-                    className="w-full p-3 border rounded-xl font-bold text-slate-700 bg-white"
+                    className={`w-full p-1.5 border rounded-lg text-xs font-bold text-slate-700 bg-white ${pagoMixto ? 'opacity-50 pointer-events-none' : ''}`}
                     value={metodo}
                     onChange={e => {
                       const nuevoMetodo = e.target.value;
@@ -683,6 +728,7 @@ function Ventas() {
                         return item;
                       }));
                     }}
+                    disabled={pagoMixto}
                 >
                     <option value="Efectivo">Efectivo</option>
                     <option value="Mercado Pago">Mercado Pago</option>
@@ -690,25 +736,107 @@ function Ventas() {
                     <option value="Transferencia">Transferencia</option>
                     <option value="Fiado" className="font-bold text-red-600">Cuenta Corriente</option>
                 </select>
+
+                {/* TOGGLE PAGO MIXTO */}
+                {metodo !== 'Fiado' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPagoMixto(!pagoMixto);
+                      setMixtoMonto1("");
+                    }}
+                    className={`mt-1 w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[11px] font-bold border transition-all ${
+                      pagoMixto
+                        ? 'bg-indigo-100 text-indigo-700 border-indigo-300 ring-1 ring-indigo-300'
+                        : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <DollarSign size={12} />
+                    {pagoMixto ? 'Pago Mixto Activado ✓' : 'Dividir pago en 2 métodos'}
+                  </button>
+                )}
+
+                {/* PANEL PAGO MIXTO */}
+                {pagoMixto && (
+                  <div className="mt-2 bg-indigo-50 border border-indigo-200 rounded-lg p-2 space-y-2 animate-in fade-in slide-in-from-top-1">
+                    <p className="text-[11px] font-bold text-indigo-600 text-center">Dividir el total de ${total.toFixed(0)}</p>
+                    
+                    {/* Método 1 */}
+                    <div className="space-y-0.5">
+                      <label className="text-[10px] font-bold text-indigo-400">Método 1</label>
+                      <div className="flex gap-1.5">
+                        <select
+                          className="flex-1 p-1.5 border border-indigo-200 rounded-lg text-xs bg-white font-bold"
+                          value={mixtoMetodo1}
+                          onChange={e => setMixtoMetodo1(e.target.value)}
+                        >
+                          <option value="Efectivo">Efectivo</option>
+                          <option value="Mercado Pago">Mercado Pago</option>
+                          <option value="Débito">Tarjetas</option>
+                          <option value="Transferencia">Transferencia</option>
+                        </select>
+                        <input
+                          type="number"
+                          placeholder="$ Monto"
+                          min="0"
+                          className="w-24 p-1.5 border border-indigo-200 rounded-lg text-xs bg-white font-bold text-right"
+                          value={mixtoMonto1}
+                          onChange={e => setMixtoMonto1(e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Método 2 — monto restante auto */}
+                    <div className="space-y-0.5">
+                      <label className="text-[10px] font-bold text-indigo-400">Método 2 (restante)</label>
+                      <div className="flex gap-1.5">
+                        <select
+                          className="flex-1 p-1.5 border border-indigo-200 rounded-lg text-xs bg-white font-bold"
+                          value={mixtoMetodo2}
+                          onChange={e => setMixtoMetodo2(e.target.value)}
+                        >
+                          <option value="Efectivo">Efectivo</option>
+                          <option value="Mercado Pago">Mercado Pago</option>
+                          <option value="Débito">Tarjetas</option>
+                          <option value="Transferencia">Transferencia</option>
+                        </select>
+                        <div className="w-24 p-1.5 border border-indigo-200 rounded-lg text-xs bg-indigo-100 font-bold text-right text-indigo-700">
+                          $ {(total - (parseFloat(mixtoMonto1) || 0)).toFixed(0)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Indicador visual */}
+                    {parseFloat(mixtoMonto1) > 0 && parseFloat(mixtoMonto1) < total && (
+                      <div className="flex rounded-lg overflow-hidden h-1.5">
+                        <div
+                          className="bg-indigo-500 transition-all"
+                          style={{ width: `${((parseFloat(mixtoMonto1) || 0) / total * 100)}%` }}
+                        />
+                        <div className="bg-indigo-300 flex-1" />
+                      </div>
+                    )}
+                  </div>
+                )}
             </div>
 
             {/* DESCUENTO POR TICKET */}
             <div>
-                <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1 mb-1">
-                    <Tag size={12}/> Descuento General
+                <label className="text-[11px] font-bold text-slate-500 uppercase flex items-center gap-1 mb-0.5">
+                    <Tag size={11}/> Descuento General
                 </label>
-                <div className="flex gap-2">
+                <div className="flex gap-1.5">
                     <input
                         type="number"
                         placeholder="0"
                         min="0"
-                        className="flex-1 p-2 border rounded-lg text-sm bg-white"
+                        className="flex-1 p-1.5 border rounded-lg text-xs bg-white"
                         value={descuento}
                         onChange={e => setDescuento(e.target.value)}
                     />
                     <button
                         onClick={() => { setDescuentoTipo(descuentoTipo === '$' ? '%' : '$'); setDescuento(''); }}
-                        className={`px-3 py-2 rounded-lg font-bold text-sm border transition-colors ${
+                        className={`px-2 py-1.5 rounded-lg font-bold text-xs border transition-colors ${
                             descuentoTipo === '%' ? 'bg-green-100 text-green-700 border-green-300' : 'bg-slate-100 text-slate-700 border-slate-300'
                         }`}
                     >
@@ -719,32 +847,32 @@ function Ventas() {
 
             {/* NOTAS / COMENTARIOS */}
             <div>
-                <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1 mb-1">
-                    <MessageSquare size={12}/> Notas (opcional)
+                <label className="text-[11px] font-bold text-slate-500 uppercase flex items-center gap-1 mb-0.5">
+                    <MessageSquare size={11}/> Notas (opcional)
                 </label>
                 <textarea
                     placeholder="Ej: Sin sal, entregar a las 18hs..."
-                    className="w-full p-2 border rounded-lg text-sm bg-white resize-none"
-                    rows={2}
+                    className="w-full p-1.5 border rounded-lg text-xs bg-white resize-none"
+                    rows={1}
                     value={notas}
                     onChange={e => setNotas(e.target.value)}
                 />
             </div>
 
-            <div className="flex justify-between items-center pt-2">
+            <div className="flex justify-between items-center pt-1">
                 {descuentoNum > 0 && (
                   <div className="flex flex-col">
-                    <span className="text-xs text-slate-400 line-through">$ {subtotal + descuentoNum}</span>
-                    <span className="text-xs text-green-600 font-bold">-$ {descuentoNum.toFixed(0)} desc.{descuentoTipo === '%' ? ` (${descuento}%)` : ''}</span>
+                    <span className="text-[11px] text-slate-400 line-through">$ {subtotal + descuentoNum}</span>
+                    <span className="text-[11px] text-green-600 font-bold">-$ {descuentoNum.toFixed(0)} desc.{descuentoTipo === '%' ? ` (${descuento}%)` : ''}</span>
                   </div>
                 )}
-                <span className="text-slate-500 font-bold">{descuentoNum <= 0 ? "Total" : ""}</span>
-                <span className="text-3xl font-extrabold text-slate-800 tracking-tight">$ {total.toFixed(0)}</span>
+                <span className="text-slate-500 text-sm font-bold">{descuentoNum <= 0 ? "Total" : ""}</span>
+                <span className="text-2xl font-extrabold text-slate-800 tracking-tight">$ {total.toFixed(0)}</span>
             </div>
 
             <button 
                 onClick={confirmarVenta}
-                className={`w-full py-4 rounded-xl font-bold text-white shadow-lg transition-transform active:scale-95 ${ticketEditando ? 'bg-orange-600 hover:bg-orange-700' : 'bg-slate-900 hover:bg-slate-800'}`}
+                className={`w-full py-3 rounded-xl font-bold text-white text-sm shadow-lg transition-transform active:scale-95 ${ticketEditando ? 'bg-orange-600 hover:bg-orange-700' : 'bg-slate-900 hover:bg-slate-800'}`}
             >
                 {ticketEditando ? 'CONFIRMAR CORRECCIÓN' : (metodo === 'Fiado' ? 'CONFIRMAR FIADO' : 'CONFIRMAR VENTA')}
             </button>

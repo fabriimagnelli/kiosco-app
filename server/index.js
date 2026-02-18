@@ -1723,7 +1723,9 @@ app.post("/api/ventas", async (req, res) => {
     const pagoAnticipado = parseFloat(req.body.pago_anticipado) || 0;
     const metodoAnticipo = req.body.metodo_anticipo || 'Efectivo';
     const descuento = parseFloat(req.body.descuento) || 0;
-    const notas = req.body.notas || '';
+    const mixtoDetalle = req.body.mixto_detalle || '';
+    let notas = req.body.notas || '';
+    if (mixtoDetalle) notas = notas ? `${notas} | Pago: ${mixtoDetalle}` : `Pago: ${mixtoDetalle}`;
     if (!productos || productos.length === 0) return res.status(400).json({ error: "No hay productos" });
     const subtotal = productos.reduce((acc, p) => {
         const precioItem = p.precio * p.cantidad;
