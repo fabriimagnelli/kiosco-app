@@ -126,6 +126,21 @@ function Deudores() {
     setPuntosACanjear(""); setAjustePuntos(""); setAjusteDesc("");
   };
 
+  const eliminarFiado = async (fiadoId) => {
+    if (!confirm("¿Eliminar esta transacción? La deuda volverá al estado anterior.")) return;
+    try {
+      const res = await apiFetch(`/api/fiados/${fiadoId}`, { method: "DELETE" });
+      const data = await res.json();
+      if (data.success) {
+        const nuevosFiados = await apiFetch(`/api/fiados/${clienteSel.id}`).then(r => r.json());
+        setHistorialFiados(nuevosFiados);
+        cargarClientes();
+      } else {
+        alert("Error al eliminar la transacción");
+      }
+    } catch (err) { console.error(err); alert("Error al eliminar"); }
+  };
+
   const registrarPago = async (e) => {
     e.preventDefault();
     if (!montoPago || parseFloat(montoPago) <= 0) return alert("Ingresa un monto válido mayor a 0");
@@ -315,21 +330,25 @@ function Deudores() {
 
       {/* RESUMEN RÁPIDO */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
-          <p className="text-xs text-slate-400 font-bold uppercase">Total Clientes</p>
-          <p className="text-2xl font-black text-slate-700">{clientes.length}</p>
+        <div className="bg-blue-50 rounded-2xl border border-blue-200 p-4">
+          <div className="flex items-center gap-2 mb-1"><User size={16} className="text-blue-500" /><p className="text-xs text-blue-600 font-normal">Total Clientes</p></div>
+          <p className="text-2xl font-semibold text-blue-700">{clientes.length}</p>
+          <p className="text-[11px] text-blue-400 mt-1 font-light">{clientes.filter(c => c.total_deuda > 0).length} con deuda</p>
         </div>
-        <div className="bg-white rounded-xl border border-red-100 p-4 shadow-sm">
-          <p className="text-xs text-red-400 font-bold uppercase">Deuda Total</p>
-          <p className="text-2xl font-black text-red-600">$ {clientes.reduce((a, c) => a + Math.max(0, c.total_deuda || 0), 0).toFixed(2)}</p>
+        <div className="bg-red-50 rounded-2xl border border-red-200 p-4">
+          <div className="flex items-center gap-2 mb-1"><AlertTriangle size={16} className="text-red-500" /><p className="text-xs text-red-600 font-normal">Deuda Total</p></div>
+          <p className="text-2xl font-semibold text-red-700">$ {clientes.reduce((a, c) => a + Math.max(0, c.total_deuda || 0), 0).toFixed(2)}</p>
+          <p className="text-[11px] text-red-400 mt-1 font-light">{clientes.filter(c => c.total_deuda > 0).length} clientes</p>
         </div>
-        <div className="bg-white rounded-xl border border-green-100 p-4 shadow-sm">
-          <p className="text-xs text-green-400 font-bold uppercase">Total Vendido</p>
-          <p className="text-2xl font-black text-green-600">$ {clientes.reduce((a, c) => a + (c.total_gastado || 0), 0).toFixed(2)}</p>
+        <div className="bg-emerald-50 rounded-2xl border border-emerald-200 p-4">
+          <div className="flex items-center gap-2 mb-1"><TrendingUp size={16} className="text-emerald-500" /><p className="text-xs text-emerald-600 font-normal">Total Vendido</p></div>
+          <p className="text-2xl font-semibold text-emerald-700">$ {clientes.reduce((a, c) => a + (c.total_gastado || 0), 0).toFixed(2)}</p>
+          <p className="text-[11px] text-emerald-400 mt-1 font-light">{clientes.reduce((a, c) => a + (c.total_compras || 0), 0)} compras</p>
         </div>
-        <div className="bg-white rounded-xl border border-amber-100 p-4 shadow-sm">
-          <p className="text-xs text-amber-400 font-bold uppercase">Puntos Totales</p>
-          <p className="text-2xl font-black text-amber-600">{clientes.reduce((a, c) => a + (c.puntos || 0), 0)}</p>
+        <div className="bg-amber-50 rounded-2xl border border-amber-200 p-4">
+          <div className="flex items-center gap-2 mb-1"><Star size={16} className="text-amber-500" /><p className="text-xs text-amber-600 font-normal">Puntos Totales</p></div>
+          <p className="text-2xl font-semibold text-amber-700">{clientes.reduce((a, c) => a + (c.puntos || 0), 0)}</p>
+          <p className="text-[11px] text-amber-400 mt-1 font-light">{clientes.filter(c => (c.puntos || 0) > 0).length} con puntos</p>
         </div>
       </div>
 
@@ -550,11 +569,12 @@ function Deudores() {
                           <th className="p-3">Descripción</th>
                           <th className="p-3">Método</th>
                           <th className="p-3 text-right">Monto</th>
+                          <th className="p-3 text-center w-10"></th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-sm">
                         {historialFiados.map(mov => (
-                          <tr key={mov.id} className="hover:bg-slate-50">
+                          <tr key={mov.id} className="hover:bg-slate-50 group">
                             <td className="p-3 text-slate-500 text-xs">
                               {new Date(mov.fecha).toLocaleDateString('es-AR')}
                               <span className="block text-[10px] opacity-50">{new Date(mov.fecha).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
@@ -567,6 +587,15 @@ function Deudores() {
                               ) : (
                                 <span className="text-green-600">- ${Math.abs(mov.monto).toFixed(2)}</span>
                               )}
+                            </td>
+                            <td className="p-3 text-center">
+                              <button
+                                onClick={() => eliminarFiado(mov.id)}
+                                className="p-1 text-slate-300 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors opacity-0 group-hover:opacity-100"
+                                title="Eliminar transacción"
+                              >
+                                <Trash2 size={14} />
+                              </button>
                             </td>
                           </tr>
                         ))}
