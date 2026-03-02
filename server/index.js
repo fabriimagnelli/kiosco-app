@@ -62,9 +62,43 @@ if (process.env.IS_ELECTRON === "true" && process.env.USER_DATA_PATH) {
     console.log("[LOCAL] Base de datos en:", dbPath);
 }
 
-const db = new sqlite3.Database(dbPath, (err) => {
-    if (err) console.error("Error DB:", err.message);
-    else console.log("Conectado a SQLite");
+// FIX: Quitar atributo de solo lectura en Windows si existe (previene SQLITE_READONLY)
+if (fs.existsSync(dbPath)) {
+    try {
+        const stats = fs.statSync(dbPath);
+        // Si el archivo es de solo lectura, quitarle el atributo
+        if (!(stats.mode & 0o200)) {
+            fs.chmodSync(dbPath, 0o666);
+            console.log("[DB] Se quitó atributo de solo lectura a la base de datos");
+        }
+    } catch (e) {
+        console.warn("[DB] No se pudo verificar/cambiar permisos de la base de datos:", e.message);
+    }
+    // También quitar readonly de archivos journal/WAL si existen
+    [dbPath + "-journal", dbPath + "-wal", dbPath + "-shm"].forEach(f => {
+        try {
+            if (fs.existsSync(f)) {
+                const s = fs.statSync(f);
+                if (!(s.mode & 0o200)) fs.chmodSync(f, 0o666);
+            }
+        } catch (_) {}
+    });
+}
+
+const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
+    if (err) {
+        console.error("Error DB:", err.message);
+    } else {
+        console.log("Conectado a SQLite");
+        // FIX: Activar WAL mode para mejor concurrencia y evitar bloqueos SQLITE_READONLY
+        db.run("PRAGMA journal_mode = WAL", (walErr) => {
+            if (walErr) console.warn("[DB] No se pudo activar WAL mode:", walErr.message);
+            else console.log("[DB] WAL mode activado");
+        });
+        db.run("PRAGMA busy_timeout = 5000", (btErr) => {
+            if (btErr) console.warn("[DB] No se pudo configurar busy_timeout:", btErr.message);
+        });
+    }
 });
 
 // Helpers Async
