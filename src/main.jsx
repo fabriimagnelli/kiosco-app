@@ -11,7 +11,7 @@ import App from './App.jsx'
   window.alert = (...args) => {
     _alert(...args);
     setTimeout(() => {
-      window.focus();
+      window.electronAPI?.refocusWindow();
       const active = document.querySelector('input:not([disabled]), textarea:not([disabled])');
       if (active) { active.blur(); active.focus(); }
     }, 100);
@@ -20,7 +20,7 @@ import App from './App.jsx'
   window.confirm = (...args) => {
     const result = _confirm(...args);
     setTimeout(() => {
-      window.focus();
+      window.electronAPI?.refocusWindow();
       const active = document.querySelector('input:not([disabled]), textarea:not([disabled])');
       if (active) { active.blur(); active.focus(); }
     }, 100);

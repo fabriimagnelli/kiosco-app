@@ -213,6 +213,13 @@ if (!gotTheLock) {
   });
 
   // ─── IPC Handlers para comunicación con el renderer ────────────────────
+  ipcMain.handle('refocus-window', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.focus();
+      mainWindow.webContents.focus();
+    }
+  });
+
   ipcMain.handle('get-update-status', () => {
     return pendingUpdate;
   });

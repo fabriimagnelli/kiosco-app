@@ -9,4 +9,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     installUpdate: () => ipcRenderer.send('install-update'),
     // Consultar si hay una actualización pendiente
     getUpdateStatus: () => ipcRenderer.invoke('get-update-status'),
+    // Restaurar el foco al webContents desde el proceso principal
+    refocusWindow: () => ipcRenderer.invoke('refocus-window'),
 });
