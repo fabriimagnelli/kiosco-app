@@ -123,6 +123,10 @@ const dbAll = (sql, params = []) => new Promise((resolve, reject) => {
     db.all(sql, params, (err, rows) => { err ? reject(err) : resolve(rows); });
 });
 
+// Mapa de clientes SSE esperando confirmación de pago MP
+// key: external_ref (string), value: Express res object
+const sseClients = new Map();
+
 // --- HELPERS LÓGICA ---
 const obtenerSiguienteTicket = async () => {
     try {
@@ -193,6 +197,8 @@ const initDB = async () => {
         // Migraciones de columnas
         const ensureColumn = async (table, column, definition) => { try { await dbRun(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`); } catch (e) { } };
         await ensureColumn("gastos", "metodo_pago", "TEXT DEFAULT 'Efectivo'");
+        await ensureColumn("gastos", "movimiento_id", "INTEGER DEFAULT NULL");
+        await ensureColumn("gastos", "retiro_id", "INTEGER DEFAULT NULL");
         await ensureColumn("fiados", "cliente", "TEXT");
         await ensureColumn("fiados", "cliente_id", "INTEGER");
         await ensureColumn("fiados", "descripcion", "TEXT");
@@ -437,9 +443,22 @@ const authMiddleware = (req, res, next) => {
     }
 };
 
-// Proteger todas las rutas /api excepto /api/login
+// Proteger todas las rutas /api excepto login, webhook MP y SSE MP
 app.use("/api", (req, res, next) => {
     if (req.path === "/login") return next();
+    // Webhook MP: los servidores de MP no pueden enviar JWT
+    if (req.path === "/mp/webhook") return next();
+    // SSE MP: EventSource API no puede enviar headers → token por query param
+    if (req.path === "/mp/events") {
+        const queryToken = req.query.token;
+        if (queryToken) {
+            try {
+                req.user = jwt.verify(queryToken, JWT_SECRET);
+                return next();
+            } catch (_) {}
+        }
+        return res.status(401).json({ error: "Token requerido" });
+    }
     authMiddleware(req, res, next);
 });
 
@@ -706,6 +725,108 @@ app.get("/api/reportes/ventas_rango", async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// VENTAS POR CATEGORÍA DE PRODUCTO — con rango de fechas y método de pago
+app.get("/api/reportes/ventas_por_categoria", async (req, res) => {
+    try {
+        const { desde, hasta, metodo } = req.query;
+        if (!desde || !hasta) return res.status(400).json({ error: "Se requieren 'desde' y 'hasta'" });
+
+        const paramsBase = [desde, hasta];
+        const metodoWhere = metodo ? "AND v.metodo_pago = ?" : "";
+        if (metodo) paramsBase.push(metodo);
+
+        const categorias = await dbAll(`
+            SELECT
+                CASE
+                    WHEN v.categoria = 'Cigarrillo' THEN 'Cigarrillos'
+                    WHEN v.categoria = 'Promo' THEN 'Promos'
+                    WHEN v.categoria = 'Manual' THEN 'Manual'
+                    ELSE COALESCE(p.categoria, 'Sin Categoría')
+                END as categoria,
+                COALESCE(SUM(v.precio_total), 0) as total,
+                COUNT(DISTINCT v.ticket_id) as tickets,
+                COALESCE(SUM(v.cantidad), 0) as items
+            FROM ventas v
+            LEFT JOIN productos p ON v.producto = p.nombre
+            WHERE date(v.fecha) BETWEEN ? AND ?
+            ${metodoWhere}
+            GROUP BY 1
+            ORDER BY total DESC
+        `, paramsBase);
+
+        const metodos_pago = await dbAll(`
+            SELECT
+                COALESCE(v.metodo_pago, 'Otros') as metodo,
+                COALESCE(SUM(v.precio_total), 0) as total,
+                COUNT(DISTINCT v.ticket_id) as tickets
+            FROM ventas v
+            WHERE date(v.fecha) BETWEEN ? AND ?
+            GROUP BY v.metodo_pago
+            ORDER BY total DESC
+        `, [desde, hasta]);
+
+        const totalGeneral = categorias.reduce((s, c) => s + c.total, 0);
+        res.json({ categorias, metodos_pago, totalGeneral });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// TICKETS DE UNA CATEGORÍA O MÉTODO DE PAGO ESPECÍFICO — para drill-down
+app.get("/api/reportes/tickets_categoria", async (req, res) => {
+    try {
+        const { desde, hasta, categoria, metodo } = req.query;
+        if (!desde || !hasta) return res.status(400).json({ error: "Se requieren 'desde' y 'hasta'" });
+
+        const catExpr = `CASE
+            WHEN v.categoria = 'Cigarrillo' THEN 'Cigarrillos'
+            WHEN v.categoria = 'Promo' THEN 'Promos'
+            WHEN v.categoria = 'Manual' THEN 'Manual'
+            ELSE COALESCE(p.categoria, 'Sin Categoría')
+        END`;
+
+        const params = [desde, hasta];
+        let whereExtra = "";
+        if (categoria) { whereExtra += " AND " + catExpr + " = ?"; params.push(categoria); }
+        if (metodo) { whereExtra += " AND v.metodo_pago = ?"; params.push(metodo); }
+
+        const ticketIds = await dbAll(`
+            SELECT DISTINCT v.ticket_id
+            FROM ventas v
+            LEFT JOIN productos p ON v.producto = p.nombre
+            WHERE date(v.fecha) BETWEEN ? AND ? ${whereExtra}
+        `, params);
+
+        if (ticketIds.length === 0) return res.json([]);
+
+        const ids = ticketIds.map(r => r.ticket_id);
+        const placeholders = ids.map(() => "?").join(",");
+
+        const rows = await dbAll(`
+            SELECT v.*, COALESCE(c.nombre, 'Consumidor Final') as nombre_cliente
+            FROM ventas v
+            LEFT JOIN clientes c ON v.cliente_id = c.id
+            WHERE v.ticket_id IN (${placeholders})
+            ORDER BY v.ticket_id DESC, v.id ASC
+        `, ids);
+
+        const ticketsMap = {};
+        rows.forEach(v => {
+            if (!ticketsMap[v.ticket_id]) {
+                ticketsMap[v.ticket_id] = {
+                    ticket_id: v.ticket_id, fecha: v.fecha,
+                    metodo_pago: v.metodo_pago,
+                    cliente: v.nombre_cliente || 'Consumidor Final',
+                    notas: v.notas, items: [], total: 0
+                };
+            }
+            ticketsMap[v.ticket_id].items.push(v);
+            ticketsMap[v.ticket_id].total += Number(v.precio_total) || 0;
+        });
+
+        const tickets = Object.values(ticketsMap).sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+        res.json(tickets);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // BALANCE POR RANGO DE FECHAS
 app.get("/api/balance_rango", async (req, res) => {
     try {
@@ -828,7 +949,24 @@ app.post("/api/retiros", (req, res) => {
     const fecha = new Date().toLocaleString('es-AR');
     db.run("INSERT INTO retiros (descripcion, monto, fecha) VALUES (?,?,?)", [req.body.descripcion, req.body.monto, fecha], (err) => err ? res.status(500).json({ error: err.message }) : res.json({ success: true }));
 });
-app.delete("/api/retiros/:id", (req, res) => { db.run("DELETE FROM retiros WHERE id=?", [req.params.id], (err) => err ? res.status(500).json({ error: err.message }) : res.json({ success: true })); });
+app.delete("/api/retiros/:id", async (req, res) => {
+    try {
+        const gasto = await dbGet("SELECT id, movimiento_id FROM gastos WHERE retiro_id = ?", [req.params.id]);
+        await dbRun("BEGIN TRANSACTION");
+        await dbRun("DELETE FROM retiros WHERE id=?", [req.params.id]);
+        if (gasto) {
+            await dbRun("DELETE FROM gastos WHERE id=?", [gasto.id]);
+            if (gasto.movimiento_id) {
+                await dbRun("DELETE FROM movimientos_proveedores WHERE id=?", [gasto.movimiento_id]);
+            }
+        }
+        await dbRun("COMMIT");
+        res.json({ success: true });
+    } catch (e) {
+        await dbRun("ROLLBACK");
+        res.status(500).json({ error: e.message });
+    }
+});
 
 // === 22. APERTURA DE CAJA ===
 app.post("/api/apertura", async (req, res) => {
@@ -1050,7 +1188,9 @@ app.get("/api/cierre/general", async (req, res) => {
         cobrosData.forEach(c => { const m = Math.abs(c.monto); if (['Transferencia', 'Digital'].includes(c.metodo_pago)) cobrosDig += m; else cobrosEfvo += m; });
         let gastosGrales = 0, pagosProv = 0;
         gastosData.forEach(g => {
-            // Contar TODOS los gastos sin importar el método de pago (Efectivo, Retiros, Transferencia, etc.)
+            // Solo gastos en Efectivo afectan el balance de caja física.
+            // Retiros y Transferencia no salen de la caja → no reducen el esperado.
+            if (g.metodo_pago && g.metodo_pago !== 'Efectivo') return;
             if (g.categoria && g.categoria.toLowerCase().includes('proveedor')) {
                 pagosProv += g.monto;
             } else {
@@ -1373,19 +1513,21 @@ app.get("/api/movimientos_proveedores/:id", (req, res) => { db.all("SELECT * FRO
 app.post("/api/movimientos_proveedores", async (req, res) => {
     try {
         await dbRun("BEGIN TRANSACTION");
-        await dbRun("INSERT INTO movimientos_proveedores (proveedor_id, monto, descripcion, metodo_pago) VALUES (?,?,?,?)", [req.body.proveedor_id, req.body.monto, req.body.descripcion, req.body.metodo_pago || 'Efectivo']);
+        const movResult = await dbRun("INSERT INTO movimientos_proveedores (proveedor_id, monto, descripcion, metodo_pago) VALUES (?,?,?,?)", [req.body.proveedor_id, req.body.monto, req.body.descripcion, req.body.metodo_pago || 'Efectivo']);
+        const movimientoId = movResult.lastID;
         if (req.body.monto < 0) {
             const prov = await dbGet("SELECT nombre FROM proveedores WHERE id = ?", [req.body.proveedor_id]);
             const desc = `Pago Proveedor: ${prov ? prov.nombre : ''}`;
             if (req.body.metodo_pago === 'Retiros') {
                 console.log(`[DEBUG] Insertando en retiros: desc="${desc}", monto=${req.body.monto}`);
                 const fecha = new Date().toLocaleString('es-AR');
-                await dbRun("INSERT INTO retiros (descripcion, monto, fecha) VALUES (?, ?, ?)", [desc, req.body.monto, fecha]);
-                await dbRun("INSERT INTO gastos (descripcion, monto, categoria, metodo_pago) VALUES (?,?,?,?)", [desc, Math.abs(req.body.monto), 'Proveedores', 'Retiros']);
+                const retiroResult = await dbRun("INSERT INTO retiros (descripcion, monto, fecha) VALUES (?, ?, ?)", [desc, req.body.monto, fecha]);
+                const retiroId = retiroResult.lastID;
+                await dbRun("INSERT INTO gastos (descripcion, monto, categoria, metodo_pago, movimiento_id, retiro_id) VALUES (?,?,?,?,?,?)", [desc, Math.abs(req.body.monto), 'Proveedores', 'Retiros', movimientoId, retiroId]);
             } else if (!req.body.metodo_pago || req.body.metodo_pago === 'Efectivo') {
-                await dbRun("INSERT INTO gastos (descripcion, monto, categoria, metodo_pago) VALUES (?,?,?,?)", [desc, Math.abs(req.body.monto), 'Proveedores', 'Efectivo']);
+                await dbRun("INSERT INTO gastos (descripcion, monto, categoria, metodo_pago, movimiento_id) VALUES (?,?,?,?,?)", [desc, Math.abs(req.body.monto), 'Proveedores', 'Efectivo', movimientoId]);
             } else {
-                await dbRun("INSERT INTO gastos (descripcion, monto, categoria, metodo_pago) VALUES (?,?,?,?)", [desc, Math.abs(req.body.monto), 'Proveedores', req.body.metodo_pago]);
+                await dbRun("INSERT INTO gastos (descripcion, monto, categoria, metodo_pago, movimiento_id) VALUES (?,?,?,?,?)", [desc, Math.abs(req.body.monto), 'Proveedores', req.body.metodo_pago, movimientoId]);
             }
         }
         await dbRun("COMMIT");
@@ -1396,7 +1538,18 @@ app.post("/api/movimientos_proveedores", async (req, res) => {
         res.status(500).json({ error: e.message });
     }
 });
-app.delete("/api/movimientos_proveedores/:id", (req, res) => { db.run("DELETE FROM movimientos_proveedores WHERE id=?", [req.params.id], function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ deleted: this.changes }); }); });
+app.delete("/api/movimientos_proveedores/:id", async (req, res) => {
+    try {
+        await dbRun("BEGIN TRANSACTION");
+        await dbRun("DELETE FROM movimientos_proveedores WHERE id=?", [req.params.id]);
+        await dbRun("DELETE FROM gastos WHERE movimiento_id=?", [req.params.id]);
+        await dbRun("COMMIT");
+        res.json({ deleted: 1 });
+    } catch (e) {
+        await dbRun("ROLLBACK");
+        res.status(500).json({ error: e.message });
+    }
+});
 
 // === 33. ÓRDENES DE COMPRA ===
 app.get("/api/ordenes_compra", async (req, res) => {
@@ -2034,11 +2187,13 @@ app.get("/api/gastos", (req, res) => { db.all("SELECT * FROM gastos ORDER BY fec
 app.post("/api/gastos", async (req, res) => {
     try {
         await dbRun("BEGIN TRANSACTION");
-        await dbRun("INSERT INTO gastos (descripcion, monto, categoria, metodo_pago) VALUES (?,?,?,?)", [req.body.descripcion, req.body.monto, req.body.categoria, req.body.metodo_pago || 'Efectivo']);
+        let retiroId = null;
         if (req.body.metodo_pago === 'Retiros') {
             const fecha = new Date().toLocaleString('es-AR');
-            await dbRun("INSERT INTO retiros (descripcion, monto, fecha) VALUES (?, ?, ?)", [`Gasto: ${req.body.descripcion}`, -Math.abs(req.body.monto), fecha]);
+            const retiroResult = await dbRun("INSERT INTO retiros (descripcion, monto, fecha) VALUES (?, ?, ?)", [`Gasto: ${req.body.descripcion}`, -Math.abs(req.body.monto), fecha]);
+            retiroId = retiroResult.lastID;
         }
+        await dbRun("INSERT INTO gastos (descripcion, monto, categoria, metodo_pago, retiro_id) VALUES (?,?,?,?,?)", [req.body.descripcion, req.body.monto, req.body.categoria, req.body.metodo_pago || 'Efectivo', retiroId]);
         await dbRun("COMMIT");
         res.json({ success: true });
     } catch (e) { await dbRun("ROLLBACK"); res.status(500).json({ error: e.message }); }
@@ -2058,12 +2213,23 @@ app.get("/api/config", async (req, res) => {
         if (!configObj.kiosco_direccion) configObj.kiosco_direccion = "";
         if (!configObj.mp_alias) configObj.mp_alias = "";
         if (!configObj.mp_nombre) configObj.mp_nombre = "";
+        if (!configObj.mp_qr_base64) configObj.mp_qr_base64 = "";
         if (!configObj.whatsapp_numero) configObj.whatsapp_numero = "";
         if (!configObj.sync_url) configObj.sync_url = "";
         if (!configObj.sync_token) configObj.sync_token = "";
+        // MP API (Modelo Asistido) — solo exponer lo que el frontend necesita
+        if (!configObj.mp_api_configurada) configObj.mp_api_configurada = 'false';
+        if (!configObj.mp_pos_qr_image_url) configObj.mp_pos_qr_image_url = '';
+        if (!configObj.mp_webhook_url) configObj.mp_webhook_url = '';
+        if (!configObj.mp_user_id) configObj.mp_user_id = '';
 
         // NO devolver el hash de la contraseña al frontend
         configObj.admin_password = "";
+        // NO devolver credenciales sensibles de MP al frontend
+        delete configObj.mp_access_token;
+        delete configObj.mp_store_id;
+        delete configObj.mp_pos_id;
+        delete configObj.mp_external_pos_id;
 
         res.json(configObj);
     } catch (e) {
@@ -2073,7 +2239,7 @@ app.get("/api/config", async (req, res) => {
 
 // Guardar configuración
 app.post("/api/config", async (req, res) => {
-    const { admin_user, admin_password, kiosco_nombre, kiosco_direccion, kiosco_telefono, mp_alias, mp_nombre, whatsapp_numero, sync_url, sync_token } = req.body;
+    const { admin_user, admin_password, kiosco_nombre, kiosco_direccion, kiosco_telefono, mp_alias, mp_nombre, mp_qr_base64, mp_access_token, mp_user_id, mp_webhook_url, whatsapp_numero, sync_url, sync_token } = req.body;
     try {
         await dbRun("BEGIN TRANSACTION");
         await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('admin_user', ?)", [admin_user]);
@@ -2090,9 +2256,18 @@ app.post("/api/config", async (req, res) => {
         // Integraciones
         if (mp_alias !== undefined) await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('mp_alias', ?)", [mp_alias || '']);
         if (mp_nombre !== undefined) await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('mp_nombre', ?)", [mp_nombre || '']);
+        if (mp_qr_base64 !== undefined) await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('mp_qr_base64', ?)", [mp_qr_base64 || '']);
         if (whatsapp_numero !== undefined) await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('whatsapp_numero', ?)", [whatsapp_numero || '']);
         if (sync_url !== undefined) await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('sync_url', ?)", [sync_url || '']);
         if (sync_token !== undefined) await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('sync_token', ?)", [sync_token || '']);
+        // MP API (Modelo Asistido) — access_token es write-only, nunca se devuelve
+        if (mp_access_token && mp_access_token.trim() !== "") {
+            await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('mp_access_token', ?)", [mp_access_token.trim()]);
+            // Cambiar el token resetea el setup (hay que volver a crear sucursal/caja)
+            await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('mp_api_configurada', ?)", ['false']);
+        }
+        if (mp_user_id !== undefined) await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('mp_user_id', ?)", [mp_user_id || '']);
+        if (mp_webhook_url !== undefined) await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('mp_webhook_url', ?)", [mp_webhook_url || '']);
         await dbRun("COMMIT");
         res.json({ success: true });
     } catch (e) {
@@ -2176,7 +2351,24 @@ app.post("/api/login", async (req, res) => {
     }
 });
 
-app.delete("/api/gastos/:id", (req, res) => { db.run("DELETE FROM gastos WHERE id=?", [req.params.id], (err) => err ? res.status(500).json({ error: err.message }) : res.json({ success: true })); });
+app.delete("/api/gastos/:id", async (req, res) => {
+    try {
+        const gasto = await dbGet("SELECT movimiento_id, retiro_id FROM gastos WHERE id = ?", [req.params.id]);
+        await dbRun("BEGIN TRANSACTION");
+        await dbRun("DELETE FROM gastos WHERE id=?", [req.params.id]);
+        if (gasto && gasto.movimiento_id) {
+            await dbRun("DELETE FROM movimientos_proveedores WHERE id=?", [gasto.movimiento_id]);
+        }
+        if (gasto && gasto.retiro_id) {
+            await dbRun("DELETE FROM retiros WHERE id=?", [gasto.retiro_id]);
+        }
+        await dbRun("COMMIT");
+        res.json({ success: true });
+    } catch (e) {
+        await dbRun("ROLLBACK");
+        res.status(500).json({ error: e.message });
+    }
+});
 
 // --- GESTIÓN DE USUARIOS ---
 app.get("/api/usuarios", async (req, res) => {
@@ -2447,6 +2639,244 @@ app.post("/api/productos/importar", async (req, res) => {
         res.json({ success: true, insertados, actualizados, errores });
     } catch (e) { await dbRun("ROLLBACK"); res.status(500).json({ error: e.message }); }
 });
+
+// ============================================================
+// --- MERCADOPAGO — MODELO ASISTIDO (QR DINÁMICO) ---
+// ============================================================
+
+// Helper: leer valor de configuracion por key
+const getConfig = async (key) => {
+    const row = await dbGet("SELECT value FROM configuracion WHERE key = ?", [key]);
+    return row ? row.value : null;
+};
+
+// Helper: llamada autenticada a la API de MP
+const mpFetch = async (url, options = {}) => {
+    const token = await getConfig('mp_access_token');
+    if (!token) throw new Error('No hay access_token configurado');
+    const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...(options.headers || {}) };
+    return fetch(url, { ...options, headers });
+};
+
+// ---- 1. Obtener user_id automáticamente ----
+app.post("/api/mp/fetch-user-id", async (req, res) => {
+    try {
+        const mpRes = await mpFetch('https://api.mercadopago.com/users/me');
+        const data = await mpRes.json();
+        if (!mpRes.ok) return res.status(400).json({ success: false, error: data.message || JSON.stringify(data) });
+        await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('mp_user_id', ?)", [String(data.id)]);
+        res.json({ success: true, user_id: data.id, name: data.name || data.nickname || '' });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// ---- 2. Crear Sucursal + Caja en MP (setup único) ----
+app.post("/api/mp/setup-store", async (req, res) => {
+    try {
+        const userId = await getConfig('mp_user_id');
+        const kioscoNombre = await getConfig('kiosco_nombre') || 'Mi Kiosco';
+        if (!userId) return res.status(400).json({ success: false, error: 'Falta user_id. Guardá las credenciales primero.' });
+
+        // Generar IDs únicos
+        const ts = Date.now().toString().slice(-7);
+        const externalStoreId = ('KST' + String(userId).slice(-6) + ts).slice(0, 60);
+        const externalPosId   = ('KPO' + String(userId).slice(-6) + ts).slice(0, 40);
+
+        // Crear sucursal
+        const storeBody = {
+            name: kioscoNombre,
+            external_id: externalStoreId,
+            location: {
+                street_number: "1234",
+                street_name: "Av. Corrientes",
+                city_name: "La Plata",
+                state_name: "Buenos Aires",
+                latitude: -34.603683,
+                longitude: -58.381557
+            }
+        };
+        const storeRes = await mpFetch(`https://api.mercadopago.com/users/${userId}/stores`, { method: 'POST', body: JSON.stringify(storeBody) });
+        const storeData = await storeRes.json();
+        if (!storeRes.ok) return res.status(400).json({ success: false, error: 'Error al crear sucursal: ' + (storeData.message || JSON.stringify(storeData)) });
+
+        const storeId = storeData.id;
+        await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('mp_store_id', ?)", [String(storeId)]);
+
+        // Crear caja/POS
+        const posBody = {
+            name: "Caja Principal",
+            fixed_amount: true,
+            store_id: storeId,
+            external_id: externalPosId,
+            category: 621102
+        };
+        const posRes = await mpFetch('https://api.mercadopago.com/pos', { method: 'POST', body: JSON.stringify(posBody) });
+        const posData = await posRes.json();
+        if (!posRes.ok) return res.status(400).json({ success: false, error: 'Error al crear caja: ' + (posData.message || JSON.stringify(posData)) });
+
+        const qrImageUrl = posData.qr?.image || '';
+        await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('mp_pos_id', ?)", [String(posData.id)]);
+        await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('mp_external_pos_id', ?)", [externalPosId]);
+        await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('mp_pos_qr_image_url', ?)", [qrImageUrl]);
+        await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('mp_api_configurada', ?)", ['true']);
+
+        res.json({ success: true, qr_image_url: qrImageUrl, external_pos_id: externalPosId });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// ---- 3. Asignar orden a la caja (por venta) ----
+app.put("/api/mp/assign-order", async (req, res) => {
+    const { external_ref, total, ticket_id } = req.body;
+    if (!external_ref || total == null || !ticket_id) {
+        return res.status(400).json({ success: false, error: 'Faltan parámetros: external_ref, total, ticket_id' });
+    }
+    try {
+        const userId = await getConfig('mp_user_id');
+        const externalPosId = await getConfig('mp_external_pos_id');
+        const webhookUrl = await getConfig('mp_webhook_url');
+        if (!userId || !externalPosId) return res.status(400).json({ success: false, error: 'MP no está configurado. Completá el setup en Configuración.' });
+
+        const montoNum = parseFloat(total);
+        const orderBody = {
+            external_reference: external_ref,
+            title: `Ticket #${ticket_id}`,
+            description: 'Venta kiosco',
+            total_amount: montoNum,
+            items: [{
+                sku_number: `TKT-${ticket_id}`,
+                category: 'marketplace',
+                title: `Ticket #${ticket_id}`,
+                description: 'Venta kiosco',
+                unit_price: montoNum,
+                quantity: 1,
+                unit_measure: 'unit',
+                total_amount: montoNum
+            }]
+        };
+        if (webhookUrl && webhookUrl.trim() !== '') {
+            orderBody.notification_url = webhookUrl.trim();
+        }
+
+        const mpRes = await mpFetch(
+            `https://api.mercadopago.com/instore/orders/qr/seller/collectors/${userId}/pos/${externalPosId}/qrs`,
+            { method: 'PUT', body: JSON.stringify(orderBody) }
+        );
+        const mpData = await mpRes.json();
+        if (!mpRes.ok) return res.json({ success: false, error: mpData.message || JSON.stringify(mpData) });
+        res.json({ success: true, external_ref });
+    } catch (e) {
+        res.json({ success: false, error: e.message });
+    }
+});
+
+// ---- 4. Cancelar orden de la caja ----
+app.delete("/api/mp/cancel-order", async (req, res) => {
+    const { external_ref } = req.body;
+    try {
+        const userId = await getConfig('mp_user_id');
+        const externalPosId = await getConfig('mp_external_pos_id');
+        if (userId && externalPosId) {
+            await mpFetch(
+                `https://api.mercadopago.com/instore/orders/qr/seller/collectors/${userId}/pos/${externalPosId}/qrs`,
+                { method: 'DELETE' }
+            ).catch(() => {});
+        }
+        // Cerrar conexión SSE si existe
+        if (external_ref && sseClients.has(external_ref)) {
+            try { sseClients.get(external_ref).end(); } catch (_) {}
+            sseClients.delete(external_ref);
+        }
+    } catch (_) {}
+    res.json({ success: true });
+});
+
+// ---- 5. Polling: verificar si el pago fue recibido ----
+app.get("/api/mp/check-payment/:external_ref", async (req, res) => {
+    try {
+        const externalRef = decodeURIComponent(req.params.external_ref);
+        const now = new Date();
+        const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString();
+        const nowIso = now.toISOString();
+        const url = `https://api.mercadopago.com/v1/payments/search?external_reference=${encodeURIComponent(externalRef)}&sort=date_created&criteria=desc&range=date_created&begin_date=${encodeURIComponent(twoHoursAgo)}&end_date=${encodeURIComponent(nowIso)}`;
+        const mpRes = await mpFetch(url);
+        if (!mpRes.ok) return res.json({ status: 'pending' });
+        const data = await mpRes.json();
+        const payment = data.results && data.results[0];
+        if (!payment) return res.json({ status: 'pending' });
+        if (payment.status === 'approved') {
+            // Notificar SSE si hay un cliente conectado
+            if (sseClients.has(externalRef)) {
+                try {
+                    sseClients.get(externalRef).write(`data: ${JSON.stringify({ event: 'payment_confirmed', external_ref: externalRef, payment_id: payment.id })}\n\n`);
+                } catch (_) {}
+                sseClients.delete(externalRef);
+            }
+            return res.json({ status: 'approved', payment_id: payment.id });
+        }
+        if (payment.status === 'rejected' || payment.status === 'cancelled') {
+            return res.json({ status: 'rejected', payment_id: payment.id });
+        }
+        res.json({ status: 'pending' });
+    } catch (e) {
+        res.json({ status: 'pending' });
+    }
+});
+
+// ---- 6. SSE: stream tiempo real de confirmación ----
+app.get("/api/mp/events", (req, res) => {
+    const externalRef = req.query.ref;
+    if (!externalRef) return res.status(400).json({ error: 'Falta ref' });
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+    res.write(': heartbeat\n\n');
+
+    // Si ya existe un cliente para este ref, cerrarlo
+    if (sseClients.has(externalRef)) {
+        try { sseClients.get(externalRef).end(); } catch (_) {}
+    }
+    sseClients.set(externalRef, res);
+
+    const heartbeat = setInterval(() => {
+        try { res.write(': heartbeat\n\n'); } catch (_) { clearInterval(heartbeat); }
+    }, 30000);
+
+    req.on('close', () => {
+        clearInterval(heartbeat);
+        if (sseClients.get(externalRef) === res) sseClients.delete(externalRef);
+    });
+});
+
+// ---- 7. Webhook de MP (sin auth — MP no puede enviar JWT) ----
+app.post("/api/mp/webhook", (req, res) => {
+    res.sendStatus(200); // responder rápido — MP requiere respuesta inmediata
+    const notification = req.body;
+    if (!notification || notification.type !== 'payment' || !notification.data?.id) return;
+    (async () => {
+        try {
+            const mpRes = await mpFetch(`https://api.mercadopago.com/v1/payments/${notification.data.id}`);
+            if (!mpRes.ok) return;
+            const payment = await mpRes.json();
+            if (payment.status === 'approved' && payment.external_reference) {
+                const ref = payment.external_reference;
+                if (sseClients.has(ref)) {
+                    try {
+                        sseClients.get(ref).write(`data: ${JSON.stringify({ event: 'payment_confirmed', external_ref: ref, payment_id: payment.id })}\n\n`);
+                    } catch (_) {}
+                    sseClients.delete(ref);
+                }
+            }
+        } catch (_) {}
+    })();
+});
+
+// ============================================================
 
 // SPA FALLBACK
 app.get(/.*/, (req, res) => {

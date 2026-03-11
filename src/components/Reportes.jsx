@@ -34,6 +34,7 @@ const pctVal = (actual, anterior) => {
 // ─── Tab definitions ────────────────────────────────────────
 const TABS = [
   { id: "historial", label: "Historial", icon: Receipt },
+  { id: "categorias", label: "Por Categoría", icon: PieIcon },
   { id: "comparativas", label: "Dashboard", icon: BarChart3 },
   { id: "rentabilidad", label: "Rentabilidad", icon: DollarSign },
   { id: "horas_pico", label: "Horas Pico", icon: Clock },
@@ -77,6 +78,7 @@ function Reportes() {
       {/* Content */}
       <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
         {tab === "historial" && <HistorialVentas />}
+        {tab === "categorias" && <VentasPorCategoria />}
         {tab === "comparativas" && <DashboardComparativas />}
         {tab === "rentabilidad" && <Rentabilidad />}
         {tab === "horas_pico" && <HorasPico />}
@@ -1510,6 +1512,360 @@ function HistorialVentas() {
             </div>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// VENTAS POR CATEGORÍA / MÉTODO DE PAGO
+// ═══════════════════════════════════════════════════════════
+function VentasPorCategoria() {
+  const hoy = new Date().toISOString().split("T")[0];
+  const hace30 = () => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().split("T")[0]; };
+
+  const [desde, setDesde] = useState(hace30);
+  const [hasta, setHasta] = useState(hoy);
+  const [metodo, setMetodo] = useState("");
+  const [vista, setVista] = useState("categorias");
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [drilldown, setDrilldown] = useState(null);
+  const [tickets, setTickets] = useState([]);
+  const [loadingTickets, setLoadingTickets] = useState(false);
+  const [ticketExpandido, setTicketExpandido] = useState(null);
+
+  const cargar = async () => {
+    setLoading(true);
+    setDrilldown(null);
+    try {
+      const p = new URLSearchParams({ desde, hasta });
+      if (metodo) p.append("metodo", metodo);
+      const res = await apiFetch(`/api/reportes/ventas_por_categoria?${p}`);
+      setData(await res.json());
+    } catch (e) { console.error(e); }
+    setLoading(false);
+  };
+
+  const abrirDrilldown = async (tipo, valor) => {
+    if (drilldown?.valor === valor) { setDrilldown(null); return; }
+    setDrilldown({ tipo, valor });
+    setTicketExpandido(null);
+    setLoadingTickets(true);
+    try {
+      const p = new URLSearchParams({ desde, hasta });
+      if (tipo === "categoria") p.append("categoria", valor);
+      if (tipo === "metodo") p.append("metodo", valor);
+      const res = await apiFetch(`/api/reportes/tickets_categoria?${p}`);
+      const json = await res.json();
+      setTickets(Array.isArray(json) ? json : []);
+    } catch (e) { setTickets([]); }
+    setLoadingTickets(false);
+  };
+
+  useEffect(() => { cargar(); }, []);
+
+  const metodoColor = (m) => {
+    const map = { "Efectivo": "bg-green-100 text-green-700", "Mercado Pago": "bg-blue-100 text-blue-700", "Débito": "bg-purple-100 text-purple-700", "Transferencia": "bg-cyan-100 text-cyan-700", "Fiado": "bg-red-100 text-red-700", "Mixto": "bg-indigo-100 text-indigo-700" };
+    return map[m] || "bg-slate-100 text-slate-600";
+  };
+
+  const METODO_COLORS = { "Efectivo": "#10b981", "Mercado Pago": "#3b82f6", "Débito": "#8b5cf6", "Transferencia": "#06b6d4", "Fiado": "#ef4444", "Mixto": "#6366f1" };
+
+  const chartDataCat = data?.categorias || [];
+  const chartDataMet = data?.metodos_pago || [];
+  const totalGen = data?.totalGeneral || 0;
+
+  return (
+    <div className="space-y-4 animate-fade-in">
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-bold text-slate-700">Ventas por Categoría</h3>
+        <button onClick={cargar} className="text-slate-400 hover:text-blue-600 transition-colors p-2 rounded-lg hover:bg-white">
+          <RefreshCw size={18} className={loading ? "animate-spin" : ""} />
+        </button>
+      </div>
+
+      {/* Filtros */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4">
+        <div className="flex flex-wrap gap-3 items-end">
+          <div>
+            <label className="text-xs font-bold text-slate-500 uppercase">Desde</label>
+            <input type="date" className="block w-full p-2 border rounded-lg text-sm" value={desde} onChange={e => setDesde(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-slate-500 uppercase">Hasta</label>
+            <input type="date" className="block w-full p-2 border rounded-lg text-sm" value={hasta} onChange={e => setHasta(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-slate-500 uppercase">Método de Pago</label>
+            <select className="block w-full p-2 border rounded-lg text-sm bg-white" value={metodo} onChange={e => setMetodo(e.target.value)}>
+              <option value="">Todos</option>
+              <option value="Efectivo">Efectivo</option>
+              <option value="Mercado Pago">Mercado Pago</option>
+              <option value="Débito">Tarjetas</option>
+              <option value="Transferencia">Transferencia</option>
+              <option value="Mixto">Mixto</option>
+              <option value="Fiado">Cuenta Corriente</option>
+            </select>
+          </div>
+          <button onClick={cargar} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg font-semibold text-sm transition-colors flex items-center gap-2">
+            <Filter size={14} /> Filtrar
+          </button>
+        </div>
+      </div>
+
+      {loading ? <Skeleton /> : !data ? null : (
+        <>
+          {/* KPIs */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-white rounded-xl p-3 border border-slate-100 text-center">
+              <p className="text-xl font-bold text-blue-600">{fmtMoney(totalGen)}</p>
+              <p className="text-xs text-slate-500">Total vendido</p>
+            </div>
+            <div className="bg-white rounded-xl p-3 border border-slate-100 text-center">
+              <p className="text-xl font-bold text-slate-700">{chartDataCat.length}</p>
+              <p className="text-xs text-slate-500">Categorías activas</p>
+            </div>
+            <div className="bg-white rounded-xl p-3 border border-slate-100 text-center">
+              <p className="text-xl font-bold text-green-600">{chartDataMet.reduce((s, m) => s + m.tickets, 0)}</p>
+              <p className="text-xs text-slate-500">Tickets totales</p>
+            </div>
+            <div className="bg-white rounded-xl p-3 border border-slate-100 text-center">
+              <p className="text-xl font-bold text-purple-600">{chartDataMet.length}</p>
+              <p className="text-xs text-slate-500">Métodos usados</p>
+            </div>
+          </div>
+
+          {/* Toggle vista */}
+          <div className="bg-white rounded-xl p-1 border border-slate-200 flex gap-1 w-fit">
+            <button
+              onClick={() => setVista("categorias")}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${vista === "categorias" ? "bg-blue-600 text-white shadow" : "text-slate-600 hover:bg-slate-100"}`}
+            >
+              Por Categoría
+            </button>
+            <button
+              onClick={() => setVista("metodos")}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${vista === "metodos" ? "bg-blue-600 text-white shadow" : "text-slate-600 hover:bg-slate-100"}`}
+            >
+              Por Método de Pago
+            </button>
+          </div>
+
+          {vista === "categorias" ? (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* Gráfico barras horizontal */}
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+                <h4 className="text-sm font-bold text-slate-600 mb-4">Distribución por categoría</h4>
+                {chartDataCat.length === 0 ? (
+                  <div className="h-48 flex items-center justify-center text-slate-400 text-sm">Sin datos para el período</div>
+                ) : (
+                  <ResponsiveContainer width="100%" height={Math.max(240, chartDataCat.length * 48)}>
+                    <BarChart layout="vertical" data={chartDataCat} margin={{ left: 10, right: 40, top: 4, bottom: 4 }}>
+                      <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
+                      <XAxis type="number" axisLine={false} tickLine={false} tickFormatter={fmtMoney} tick={{ fill: "#64748b", fontSize: 10 }} />
+                      <YAxis type="category" dataKey="categoria" axisLine={false} tickLine={false} tick={{ fill: "#334155", fontSize: 12 }} width={110} />
+                      <Tooltip formatter={(v) => [fmtMoney(v), "Total"]} contentStyle={{ borderRadius: "8px", border: "none", boxShadow: "0 2px 8px rgba(0,0,0,.1)" }} />
+                      <Bar dataKey="total" radius={[0, 4, 4, 0]} cursor="pointer" onClick={d => abrirDrilldown("categoria", d.categoria)}>
+                        {chartDataCat.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+
+              {/* Lista de categorías */}
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+                <h4 className="text-sm font-bold text-slate-600 mb-4">
+                  Detalle <span className="text-slate-400 font-normal text-xs">(clic para ver tickets)</span>
+                </h4>
+                <div className="space-y-2">
+                  {chartDataCat.map((cat, i) => {
+                    const pct = totalGen > 0 ? (cat.total / totalGen) * 100 : 0;
+                    const activo = drilldown?.valor === cat.categoria;
+                    return (
+                      <div
+                        key={cat.categoria}
+                        onClick={() => abrirDrilldown("categoria", cat.categoria)}
+                        className={`p-3 rounded-xl cursor-pointer transition-all border ${activo ? "border-blue-400 bg-blue-50" : "border-slate-100 hover:bg-slate-50"}`}
+                      >
+                        <div className="flex items-center justify-between mb-1.5">
+                          <div className="flex items-center gap-2">
+                            <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
+                            <span className="font-medium text-slate-700 text-sm">{cat.categoria}</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="font-bold text-slate-800 text-sm">{fmtMoney(cat.total)}</span>
+                            <span className="text-xs text-slate-400 ml-2">{pct.toFixed(1)}%</span>
+                          </div>
+                        </div>
+                        <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                          <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: COLORS[i % COLORS.length] }} />
+                        </div>
+                        <p className="text-xs text-slate-400 mt-1">{cat.tickets} ticket{cat.tickets !== 1 ? "s" : ""} · {cat.items} item{cat.items !== 1 ? "s" : ""}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* PieChart métodos */}
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+                <h4 className="text-sm font-bold text-slate-600 mb-4">Distribución por método de pago</h4>
+                {chartDataMet.length === 0 ? (
+                  <div className="h-48 flex items-center justify-center text-slate-400 text-sm">Sin datos para el período</div>
+                ) : (
+                  <ResponsiveContainer width="100%" height={260}>
+                    <PieChart>
+                      <Pie
+                        data={chartDataMet}
+                        dataKey="total"
+                        nameKey="metodo"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={100}
+                        paddingAngle={3}
+                        cursor="pointer"
+                        onClick={d => abrirDrilldown("metodo", d.metodo)}
+                      >
+                        {chartDataMet.map((entry, i) => (
+                          <Cell key={i} fill={METODO_COLORS[entry.metodo] || COLORS[i % COLORS.length]} stroke="none" />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(v, n) => [fmtMoney(v), n]} contentStyle={{ borderRadius: "8px", border: "none", boxShadow: "0 2px 8px rgba(0,0,0,.1)" }} />
+                      <Legend formatter={(v) => <span style={{ fontSize: 12, color: "#64748b" }}>{v}</span>} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+
+              {/* Lista métodos */}
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+                <h4 className="text-sm font-bold text-slate-600 mb-4">
+                  Detalle <span className="text-slate-400 font-normal text-xs">(clic para ver tickets)</span>
+                </h4>
+                <div className="space-y-2">
+                  {chartDataMet.map((m, i) => {
+                    const tot = chartDataMet.reduce((s, x) => s + x.total, 0);
+                    const pct = tot > 0 ? (m.total / tot) * 100 : 0;
+                    const color = METODO_COLORS[m.metodo] || COLORS[i % COLORS.length];
+                    const activo = drilldown?.valor === m.metodo;
+                    return (
+                      <div
+                        key={m.metodo}
+                        onClick={() => abrirDrilldown("metodo", m.metodo)}
+                        className={`p-3 rounded-xl cursor-pointer transition-all border ${activo ? "border-blue-400 bg-blue-50" : "border-slate-100 hover:bg-slate-50"}`}
+                      >
+                        <div className="flex items-center justify-between mb-1.5">
+                          <div className="flex items-center gap-2">
+                            <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+                            <span className="font-medium text-slate-700 text-sm">{m.metodo}</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="font-bold text-slate-800 text-sm">{fmtMoney(m.total)}</span>
+                            <span className="text-xs text-slate-400 ml-2">{pct.toFixed(1)}%</span>
+                          </div>
+                        </div>
+                        <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                          <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: color }} />
+                        </div>
+                        <p className="text-xs text-slate-400 mt-1">{m.tickets} ticket{m.tickets !== 1 ? "s" : ""}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Drill-down tickets */}
+          {drilldown && (
+            <div className="bg-white rounded-2xl shadow-sm border border-blue-100 p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="text-sm font-bold text-slate-700">
+                  Tickets de <span className="text-blue-600">{drilldown.valor}</span>
+                  <span className="ml-2 text-slate-400 font-normal">({tickets.length} resultado{tickets.length !== 1 ? "s" : ""})</span>
+                </h4>
+                <button onClick={() => setDrilldown(null)} className="text-slate-400 hover:text-slate-600 text-xs px-2 py-1 rounded hover:bg-slate-100">Cerrar ✕</button>
+              </div>
+
+              {loadingTickets ? (
+                <Skeleton />
+              ) : tickets.length === 0 ? (
+                <div className="text-center py-8 text-slate-400">
+                  <Receipt size={36} className="mx-auto mb-2 opacity-30" />
+                  <p>No hay tickets en esta selección</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {tickets.map(ticket => {
+                    const exp = ticketExpandido === ticket.ticket_id;
+                    return (
+                      <div key={ticket.ticket_id} className="border border-slate-100 rounded-xl overflow-hidden">
+                        <div
+                          onClick={() => setTicketExpandido(exp ? null : ticket.ticket_id)}
+                          className="flex items-center gap-3 p-3 cursor-pointer hover:bg-slate-50 transition-colors"
+                        >
+                          <div className="w-9 h-9 bg-slate-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                            <Receipt size={16} className="text-slate-500" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-semibold text-slate-800 text-sm">#{String(parseInt(ticket.ticket_id, 10)).padStart(4, "0")}</span>
+                              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${metodoColor(ticket.metodo_pago)}`}>{ticket.metodo_pago}</span>
+                              {ticket.cliente !== "Consumidor Final" && (
+                                <span className="text-xs text-slate-500 truncate">{ticket.cliente}</span>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-400 mt-0.5">
+                              {ticket.fecha ? new Date(ticket.fecha).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : ""}
+                              · {ticket.items.length} item{ticket.items.length !== 1 ? "s" : ""}
+                            </p>
+                          </div>
+                          <span className="font-bold text-slate-800 text-sm flex-shrink-0">{fmtMoney(ticket.total)}</span>
+                          <ChevronRight size={16} className={`text-slate-400 transition-transform flex-shrink-0 ${exp ? "rotate-90" : ""}`} />
+                        </div>
+                        {exp && (
+                          <div className="px-4 pb-4 border-t border-slate-100 pt-3 bg-slate-50">
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="text-xs text-slate-400 uppercase">
+                                  <th className="text-left pb-2 font-semibold">Producto</th>
+                                  <th className="text-center pb-2 font-semibold">Cant.</th>
+                                  <th className="text-right pb-2 font-semibold">Precio U.</th>
+                                  <th className="text-right pb-2 font-semibold">Subtotal</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {ticket.items.map(item => (
+                                  <tr key={item.id} className="border-t border-slate-100">
+                                    <td className="py-1.5 text-slate-700">{item.producto}</td>
+                                    <td className="py-1.5 text-center text-slate-500">{item.cantidad}</td>
+                                    <td className="py-1.5 text-right text-slate-500">{fmtMoney(item.precio_unitario)}</td>
+                                    <td className="py-1.5 text-right font-medium text-slate-800">{fmtMoney(item.precio_total)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                              <tfoot>
+                                <tr className="border-t border-slate-200">
+                                  <td colSpan={3} className="pt-2 text-xs text-slate-400 font-semibold uppercase">Total</td>
+                                  <td className="pt-2 text-right font-bold text-slate-800">{fmtMoney(ticket.total)}</td>
+                                </tr>
+                              </tfoot>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

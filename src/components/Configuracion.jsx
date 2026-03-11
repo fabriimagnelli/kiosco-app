@@ -28,6 +28,11 @@ function Configuracion() {
   const [syncLoading, setSyncLoading] = useState(false);
   const [syncMsg, setSyncMsg] = useState(null);
 
+  // MP API (Modelo Asistido) states
+  const [mpApiMsg, setMpApiMsg] = useState(null);
+  const [mpSetupLoading, setMpSetupLoading] = useState(false);
+  const [mpSetupMsg, setMpSetupMsg] = useState(null);
+
   // Estados de datos
   const [datos, setDatos] = useState({
     admin_user: "",
@@ -37,6 +42,12 @@ function Configuracion() {
     kiosco_telefono: "",
     mp_alias: "",
     mp_nombre: "",
+    mp_qr_base64: "",
+    mp_access_token: "",       // write-only — nunca se devuelve del backend
+    mp_user_id: "",
+    mp_webhook_url: "",
+    mp_api_configurada: "false",
+    mp_pos_qr_image_url: "",
     whatsapp_numero: "",
     sync_url: "",
     sync_token: ""
@@ -176,6 +187,77 @@ function Configuracion() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // ---- Handlers MP API (Modelo Asistido) ----
+  const guardarYObtenerUserId = async () => {
+    setMpApiMsg(null);
+    if (!datos.mp_access_token || datos.mp_access_token.trim() === "") {
+      return setMpApiMsg({ tipo: 'err', texto: 'Ingresá el Access Token primero.' });
+    }
+    setLoading(true);
+    try {
+      // Guardar credenciales (token + webhook_url)
+      const saveRes = await apiFetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(datos)
+      });
+      const saveData = await saveRes.json();
+      if (!saveData.success) return setMpApiMsg({ tipo: 'err', texto: 'Error al guardar: ' + (saveData.error || '') });
+
+      // Limpiar el campo del token en el UI (write-only)
+      setDatos(prev => ({ ...prev, mp_access_token: "" }));
+
+      // Obtener user_id automáticamente
+      const res = await apiFetch("/api/mp/fetch-user-id", { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        setDatos(prev => ({ ...prev, mp_user_id: String(data.user_id) }));
+        setMpApiMsg({ tipo: 'ok', texto: `Token guardado. User ID: ${data.user_id}${data.name ? ' (' + data.name + ')' : ''}` });
+      } else {
+        setMpApiMsg({ tipo: 'err', texto: 'Token guardado pero error al obtener User ID: ' + data.error });
+      }
+    } catch (e) {
+      setMpApiMsg({ tipo: 'err', texto: 'Error de conexión' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const crearSucursalYCaja = async () => {
+    setMpSetupLoading(true);
+    setMpSetupMsg(null);
+    try {
+      const res = await apiFetch("/api/mp/setup-store", { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        setDatos(prev => ({ ...prev, mp_api_configurada: 'true', mp_pos_qr_image_url: data.qr_image_url }));
+        setMpSetupMsg({ tipo: 'ok', texto: '¡Sucursal y caja creadas! El QR para el mostrador aparece más abajo.' });
+      } else {
+        setMpSetupMsg({ tipo: 'err', texto: data.error });
+      }
+    } catch (e) {
+      setMpSetupMsg({ tipo: 'err', texto: 'Error de conexión' });
+    } finally {
+      setMpSetupLoading(false);
+    }
+  };
+
+  const imprimirQRMostrador = () => {
+    const printW = window.open('', '_blank');
+    printW.document.write(`
+      <html><head><title>QR MercadoPago Mostrador</title>
+      <style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:Arial,sans-serif;margin:0;}
+      h2{margin-bottom:4px} p{margin:4px 0;color:#666;font-size:14px;}</style></head>
+      <body><h2>${datos.kiosco_nombre || 'Mi Kiosco'}</h2>
+      <p>Escaneá para pagar</p>
+      <img src="${datos.mp_pos_qr_image_url}" style="width:250px;height:250px;object-fit:contain"/>
+      <p style="margin-top:12px;font-size:12px;color:#999;">MercadoPago</p>
+      </body></html>`);
+    printW.document.close();
+    printW.focus();
+    setTimeout(() => printW.print(), 500);
   };
 
   const syncPush = async () => {
@@ -324,11 +406,13 @@ function Configuracion() {
                 <h2 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
                     <QrCode size={20} className="text-cyan-500"/> MercadoPago (QR)
                 </h2>
-                <p className="text-xs text-slate-400 mb-3">Configurá tu alias para generar un QR fijo que podés imprimir y pegar en el mostrador.</p>
+                <p className="text-xs text-slate-400 mb-3">
+                    Subí la imagen de tu QR oficial de Mercado Pago (descargala desde la app de MP → Cobrar → Mi QR). Este QR funciona con cualquier escáner de pagos.
+                </p>
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">Alias de MercadoPago</label>
-                        <input 
+                        <label className="block text-xs font-bold text-slate-500 mb-1">Alias de MercadoPago (opcional)</label>
+                        <input
                             name="mp_alias"
                             value={datos.mp_alias}
                             onChange={handleChange}
@@ -337,8 +421,8 @@ function Configuracion() {
                         />
                     </div>
                     <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">Nombre del titular</label>
-                        <input 
+                        <label className="block text-xs font-bold text-slate-500 mb-1">Nombre del titular (opcional)</label>
+                        <input
                             name="mp_nombre"
                             value={datos.mp_nombre}
                             onChange={handleChange}
@@ -346,21 +430,80 @@ function Configuracion() {
                             placeholder="Ej: Juan Pérez"
                         />
                     </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-2">
+                            Imagen del QR de Mercado Pago
+                        </label>
+                        {datos.mp_qr_base64 ? (
+                            <div className="flex items-center gap-4">
+                                <div className="bg-white border border-slate-200 rounded-xl p-3 inline-block">
+                                    <img src={datos.mp_qr_base64} alt="QR Mercado Pago" className="w-32 h-32 object-contain" />
+                                </div>
+                                <div className="space-y-2">
+                                    <p className="text-xs text-green-600 font-semibold">✓ QR cargado correctamente</p>
+                                    <label className="block cursor-pointer bg-cyan-50 border border-cyan-200 hover:bg-cyan-100 text-cyan-700 font-semibold text-xs px-3 py-2 rounded-lg transition-colors text-center">
+                                        Cambiar imagen
+                                        <input
+                                            type="file"
+                                            accept="image/*"
+                                            className="hidden"
+                                            onChange={e => {
+                                                const file = e.target.files?.[0];
+                                                if (!file) return;
+                                                const reader = new FileReader();
+                                                reader.onload = ev => setDatos(prev => ({ ...prev, mp_qr_base64: ev.target.result }));
+                                                reader.readAsDataURL(file);
+                                            }}
+                                        />
+                                    </label>
+                                    <button
+                                        type="button"
+                                        onClick={() => setDatos(prev => ({ ...prev, mp_qr_base64: "" }))}
+                                        className="block w-full text-xs text-red-500 hover:text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors text-center"
+                                    >
+                                        Eliminar QR
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <label className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-cyan-200 rounded-xl p-6 cursor-pointer hover:bg-cyan-50 transition-colors text-center">
+                                <QrCode size={32} className="text-cyan-300" />
+                                <span className="text-sm font-semibold text-cyan-600">Hacé clic para subir la imagen del QR</span>
+                                <span className="text-xs text-slate-400">PNG, JPG, WEBP</span>
+                                <input
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    onChange={e => {
+                                        const file = e.target.files?.[0];
+                                        if (!file) return;
+                                        const reader = new FileReader();
+                                        reader.onload = ev => setDatos(prev => ({ ...prev, mp_qr_base64: ev.target.result }));
+                                        reader.readAsDataURL(file);
+                                    }}
+                                />
+                            </label>
+                        )}
+                    </div>
                 </div>
 
                 {/* Vista previa del QR para imprimir */}
-                {datos.mp_alias && (
+                {(datos.mp_qr_base64 || datos.mp_alias) && (
                   <div className="mt-4 bg-cyan-50 border border-cyan-200 rounded-xl p-4 text-center space-y-3">
                     <p className="text-sm font-bold text-cyan-800">Tu QR de cobro</p>
                     <div id="qr-mp-preview" className="bg-white p-4 rounded-lg inline-block mx-auto">
                       <p className="text-xs font-bold text-slate-600 mb-2">{datos.mp_nombre || datos.kiosco_nombre || 'Mi Kiosco'}</p>
-                      <QRCodeSVG
-                        value={`https://link.mercadopago.com.ar/${datos.mp_alias}`}
-                        size={200}
-                        level="M"
-                        includeMargin={true}
-                      />
-                      <p className="text-xs text-slate-500 mt-2">Alias: <strong>{datos.mp_alias}</strong></p>
+                      {datos.mp_qr_base64 ? (
+                        <img src={datos.mp_qr_base64} alt="QR Mercado Pago" className="w-48 h-48 object-contain mx-auto" />
+                      ) : (
+                        <QRCodeSVG
+                          value={`https://link.mercadopago.com.ar/${datos.mp_alias}`}
+                          size={200}
+                          level="M"
+                          includeMargin={true}
+                        />
+                      )}
+                      {datos.mp_alias && <p className="text-xs text-slate-500 mt-2">Alias: <strong>{datos.mp_alias}</strong></p>}
                     </div>
                     <button
                       type="button"
@@ -375,7 +518,7 @@ function Configuracion() {
                             <h2>${datos.mp_nombre || datos.kiosco_nombre || 'Mi Kiosco'}</h2>
                             <p>Escaneá para pagar</p>
                             ${el.innerHTML}
-                            <p style="margin-top:12px;font-size:12px;color:#999;">Alias: ${datos.mp_alias}</p>
+                            ${datos.mp_alias ? `<p style="margin-top:12px;font-size:12px;color:#999;">Alias: ${datos.mp_alias}</p>` : ''}
                           </body></html>`);
                         printW.document.close();
                         setTimeout(() => { printW.print(); }, 500);
@@ -386,6 +529,110 @@ function Configuracion() {
                     </button>
                   </div>
                 )}
+
+                <hr className="my-6 border-slate-100"/>
+
+                {/* ---- MODELO ASISTIDO MP ---- */}
+                <h2 className="text-lg font-bold text-slate-700 mb-2 flex items-center gap-2">
+                    <Key size={20} className="text-blue-500"/> MercadoPago Asistido (API)
+                </h2>
+                <span className={`text-xs font-semibold px-2 py-1 rounded-full inline-block mb-3 ${datos.mp_api_configurada === 'true' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-400'}`}>
+                    {datos.mp_api_configurada === 'true' ? '✓ Configurado y activo' : 'Sin configurar'}
+                </span>
+                <p className="text-xs text-slate-400 mb-4">
+                    Al configurar esto, cada venta con MercadoPago asignará el monto exacto al QR físico del mostrador. El cliente escanea y paga el importe correcto. El sistema confirma automáticamente.
+                </p>
+
+                {/* PASO 1: Token */}
+                <div className="bg-slate-50 rounded-xl p-4 space-y-4 mb-4">
+                    <p className="text-xs font-bold text-slate-600">Paso 1 — Credenciales</p>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-1">Access Token <span className="text-red-400">*</span></label>
+                        <input
+                            name="mp_access_token"
+                            value={datos.mp_access_token}
+                            onChange={handleChange}
+                            type="password"
+                            autoComplete="new-password"
+                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono text-xs"
+                            placeholder="TEST-... (dejá vacío para no modificarlo)"
+                        />
+                        <p className="text-[10px] text-slate-400 mt-1">Por seguridad, el token guardado no se muestra. Ingresalo solo si querés cambiarlo.</p>
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-1">URL Webhook (opcional — para notificaciones en tiempo real)</label>
+                        <input
+                            name="mp_webhook_url"
+                            value={datos.mp_webhook_url || ""}
+                            onChange={handleChange}
+                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono text-xs"
+                            placeholder="https://abc123.ngrok.io/api/mp/webhook"
+                        />
+                        <p className="text-[10px] text-slate-400 mt-1">Sin esto, el sistema usa polling (verifica cada 2 segundos). Con ngrok local: <code>ngrok http 3001</code> → copiar URL + /api/mp/webhook</p>
+                    </div>
+                    {datos.mp_user_id && (
+                        <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-500">
+                            User ID configurado: <strong className="text-slate-700">{datos.mp_user_id}</strong>
+                        </div>
+                    )}
+                    <button
+                        type="button"
+                        onClick={guardarYObtenerUserId}
+                        disabled={loading}
+                        className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold text-sm transition-colors disabled:opacity-50"
+                    >
+                        {loading ? <Loader2 size={14} className="animate-spin"/> : <Key size={14}/>}
+                        {datos.mp_user_id ? 'Actualizar Token y User ID' : 'Guardar Token y Obtener User ID'}
+                    </button>
+                    {mpApiMsg && (
+                        <div className={`flex items-start gap-2 text-xs p-3 rounded-lg ${mpApiMsg.tipo === 'ok' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                            {mpApiMsg.tipo === 'ok' ? <CheckCircle size={14} className="mt-0.5 shrink-0"/> : <AlertTriangle size={14} className="mt-0.5 shrink-0"/>}
+                            {mpApiMsg.texto}
+                        </div>
+                    )}
+                </div>
+
+                {/* PASO 2: Crear sucursal y caja */}
+                <div className="bg-slate-50 rounded-xl p-4 space-y-3">
+                    <p className="text-xs font-bold text-slate-600">Paso 2 — Crear Sucursal y Caja en MercadoPago</p>
+                    <p className="text-[10px] text-slate-400">Esto crea una sucursal y una caja en tu cuenta de MP. El QR generado es el que vas a imprimir y pegar en el mostrador. Solo hay que hacerlo una vez.</p>
+                    {datos.mp_api_configurada === 'true' && (
+                        <div className="bg-white border border-green-200 rounded-lg px-3 py-2 text-xs text-green-700 flex items-center gap-2">
+                            <CheckCircle size={14}/> Sucursal y caja ya creadas. Podés recrearlas si es necesario.
+                        </div>
+                    )}
+                    <button
+                        type="button"
+                        onClick={crearSucursalYCaja}
+                        disabled={mpSetupLoading || !datos.mp_user_id}
+                        className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-700 text-white px-4 py-2 rounded-lg font-bold text-sm transition-colors disabled:opacity-50"
+                    >
+                        {mpSetupLoading ? <Loader2 size={14} className="animate-spin"/> : <Building2 size={14}/>}
+                        {datos.mp_api_configurada === 'true' ? 'Re-crear Sucursal y Caja' : 'Crear Sucursal y Caja'}
+                    </button>
+                    {mpSetupMsg && (
+                        <div className={`flex items-start gap-2 text-xs p-3 rounded-lg ${mpSetupMsg.tipo === 'ok' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                            {mpSetupMsg.tipo === 'ok' ? <CheckCircle size={14} className="mt-0.5 shrink-0"/> : <AlertTriangle size={14} className="mt-0.5 shrink-0"/>}
+                            {mpSetupMsg.texto}
+                        </div>
+                    )}
+                    {/* QR del mostrador */}
+                    {datos.mp_pos_qr_image_url && (
+                        <div className="mt-2 bg-white border border-cyan-200 rounded-xl p-4 text-center space-y-3">
+                            <p className="text-sm font-bold text-cyan-800">QR del Mostrador (imprimir y pegar)</p>
+                            <div className="inline-block bg-white p-3 border border-slate-100 rounded-lg mx-auto">
+                                <img src={datos.mp_pos_qr_image_url} alt="QR Mostrador" className="w-48 h-48 object-contain mx-auto"/>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={imprimirQRMostrador}
+                                className="flex items-center justify-center gap-2 bg-cyan-600 hover:bg-cyan-700 text-white px-4 py-2 rounded-lg font-bold text-sm transition-colors mx-auto"
+                            >
+                                <Printer size={14}/> Imprimir QR del Mostrador
+                            </button>
+                        </div>
+                    )}
+                </div>
 
                 <hr className="my-6 border-slate-100"/>
 

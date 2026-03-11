@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Search, ShoppingCart, Trash2, CreditCard, User, RefreshCw, Plus, Printer, Percent, DollarSign, MessageSquare, Tag, CheckCircle, X, QrCode, MessageCircle } from "lucide-react";
+import { Search, ShoppingCart, Trash2, CreditCard, User, RefreshCw, Plus, Printer, Percent, DollarSign, MessageSquare, Tag, CheckCircle, X, QrCode, MessageCircle, Loader2 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiFetch } from "../lib/api";
 import { beepScan, successSound, errorSound } from "../lib/sounds";
@@ -52,7 +52,16 @@ function Ventas() {
   const [modalExito, setModalExito] = useState(null); // { ticketId, items, metodo, total, descuento, notas }
 
   // Modal QR MercadoPago
-  const [modalQR, setModalQR] = useState(null); // { monto, alias, nombre }
+  const [modalQR, setModalQR] = useState(null); // { monto, alias, nombre, qrBase64 }
+  const [qrStandalone, setQrStandalone] = useState(false);
+
+  // MP Modelo Asistido — estado del pago y polling
+  const [mpEstadoPago, setMpEstadoPago] = useState('idle');
+  // 'idle' | 'asignando' | 'esperando' | 'confirmado' | 'error'
+  const [mpExternalRef, setMpExternalRef] = useState(null);
+  const [mpPagoError, setMpPagoError] = useState(null);
+  const mpPollingRef = useRef(null);
+  const mpTimeoutRef = useRef(null);
 
   useEffect(() => {
     cargarDatos();
@@ -71,7 +80,11 @@ function Ventas() {
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
-    return () => document.removeEventListener('visibilitychange', handleVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      if (mpPollingRef.current) clearInterval(mpPollingRef.current);
+      if (mpTimeoutRef.current) clearTimeout(mpTimeoutRef.current);
+    };
   }, [location.state]);
 
   const cargarConfigNegocio = async () => {
@@ -362,6 +375,58 @@ function Ventas() {
     }
   };
 
+  // ==== MP Modelo Asistido — helpers ====
+  const detenerPollingMP = () => {
+    if (mpPollingRef.current) { clearInterval(mpPollingRef.current); mpPollingRef.current = null; }
+    if (mpTimeoutRef.current) { clearTimeout(mpTimeoutRef.current); mpTimeoutRef.current = null; }
+  };
+
+  const iniciarPollingMP = (externalRef) => {
+    mpPollingRef.current = setInterval(async () => {
+      try {
+        const res = await apiFetch(`/api/mp/check-payment/${encodeURIComponent(externalRef)}`);
+        const data = await res.json();
+        if (data.status === 'approved') {
+          detenerPollingMP();
+          setMpEstadoPago('confirmado');
+          setTimeout(() => {
+            setMpEstadoPago('idle');
+            setMpExternalRef(null);
+            setModalQR(null);
+            setModalExito(null);
+          }, 3000);
+        } else if (data.status === 'rejected') {
+          detenerPollingMP();
+          setMpEstadoPago('error');
+          setMpPagoError('El pago fue rechazado por MercadoPago.');
+        }
+      } catch (e) { /* silencioso — polling continúa */ }
+    }, 2000);
+    // Timeout de 5 minutos
+    mpTimeoutRef.current = setTimeout(() => {
+      detenerPollingMP();
+      setMpEstadoPago('error');
+      setMpPagoError('Tiempo de espera agotado. Verificá el pago manualmente en MercadoPago.');
+    }, 5 * 60 * 1000);
+  };
+
+  const cerrarModalVenta = () => {
+    if (mpEstadoPago === 'esperando' && mpExternalRef) {
+      detenerPollingMP();
+      apiFetch('/api/mp/cancel-order', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ external_ref: mpExternalRef })
+      }).catch(() => {});
+    }
+    detenerPollingMP();
+    setMpEstadoPago('idle');
+    setMpExternalRef(null);
+    setMpPagoError(null);
+    setModalExito(null);
+    setModalQR(null);
+  };
+
   const confirmarVenta = async () => {
     if (carrito.length === 0) return alert("El carrito está vacío");
 
@@ -448,16 +513,50 @@ function Ventas() {
         clienteTelefono
       });
 
-      // Mostrar QR si es método digital y hay alias de MercadoPago configurado
+      // Mostrar QR si es método digital
       const esDigital = ['Mercado Pago', 'Transferencia'].includes(metodo);
-      const montoQR = pagoMixto 
+      const montoQR = pagoMixto
         ? (['Mercado Pago', 'Transferencia'].includes(mixtoMetodo1) ? montoMixto1 : (['Mercado Pago', 'Transferencia'].includes(mixtoMetodo2) ? montoMixto2 : 0))
         : total;
-      if ((esDigital || (pagoMixto && montoQR > 0)) && configNegocio.mp_alias) {
+
+      const mpApiActiva = configNegocio.mp_api_configurada === 'true';
+
+      if (esDigital && metodo === 'Mercado Pago' && !pagoMixto && mpApiActiva && configNegocio.mp_pos_qr_image_url) {
+        // --- Modelo Asistido: QR dinámico con confirmación automática ---
+        const externalRef = `TKT-${ticketNum}-${Date.now()}`;
+        setModalQR({
+          monto: montoQR,
+          alias: '',
+          nombre: configNegocio.mp_nombre || configNegocio.kiosco_nombre || '',
+          qrBase64: configNegocio.mp_pos_qr_image_url
+        });
+        setMpExternalRef(externalRef);
+        setMpEstadoPago('asignando');
+        // Asignar orden al POS de MP (no bloquea el UI)
+        apiFetch('/api/mp/assign-order', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ external_ref: externalRef, total: montoQR, ticket_id: ticketNum })
+        }).then(async res => {
+          const assignData = await res.json();
+          if (assignData.success) {
+            setMpEstadoPago('esperando');
+            iniciarPollingMP(externalRef);
+          } else {
+            setMpEstadoPago('error');
+            setMpPagoError('No se pudo asignar la orden a MP: ' + (assignData.error || 'error desconocido'));
+          }
+        }).catch(() => {
+          setMpEstadoPago('error');
+          setMpPagoError('Error de conexión. Verificá el pago en MercadoPago manualmente.');
+        });
+      } else if ((esDigital || (pagoMixto && montoQR > 0)) && (configNegocio.mp_alias || configNegocio.mp_qr_base64)) {
+        // --- Modelo estático (fallback) ---
         setModalQR({
           monto: montoQR,
           alias: configNegocio.mp_alias,
-          nombre: configNegocio.mp_nombre || configNegocio.kiosco_nombre || ''
+          nombre: configNegocio.mp_nombre || configNegocio.kiosco_nombre || '',
+          qrBase64: configNegocio.mp_qr_base64 || ''
         });
       }
 
@@ -891,7 +990,17 @@ function Ventas() {
                 <span className="text-2xl font-extrabold text-slate-800 tracking-tight">$ {total.toFixed(0)}</span>
             </div>
 
-            <button 
+            {(configNegocio.mp_qr_base64 || configNegocio.mp_alias || configNegocio.mp_pos_qr_image_url) && carrito.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setQrStandalone(true)}
+                className="w-full py-2.5 rounded-xl font-bold text-cyan-700 text-sm border-2 border-cyan-200 bg-cyan-50 hover:bg-cyan-100 transition-colors flex items-center justify-center gap-2"
+              >
+                <QrCode size={16} /> VER QR PARA COBRAR
+              </button>
+            )}
+
+            <button
                 onClick={confirmarVenta}
                 className={`w-full py-3 rounded-xl font-bold text-white text-sm shadow-lg transition-transform active:scale-95 ${ticketEditando ? 'bg-orange-600 hover:bg-orange-700' : 'bg-slate-900 hover:bg-slate-800'}`}
             >
@@ -902,43 +1011,81 @@ function Ventas() {
 
       {/* MODAL DE ÉXITO POST-VENTA */}
       {modalExito && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => { setModalExito(null); setModalQR(null); }}>
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={cerrarModalVenta}>
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-5 animate-in fade-in zoom-in max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="text-center">
-              <div className="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-3">
-                <CheckCircle className="text-green-600" size={36} />
+              <div className={`mx-auto w-16 h-16 rounded-full flex items-center justify-center mb-3 ${
+                (mpEstadoPago === 'asignando' || mpEstadoPago === 'esperando') ? 'bg-cyan-100' : 'bg-green-100'
+              }`}>
+                {(mpEstadoPago === 'asignando' || mpEstadoPago === 'esperando')
+                  ? <QrCode className="text-cyan-600" size={36} />
+                  : <CheckCircle className="text-green-600" size={36} />
+                }
               </div>
               <h3 className="text-xl font-bold text-slate-800">
-                {modalExito.esEdicion ? '¡Venta corregida!' : '¡Venta registrada!'}
+                {(mpEstadoPago === 'asignando' || mpEstadoPago === 'esperando')
+                  ? 'Escanear QR para cobrar'
+                  : mpEstadoPago === 'confirmado'
+                    ? '¡Pago confirmado!'
+                    : modalExito.esEdicion ? '¡Venta corregida!' : '¡Venta registrada!'
+                }
               </h3>
               <p className="text-slate-500 text-sm mt-1">
                 Ticket #{String(parseInt(modalExito.ticketId, 10) || modalExito.ticketId).padStart(4, '0')} — Total: ${modalExito.total.toFixed(0)}
               </p>
             </div>
 
-            {/* QR estático de MercadoPago — mismo que el impreso en el mostrador */}
+            {/* QR MercadoPago */}
             {modalQR && (
               <div className="bg-cyan-50 border border-cyan-200 rounded-xl p-4 text-center space-y-2">
                 <p className="text-sm font-bold text-cyan-800 flex items-center justify-center gap-2">
-                  <QrCode size={16}/> Cobrar con MercadoPago
+                  <QrCode size={16}/>
+                  {mpEstadoPago !== 'idle' ? 'Escanear QR del mostrador' : 'Cobrar con MercadoPago'}
                 </p>
                 <div className="bg-white p-3 rounded-lg inline-block mx-auto">
-                  <QRCodeSVG 
-                    value={`https://link.mercadopago.com.ar/${modalQR.alias}`}
-                    size={160}
-                    level="M"
-                    includeMargin={true}
-                  />
+                  {modalQR.qrBase64 ? (
+                    <img src={modalQR.qrBase64} alt="QR Mercado Pago" className="w-40 h-40 object-contain" />
+                  ) : (
+                    <QRCodeSVG
+                      value={`https://link.mercadopago.com.ar/${modalQR.alias}`}
+                      size={160}
+                      level="M"
+                      includeMargin={true}
+                    />
+                  )}
                 </div>
-                <p className="text-xs text-cyan-600">
-                  Alias: <strong>{modalQR.alias}</strong>
-                </p>
+                {modalQR.alias && (
+                  <p className="text-xs text-cyan-600">
+                    Alias: <strong>{modalQR.alias}</strong>
+                  </p>
+                )}
                 <div className="bg-cyan-100 rounded-lg py-2 px-4">
                   <p className="text-xs text-cyan-600">Monto a cobrar</p>
                   <p className="text-2xl font-black text-cyan-800">${modalQR.monto.toFixed(0)}</p>
                 </div>
                 {modalQR.nombre && (
                   <p className="text-xs text-cyan-500">{modalQR.nombre}</p>
+                )}
+                {/* Estado del pago MP (Modelo Asistido) */}
+                {mpEstadoPago === 'asignando' && (
+                  <div className="flex items-center justify-center gap-2 text-slate-500 text-xs mt-1">
+                    <Loader2 size={14} className="animate-spin"/> Preparando orden en MercadoPago...
+                  </div>
+                )}
+                {mpEstadoPago === 'esperando' && (
+                  <div className="flex items-center justify-center gap-2 text-cyan-600 text-xs font-medium mt-1">
+                    <Loader2 size={14} className="animate-spin"/> Esperando confirmación de pago...
+                  </div>
+                )}
+                {mpEstadoPago === 'confirmado' && (
+                  <div className="flex items-center justify-center gap-2 text-green-600 text-sm font-bold mt-1">
+                    <CheckCircle size={16}/> ¡Pago confirmado por MercadoPago!
+                  </div>
+                )}
+                {mpEstadoPago === 'error' && mpPagoError && (
+                  <div className="text-amber-600 text-xs bg-amber-50 rounded-lg p-2 mt-1">
+                    ⚠ {mpPagoError}
+                  </div>
                 )}
               </div>
             )}
@@ -984,10 +1131,55 @@ function Ventas() {
             </div>
 
             <button
-              onClick={() => { setModalExito(null); setModalQR(null); }}
+              onClick={cerrarModalVenta}
               className="w-full flex items-center justify-center gap-2 bg-slate-200 hover:bg-slate-300 text-slate-700 py-3 rounded-xl font-bold transition-colors"
             >
               <X size={18} />
+              Cerrar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL QR STANDALONE — Para mostrar el QR al cliente antes o durante el cobro */}
+      {qrStandalone && (
+        <div className="fixed inset-0 bg-black/70 z-[60] flex items-center justify-center p-4" onClick={() => setQrStandalone(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 text-center space-y-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <QrCode size={20} className="text-cyan-500" /> Cobrar con QR
+              </h3>
+              <button onClick={() => setQrStandalone(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="bg-cyan-50 border border-cyan-200 rounded-xl p-4 space-y-3">
+              {(configNegocio.mp_nombre || configNegocio.kiosco_nombre) && (
+                <p className="text-xs font-semibold text-cyan-700">{configNegocio.mp_nombre || configNegocio.kiosco_nombre}</p>
+              )}
+              <div className="bg-white p-3 rounded-xl inline-block mx-auto shadow-sm">
+                {(configNegocio.mp_api_configurada === 'true' && configNegocio.mp_pos_qr_image_url) ? (
+                  <img src={configNegocio.mp_pos_qr_image_url} alt="QR Mostrador" className="w-56 h-56 object-contain" />
+                ) : configNegocio.mp_qr_base64 ? (
+                  <img src={configNegocio.mp_qr_base64} alt="QR Mercado Pago" className="w-56 h-56 object-contain" />
+                ) : (
+                  <QRCodeSVG value={`https://link.mercadopago.com.ar/${configNegocio.mp_alias}`} size={216} level="M" includeMargin={true} />
+                )}
+              </div>
+              {carrito.length > 0 && (
+                <div className="bg-cyan-100 rounded-lg py-2 px-4">
+                  <p className="text-xs text-cyan-600">Monto a cobrar</p>
+                  <p className="text-4xl font-black text-cyan-800">${total.toFixed(0)}</p>
+                </div>
+              )}
+              {configNegocio.mp_alias && (
+                <p className="text-xs text-cyan-500">Alias: <strong>{configNegocio.mp_alias}</strong></p>
+              )}
+            </div>
+            <button
+              onClick={() => setQrStandalone(false)}
+              className="w-full py-2.5 rounded-xl font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors text-sm"
+            >
               Cerrar
             </button>
           </div>
