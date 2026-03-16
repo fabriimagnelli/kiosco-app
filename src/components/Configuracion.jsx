@@ -32,6 +32,8 @@ function Configuracion() {
   const [mpApiMsg, setMpApiMsg] = useState(null);
   const [mpSetupLoading, setMpSetupLoading] = useState(false);
   const [mpSetupMsg, setMpSetupMsg] = useState(null);
+  const [mostrarGuiaToken, setMostrarGuiaToken] = useState(false);
+  const [mostrarWebhook, setMostrarWebhook] = useState(false);
 
   // Estados de datos
   const [datos, setDatos] = useState({
@@ -532,20 +534,49 @@ function Configuracion() {
 
                 <hr className="my-6 border-slate-100"/>
 
-                {/* ---- MODELO ASISTIDO MP ---- */}
+                {/* ---- COBRO CON QR AUTOMATICO ---- */}
                 <h2 className="text-lg font-bold text-slate-700 mb-2 flex items-center gap-2">
-                    <Key size={20} className="text-blue-500"/> MercadoPago Asistido (API)
+                    <Key size={20} className="text-blue-500"/> Cobro con QR Automatico
                 </h2>
                 <span className={`text-xs font-semibold px-2 py-1 rounded-full inline-block mb-3 ${datos.mp_api_configurada === 'true' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-400'}`}>
                     {datos.mp_api_configurada === 'true' ? '✓ Configurado y activo' : 'Sin configurar'}
                 </span>
                 <p className="text-xs text-slate-400 mb-4">
-                    Al configurar esto, cada venta con MercadoPago asignará el monto exacto al QR físico del mostrador. El cliente escanea y paga el importe correcto. El sistema confirma automáticamente.
+                    Conecta tu cuenta de MercadoPago para que el sistema genere cobros automaticos. Cuando cobras con MercadoPago, el QR del mostrador muestra el monto exacto. El cliente escanea, paga y el sistema confirma solo.
                 </p>
 
                 {/* PASO 1: Token */}
                 <div className="bg-slate-50 rounded-xl p-4 space-y-4 mb-4">
-                    <p className="text-xs font-bold text-slate-600">Paso 1 — Credenciales</p>
+                    <p className="text-xs font-bold text-slate-600">Paso 1 — Conectar tu cuenta de MercadoPago</p>
+
+                    {/* Guía para obtener el token */}
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                        <button
+                            type="button"
+                            onClick={() => setMostrarGuiaToken(!mostrarGuiaToken)}
+                            className="flex items-center justify-between w-full text-left"
+                        >
+                            <span className="text-xs font-bold text-blue-700">
+                                {mostrarGuiaToken ? 'Ocultar instrucciones' : 'Como obtener tu Access Token de MercadoPago'}
+                            </span>
+                            <span className="text-blue-500 text-sm">{mostrarGuiaToken ? '▲' : '▼'}</span>
+                        </button>
+                        {mostrarGuiaToken && (
+                            <div className="mt-3 space-y-2 text-xs text-blue-800">
+                                <p className="font-semibold">Segui estos pasos:</p>
+                                <ol className="list-decimal pl-4 space-y-1.5">
+                                    <li>Ingresa a <a href="https://www.mercadopago.com.ar/developers/panel/app" target="_blank" rel="noopener noreferrer" className="underline font-bold hover:text-blue-600">MercadoPago Developers</a> con tu cuenta de MercadoPago (la misma donde recibis los pagos).</li>
+                                    <li>Si no tenes una aplicacion creada, hace clic en <strong>"Crear aplicacion"</strong>. Ponele cualquier nombre (ej: "Mi Kiosco") y selecciona <strong>"Pagos presenciales &gt; Codigo QR modelo asistido"</strong>.</li>
+                                    <li>Una vez creada, entra a la aplicacion y anda a <strong>"Credenciales de produccion"</strong>.</li>
+                                    <li>Copia el <strong>Access Token</strong> (empieza con <code>APP_USR-</code>) y pegalo abajo.</li>
+                                </ol>
+                                <div className="mt-2 bg-blue-100 rounded px-3 py-2 text-[11px]">
+                                    <strong>Importante:</strong> Usa las credenciales de <strong>produccion</strong>, no las de prueba (test). Las de produccion empiezan con <code>APP_USR-</code>.
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
                     <div>
                         <label className="block text-xs font-bold text-slate-500 mb-1">Access Token <span className="text-red-400">*</span></label>
                         <input
@@ -555,24 +586,38 @@ function Configuracion() {
                             type="password"
                             autoComplete="new-password"
                             className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono text-xs"
-                            placeholder="TEST-... (dejá vacío para no modificarlo)"
+                            placeholder="APP_USR-... (dejalo vacio para no modificarlo)"
                         />
-                        <p className="text-[10px] text-slate-400 mt-1">Por seguridad, el token guardado no se muestra. Ingresalo solo si querés cambiarlo.</p>
+                        <p className="text-[10px] text-slate-400 mt-1">Por seguridad, el token guardado no se muestra. Solo ingresalo si queres cambiarlo.</p>
                     </div>
+
+                    {/* Webhook oculto por defecto */}
                     <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">URL Webhook (opcional — para notificaciones en tiempo real)</label>
-                        <input
-                            name="mp_webhook_url"
-                            value={datos.mp_webhook_url || ""}
-                            onChange={handleChange}
-                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono text-xs"
-                            placeholder="https://abc123.ngrok.io/api/mp/webhook"
-                        />
-                        <p className="text-[10px] text-slate-400 mt-1">Sin esto, el sistema usa polling (verifica cada 2 segundos). Con ngrok local: <code>ngrok http 3001</code> → copiar URL + /api/mp/webhook</p>
+                        <button
+                            type="button"
+                            onClick={() => setMostrarWebhook(!mostrarWebhook)}
+                            className="text-[11px] text-slate-400 hover:text-slate-600 transition-colors"
+                        >
+                            {mostrarWebhook ? '▲ Ocultar opciones avanzadas' : '▼ Opciones avanzadas (opcional)'}
+                        </button>
+                        {mostrarWebhook && (
+                            <div className="mt-2 space-y-2">
+                                <label className="block text-xs font-bold text-slate-500 mb-1">URL de notificaciones (opcional)</label>
+                                <input
+                                    name="mp_webhook_url"
+                                    value={datos.mp_webhook_url || ""}
+                                    onChange={handleChange}
+                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono text-xs"
+                                    placeholder="https://tu-dominio.com/api/mp/webhook"
+                                />
+                                <p className="text-[10px] text-slate-400">Sin esto el sistema funciona igual (verifica el pago cada 2 segundos). Solo es necesario si tenes un dominio publico apuntando al sistema.</p>
+                            </div>
+                        )}
                     </div>
+
                     {datos.mp_user_id && (
                         <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-500">
-                            User ID configurado: <strong className="text-slate-700">{datos.mp_user_id}</strong>
+                            Cuenta conectada (ID): <strong className="text-slate-700">{datos.mp_user_id}</strong>
                         </div>
                     )}
                     <button
@@ -582,7 +627,7 @@ function Configuracion() {
                         className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold text-sm transition-colors disabled:opacity-50"
                     >
                         {loading ? <Loader2 size={14} className="animate-spin"/> : <Key size={14}/>}
-                        {datos.mp_user_id ? 'Actualizar Token y User ID' : 'Guardar Token y Obtener User ID'}
+                        {datos.mp_user_id ? 'Actualizar credenciales' : 'Conectar cuenta de MercadoPago'}
                     </button>
                     {mpApiMsg && (
                         <div className={`flex items-start gap-2 text-xs p-3 rounded-lg ${mpApiMsg.tipo === 'ok' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
@@ -594,11 +639,11 @@ function Configuracion() {
 
                 {/* PASO 2: Crear sucursal y caja */}
                 <div className="bg-slate-50 rounded-xl p-4 space-y-3">
-                    <p className="text-xs font-bold text-slate-600">Paso 2 — Crear Sucursal y Caja en MercadoPago</p>
-                    <p className="text-[10px] text-slate-400">Esto crea una sucursal y una caja en tu cuenta de MP. El QR generado es el que vas a imprimir y pegar en el mostrador. Solo hay que hacerlo una vez.</p>
+                    <p className="text-xs font-bold text-slate-600">Paso 2 — Crear punto de cobro</p>
+                    <p className="text-[10px] text-slate-400">Esto registra tu negocio en MercadoPago y genera un QR para el mostrador. Solo hay que hacerlo una vez.</p>
                     {datos.mp_api_configurada === 'true' && (
                         <div className="bg-white border border-green-200 rounded-lg px-3 py-2 text-xs text-green-700 flex items-center gap-2">
-                            <CheckCircle size={14}/> Sucursal y caja ya creadas. Podés recrearlas si es necesario.
+                            <CheckCircle size={14}/> Punto de cobro creado. Podes recrearlo si es necesario.
                         </div>
                     )}
                     <button
@@ -608,7 +653,7 @@ function Configuracion() {
                         className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-700 text-white px-4 py-2 rounded-lg font-bold text-sm transition-colors disabled:opacity-50"
                     >
                         {mpSetupLoading ? <Loader2 size={14} className="animate-spin"/> : <Building2 size={14}/>}
-                        {datos.mp_api_configurada === 'true' ? 'Re-crear Sucursal y Caja' : 'Crear Sucursal y Caja'}
+                        {datos.mp_api_configurada === 'true' ? 'Re-crear punto de cobro' : 'Crear punto de cobro'}
                     </button>
                     {mpSetupMsg && (
                         <div className={`flex items-start gap-2 text-xs p-3 rounded-lg ${mpSetupMsg.tipo === 'ok' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
