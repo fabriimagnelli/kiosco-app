@@ -77,28 +77,36 @@ function CierreCigarrillos() {
     
     if (!confirm(`¿Confirmar cierre de cigarrillos?\n\nContado: $${contado}\nRetiro: $${retiro}\nQueda (Inicio Mañana): $${queda}`)) return;
 
-    try {
-      const res = await apiFetch("/api/cierres_unificado", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tipo: 'cigarrillos',
-          total_ventas: resumen.ventas,
-          total_efectivo_real: contado,
-          monto_retiro: retiro, 
-          observacion: observacion,
-          nuevo_inicio_manual: inicioManual // Enviamos el ajuste manual
-        }),
-      });
-      
-      const data = await res.json();
-      if (data.success) {
-        alert("Cierre de Cigarrillos exitoso.");
-        window.location.reload();
-      } else {
-        alert("Error: " + data.error);
-      }
-    } catch (error) { console.error(error); alert("Error de conexión"); }
+    const intentarCierre = async (intento = 1) => {
+      try {
+        const res = await apiFetch("/api/cierres_unificado", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tipo: 'cigarrillos',
+            total_ventas: resumen.ventas,
+            total_efectivo_real: contado,
+            monto_retiro: retiro, 
+            observacion: observacion,
+            nuevo_inicio_manual: inicioManual
+          }),
+        });
+        
+        const data = await res.json();
+        if (data.success) {
+          alert("Cierre de Cigarrillos exitoso.");
+          window.location.reload();
+        } else if (data.error && data.error.includes("bloqueada temporalmente") && intento < 3) {
+          console.warn(`[CIERRE] Reintentando cierre cigarrillos (intento ${intento + 1}/3)...`);
+          await new Promise(r => setTimeout(r, 2000));
+          return intentarCierre(intento + 1);
+        } else {
+          alert("Error: " + data.error);
+        }
+      } catch (error) { console.error(error); alert("Error de conexión"); }
+    };
+
+    await intentarCierre();
   };
 
   if (!resumen) return <div className="p-10 text-center text-orange-600 font-bold">Cargando cigarrillos...</div>;

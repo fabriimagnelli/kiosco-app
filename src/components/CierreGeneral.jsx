@@ -92,49 +92,57 @@ function CierreGeneral() {
       Inicio Mañana: $${baseManana} ${inicioManual !== null ? '(Modificado Manualmente)' : ''}
     `)) return;
 
-    try {
-      const res = await apiFetch("/api/cierres_unificado", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tipo: 'general',
-          total_ventas: resumen.ventas,
-          total_gastos: resumen.gastos + (resumen.proveedores || 0),
-          total_efectivo_real: totalFisico,
-          monto_retiro: retiro,
-          observacion: observacion,
-          nuevo_inicio_manual: inicioManual // Enviamos el manual si existe
-        }),
-      });
-      
-      const data = await res.json();
-      if (data.success) {
-        // Si hay foto, subirla al cierre recién creado
-        if (fotoArqueo) {
-          try {
-            // Obtener el último cierre para tener su ID
-            const cierresRes = await apiFetch("/api/historial_cierres");
-            const cierres = await cierresRes.json();
-            if (cierres.length > 0) {
-              const ultimoCierreId = cierres[0].id;
-              const formData = new FormData();
-              formData.append("foto", fotoArqueo);
-              await apiFetch(`/api/cierres/${ultimoCierreId}/foto_arqueo`, {
-                method: "POST",
-                body: formData,
-                headers: {} // Dejar que el browser ponga multipart
-              });
+    const intentarCierre = async (intento = 1) => {
+      try {
+        const res = await apiFetch("/api/cierres_unificado", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tipo: 'general',
+            total_ventas: resumen.ventas,
+            total_gastos: resumen.gastos + (resumen.proveedores || 0),
+            total_efectivo_real: totalFisico,
+            monto_retiro: retiro,
+            observacion: observacion,
+            nuevo_inicio_manual: inicioManual
+          }),
+        });
+        
+        const data = await res.json();
+        if (data.success) {
+          // Si hay foto, subirla al cierre recién creado
+          if (fotoArqueo) {
+            try {
+              const cierresRes = await apiFetch("/api/historial_cierres");
+              const cierres = await cierresRes.json();
+              if (cierres.length > 0) {
+                const ultimoCierreId = cierres[0].id;
+                const formData = new FormData();
+                formData.append("foto", fotoArqueo);
+                await apiFetch(`/api/cierres/${ultimoCierreId}/foto_arqueo`, {
+                  method: "POST",
+                  body: formData,
+                  headers: {}
+                });
+              }
+            } catch (fotoErr) {
+              console.warn("No se pudo subir la foto del arqueo:", fotoErr);
             }
-          } catch (fotoErr) {
-            console.warn("No se pudo subir la foto del arqueo:", fotoErr);
           }
+          alert("Cierre exitoso.");
+          window.location.reload();
+        } else if (data.error && data.error.includes("bloqueada temporalmente") && intento < 3) {
+          // Reintento automático si la DB estaba bloqueada por OneDrive
+          console.warn(`[CIERRE] Reintentando cierre (intento ${intento + 1}/3)...`);
+          await new Promise(r => setTimeout(r, 2000));
+          return intentarCierre(intento + 1);
+        } else {
+          alert("Error: " + data.error);
         }
-        alert("Cierre exitoso.");
-        window.location.reload();
-      } else {
-        alert("Error: " + data.error);
-      }
-    } catch (error) { console.error(error); alert("Error de conexión"); }
+      } catch (error) { console.error(error); alert("Error de conexión"); }
+    };
+
+    await intentarCierre();
   };
 
   if (!resumen) return <div className="p-10 text-center">Cargando cierre general...</div>;

@@ -112,9 +112,64 @@ const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CR
     }
 });
 
-// Helpers Async
+// --- FIX: Asegurar permisos de escritura antes de operaciones de escritura ---
+let ultimoChequeoPermisos = 0;
+const INTERVALO_CHEQUEO_PERMISOS = 10000; // 10 segundos mínimo entre chequeos
+
+const asegurarPermisosDB = (forzar = false) => {
+    const ahora = Date.now();
+    if (!forzar && (ahora - ultimoChequeoPermisos) < INTERVALO_CHEQUEO_PERMISOS) return;
+    ultimoChequeoPermisos = ahora;
+    try {
+        quitarReadonlyWindows(dbPath);
+        [dbPath + "-journal", dbPath + "-wal", dbPath + "-shm"].forEach(f => {
+            try { if (fs.existsSync(f)) quitarReadonlyWindows(f); } catch (_) { }
+        });
+    } catch (e) {
+        console.warn("[DB] Error asegurando permisos:", e.message);
+    }
+};
+
+// Chequeo periódico: cada 60 segundos mantener permisos de escritura
+// Esto previene que OneDrive re-marque los archivos como solo lectura
+setInterval(() => {
+    try {
+        if (fs.existsSync(dbPath)) asegurarPermisosDB();
+    } catch (_) { }
+}, 60000);
+
+// Helpers Async con retry automático para SQLITE_READONLY
+const MAX_READONLY_RETRIES = 3;
+const READONLY_RETRY_DELAY = 500; // ms
+
+const esErrorReadonly = (err) => {
+    if (!err) return false;
+    const msg = (err.message || '').toUpperCase();
+    return msg.includes('SQLITE_READONLY') || err.code === 'SQLITE_READONLY' || (err.errno === 8);
+};
+
+const esperar = (ms) => new Promise(r => setTimeout(r, ms));
+
 const dbRun = (sql, params = []) => new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) { err ? reject(err) : resolve(this); });
+    // Chequeo preventivo ligero (solo si pasaron 10 seg desde el último)
+    const sqlUpper = sql.trim().toUpperCase();
+    if (sqlUpper.startsWith('BEGIN')) {
+        asegurarPermisosDB(); // chequeo con caché temporal
+    }
+    const intentar = (intento) => {
+        db.run(sql, params, function (err) {
+            if (err && esErrorReadonly(err) && intento < MAX_READONLY_RETRIES) {
+                console.warn(`[DB-RETRY] SQLITE_READONLY en intento ${intento + 1}, quitando permisos y reintentando... SQL: ${sql.substring(0, 60)}`);
+                asegurarPermisosDB(true); // forzar chequeo en retry
+                setTimeout(() => intentar(intento + 1), READONLY_RETRY_DELAY);
+            } else if (err) {
+                reject(err);
+            } else {
+                resolve(this);
+            }
+        });
+    };
+    intentar(0);
 });
 const dbGet = (sql, params = []) => new Promise((resolve, reject) => {
     db.get(sql, params, (err, row) => { err ? reject(err) : resolve(row); });
@@ -1217,6 +1272,8 @@ app.get("/api/cierre/cigarrillos", async (req, res) => {
 app.post("/api/cierres_unificado", async (req, res) => {
     const { tipo, total_efectivo_real, monto_retiro, observacion, total_ventas, total_gastos, nuevo_inicio_manual } = req.body;
     try {
+        // FIX: Asegurar permisos ANTES de iniciar la transacción del cierre
+        asegurarPermisosDB(true);
         await dbRun("BEGIN TRANSACTION");
         await dbRun("INSERT INTO historial_cierres (tipo, total_ventas, total_gastos, total_efectivo_real, monto_retiro, observacion, fecha) VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))",
             [tipo || 'General', total_ventas || 0, total_gastos || 0, total_efectivo_real, monto_retiro, observacion]);
@@ -1243,7 +1300,16 @@ app.post("/api/cierres_unificado", async (req, res) => {
         }
         await dbRun("COMMIT");
         res.json({ success: true });
-    } catch (e) { await dbRun("ROLLBACK"); res.status(500).json({ error: e.message }); }
+    } catch (e) {
+        try { await dbRun("ROLLBACK"); } catch (_) { }
+        // Si fue READONLY, intentar arreglar permisos para la próxima vez
+        if (esErrorReadonly(e)) {
+            console.error("[CIERRE] Error SQLITE_READONLY durante cierre de caja. Reintentando arreglar permisos...");
+            asegurarPermisosDB();
+            return res.status(500).json({ error: "La base de datos estaba bloqueada temporalmente (posible sincronización de OneDrive). Por favor, intentá de nuevo en unos segundos." });
+        }
+        res.status(500).json({ error: e.message });
+    }
 });
 
 // PROMOS
