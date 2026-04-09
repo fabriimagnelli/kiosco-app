@@ -690,7 +690,7 @@ function Ventas() {
                 value={manualPrecio}
                 onChange={e => setManualPrecio(e.target.value)}
             />
-            <button type="submit" className="bg-slate-900 text-white font-bold px-4 py-1 rounded-lg hover:bg-slate-800">
+            <button type="submit" className="bg-slate-900 text-white font-normal px-4 py-1 rounded-lg hover:bg-slate-800">
                 Agregar
             </button>
         </form>
@@ -700,23 +700,28 @@ function Ventas() {
              <button 
                key={i} 
                onClick={() => agregarAlCarrito(prod)}
-               className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 hover:border-blue-400 hover:shadow-md transition-all flex flex-col justify-between text-left group h-fit"
+               className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 hover:border-blue-400 hover:shadow-md transition-all flex flex-col justify-between text-left group h-[120px]"
+               title={prod.nombre}
              >
-               <div>
-                 <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${prod.tipo === 'Cigarrillo' ? 'bg-orange-100 text-orange-600' : prod.tipo === 'Promo' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
-                    {prod.tipo}
-                 </span>
-                 <p className="font-bold text-slate-700 mt-2 leading-tight group-hover:text-blue-600">{prod.nombre}</p>
-                 <p className="text-xs text-slate-400 mt-1">Stock: {prod.stock}</p>
+               {/* Fila superior: Nombre + Stock */}
+               <div className="flex items-start justify-between gap-2 min-w-0 w-full">
+                 <p className="font-bold text-slate-700 leading-tight group-hover:text-blue-600 line-clamp-2 min-w-0">{prod.nombre}</p>
+                 <span className="text-xs text-slate-400 whitespace-nowrap shrink-0">Stock: {prod.stock}</span>
                </div>
-               {prod.tipo === 'Cigarrillo' && prod.precio_qr && prod.precio_qr !== prod.precio ? (
-                 <div className="mt-3">
-                   <p className={`text-xl font-black ${['Mercado Pago', 'Débito', 'Transferencia'].includes(metodo) ? 'text-slate-400 text-sm line-through' : 'text-green-700'}`}>$ {prod.precio} <span className="text-[10px] font-normal">Efvo</span></p>
-                   <p className={`text-xl font-black ${['Mercado Pago', 'Débito', 'Transferencia'].includes(metodo) ? 'text-blue-600' : 'text-slate-400 text-sm line-through'}`}>$ {prod.precio_qr} <span className="text-[10px] font-normal">Digital</span></p>
-                 </div>
-               ) : (
-               <p className="text-xl font-extrabold text-slate-800 mt-3">$ {prod.precio}</p>
-               )}
+               {/* Fila inferior: Precio + Badge */}
+               <div className="flex items-end justify-between w-full mt-auto">
+                 {prod.tipo === 'Cigarrillo' && prod.precio_qr && prod.precio_qr !== prod.precio ? (
+                   <div>
+                     <p className={`text-lg font-black leading-tight ${['Mercado Pago', 'Débito', 'Transferencia'].includes(metodo) ? 'text-slate-400 text-xs line-through' : 'text-green-700'}`}>$ {prod.precio} <span className="text-[10px] font-normal">Efvo</span></p>
+                     <p className={`text-lg font-black leading-tight ${['Mercado Pago', 'Débito', 'Transferencia'].includes(metodo) ? 'text-blue-600' : 'text-slate-400 text-xs line-through'}`}>$ {prod.precio_qr} <span className="text-[10px] font-normal">Digital</span></p>
+                   </div>
+                 ) : (
+                   <p className="text-xl font-extrabold text-slate-800">$ {prod.precio}</p>
+                 )}
+                 <span className={`text-[10px] font-bold px-2 py-1 rounded-full shrink-0 ${prod.tipo === 'Cigarrillo' ? 'bg-orange-100 text-orange-600' : prod.tipo === 'Promo' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
+                   {prod.tipo}
+                 </span>
+               </div>
              </button>
           ))}
         </div>
