@@ -134,7 +134,7 @@ const Layout = ({ children }) => {
   }, [navigate]);
 
   return (
-    <div className="flex h-screen bg-slate-100 overflow-hidden font-sans text-slate-900">
+    <div className="flex h-screen bg-[#f5f5f7] overflow-hidden font-sans text-[#1d1d1f]">
       <Sidebar 
         isOpen={sidebarOpen} 
         toggleSidebar={() => setSidebarOpen(!sidebarOpen)} 
