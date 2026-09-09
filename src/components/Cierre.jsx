@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Archive, Cigarette, History, Calendar, DollarSign, TrendingUp, TrendingDown, ChevronLeft, ShoppingCart, Receipt, ArrowDown, Camera, X, Search, ChevronDown, ChevronUp } from "lucide-react";
 import CierreGeneral from "./CierreGeneral";
 import CierreCigarrillos from "./CierreCigarrillos";
-import { apiFetch, API_BASE } from "../lib/api";
+import { apiFetch, getUploadUrl } from "../lib/api";
 
 function Cierre() {
   const [tabActiva, setTabActiva] = useState("general");
@@ -261,10 +261,10 @@ function Cierre() {
                                 <div className="bg-white rounded-lg border p-4">
                                   <h4 className="text-sm font-bold text-slate-600 mb-2 flex items-center gap-1"><Camera size={14}/> Foto del Arqueo</h4>
                                   <img 
-                                    src={`${API_BASE}/uploads/${c.foto_arqueo}`} 
+                                    src={getUploadUrl(c.foto_arqueo) || ""} 
                                     alt="Arqueo" 
                                     className="max-w-sm rounded-lg border shadow-md cursor-pointer hover:opacity-90"
-                                    onClick={() => window.open(`${API_BASE}/uploads/${c.foto_arqueo}`, '_blank')}
+                                    onClick={() => window.open(getUploadUrl(c.foto_arqueo) || '', '_blank')}
                                   />
                                 </div>
                               )}

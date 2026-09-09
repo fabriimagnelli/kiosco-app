@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Package, Plus, Trash2, Edit, Search, Barcode, DollarSign, Settings, Check, X, Upload, FileSpreadsheet, Download, Image, History, Tag, Printer, Camera, AlertTriangle, ChevronDown, ChevronUp, Weight } from "lucide-react";
-import { apiFetch, API_BASE } from "../lib/api";
+import { apiFetch, exportProductosCsv, getUploadUrl } from "../lib/api";
 
 const UNIDADES_MEDIDA = [
   { value: 'unidad', label: 'Unidad (u.)' },
@@ -162,7 +162,7 @@ function Productos() {
     setStockMinimo(p.stock_minimo ?? 5); setUnidadMedida(p.unidad_medida || "unidad");
     setModoEdicion(true); setIdEdicion(p.id);
     setImagenFile(null);
-    setImagenPreview(p.imagen ? `${API_BASE}/uploads/${p.imagen}` : null);
+    setImagenPreview(p.imagen ? getUploadUrl(p.imagen) : null);
     // Cargar códigos extra
     try {
       const res = await apiFetch(`/api/productos/${p.id}/codigos`);
@@ -285,7 +285,12 @@ function Productos() {
     finally { setCsvImporting(false); }
   };
 
-  const exportarCSV = () => { window.open(`${API_BASE}/api/productos/exportar/csv`, '_blank'); };
+  const exportarCSV = async () => {
+    const result = await exportProductosCsv();
+    if (!result?.ok && !result?.body?.canceled) {
+      alert(result?.body?.error || "No se pudo exportar el archivo CSV");
+    }
+  };
 
   // --- Etiquetas ---
   const toggleEtiqueta = (prod) => {
@@ -582,7 +587,7 @@ function Productos() {
                           <td className="p-4">
                             <div className="flex items-center gap-3">
                               {prod.imagen ? (
-                                <img src={`${API_BASE}/uploads/${prod.imagen}`} alt="" className="w-10 h-10 rounded-lg object-cover border border-slate-200 flex-shrink-0" />
+                                <img src={getUploadUrl(prod.imagen)} alt="" className="w-10 h-10 rounded-lg object-cover border border-slate-200 flex-shrink-0" />
                               ) : (
                                 <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center text-slate-400 flex-shrink-0 border border-slate-200">
                                   <Package size={16} />

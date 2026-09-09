@@ -44,6 +44,18 @@ function Ventas() {
 
   // Ref para foco automático
   const busquedaRef = useRef(null);
+  const cobrarBtnRef = useRef(null);
+  const pagaConRef = useRef(null);
+  const scanBufferRef = useRef("");
+  const scanLastTsRef = useRef(0);
+  const toastTimerRef = useRef(null);
+
+  // Toast rápido para feedback de escaneo
+  const [scanToast, setScanToast] = useState(null);
+  const [modalCobroAbierto, setModalCobroAbierto] = useState(false);
+  const [modalMetodoPago, setModalMetodoPago] = useState("Efectivo");
+  const [modalPagaCon, setModalPagaCon] = useState("");
+  const [guardandoCobro, setGuardandoCobro] = useState(false);
 
   // Datos del negocio para ticket
   const [configNegocio, setConfigNegocio] = useState({ kiosco_nombre: "", kiosco_direccion: "", kiosco_telefono: "" });
@@ -79,11 +91,17 @@ function Ventas() {
         busquedaRef.current.focus();
       }
     };
+
+    if (busquedaRef.current) {
+      busquedaRef.current.focus();
+    }
+
     document.addEventListener('visibilitychange', handleVisibility);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibility);
       if (mpPollingRef.current) clearInterval(mpPollingRef.current);
       if (mpTimeoutRef.current) clearTimeout(mpTimeoutRef.current);
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     };
   }, [location.state]);
 
@@ -137,6 +155,38 @@ function Ventas() {
                 setCarrito(nuevoCarrito);
             }
         });
+  };
+
+  const mostrarToastRapido = (texto, tipo = "err") => {
+    setScanToast({ texto, tipo });
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setScanToast(null), 1800);
+  };
+
+  const irACobrarRapido = () => {
+    if (carrito.length === 0) {
+      mostrarToastRapido("El carrito está vacío", "warn");
+      return;
+    }
+    cobrarBtnRef.current?.click();
+  };
+
+  const abrirModalCobro = () => {
+    if (carrito.length === 0) {
+      mostrarToastRapido("El carrito está vacío", "warn");
+      return;
+    }
+    setModalCobroAbierto(true);
+    setModalMetodoPago("Efectivo");
+    setModalPagaCon("");
+  };
+
+  const cerrarModalCobro = () => {
+    if (guardandoCobro) return;
+    setModalCobroAbierto(false);
+    setModalMetodoPago("Efectivo");
+    setModalPagaCon("");
+    setTimeout(() => busquedaRef.current?.focus(), 60);
   };
 
   const agregarAlCarrito = (prod) => {
@@ -585,7 +635,7 @@ function Ventas() {
 
   // Buscar por código de barras (incluye secundarios) al presionar Enter
   const buscarPorCodigo = async (codigo) => {
-    if (!codigo || codigo.length < 3) return;
+    if (!codigo || codigo.length < 2) return false;
     try {
       const res = await apiFetch(`/api/buscar_codigo/${encodeURIComponent(codigo.trim())}`);
       const data = await res.json();
@@ -599,6 +649,28 @@ function Ventas() {
     return false;
   };
 
+  const buscarYAgregarPorCodigo = async (codigo) => {
+    const valor = (codigo || "").trim();
+    if (!valor) return false;
+
+    // Prioridad 1: coincidencia exacta local por código principal
+    const exactoLocal = productos.find(p => p.codigo_barras && String(p.codigo_barras).trim() === valor);
+    if (exactoLocal) {
+      agregarAlCarrito(exactoLocal);
+      setBusqueda("");
+      return true;
+    }
+
+    // Prioridad 2: búsqueda en SQLite (incluye códigos secundarios)
+    const found = await buscarPorCodigo(valor);
+    if (found) {
+      setBusqueda("");
+      return true;
+    }
+
+    return false;
+  };
+
   const handleBusquedaKeyDown = async (e) => {
     if (e.key === 'Enter') {
       // Usar el valor real del input (e.target.value) en vez del estado,
@@ -608,35 +680,98 @@ function Ventas() {
       if (!valorActual) return;
       e.preventDefault();
 
-      // Filtrar productos con el valor actual del input
+      const foundByCode = await buscarYAgregarPorCodigo(valorActual);
+      if (foundByCode) return;
+
+      // Fallback para búsqueda manual por nombre
       const filtrados = productos.filter(p =>
         p.nombre.toLowerCase().includes(valorActual.toLowerCase()) ||
         (p.codigo_barras && p.codigo_barras.includes(valorActual))
       );
-
-      // Si hay exactamente 1 resultado en filtro local, agregarlo
-      if (filtrados.length === 1) {
+      if (filtrados.length > 0) {
         agregarAlCarrito(filtrados[0]);
         setBusqueda("");
         return;
       }
 
-      // Buscar coincidencia exacta por código de barras
-      const exacto = productos.find(p => p.codigo_barras && p.codigo_barras === valorActual);
-      if (exacto) {
-        agregarAlCarrito(exacto);
-        setBusqueda("");
-        return;
-      }
-
-      // Si no, buscar por código secundario en el servidor
-      const found = await buscarPorCodigo(valorActual);
-      if (!found && filtrados.length > 0) {
-        agregarAlCarrito(filtrados[0]);
-        setBusqueda("");
-      }
+      setBusqueda("");
+      errorSound();
+      mostrarToastRapido("Producto no encontrado", "err");
     }
   };
+
+  useEffect(() => {
+    const isEditableTarget = (target) => {
+      if (!target || !(target instanceof HTMLElement)) return false;
+      const tag = target.tagName;
+      return target.isContentEditable || tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+    };
+
+    const handleGlobalKeyDown = async (e) => {
+      const target = e.target;
+      const editable = isEditableTarget(target);
+      const busquedaEl = busquedaRef.current;
+      const focusedBusqueda = busquedaEl && document.activeElement === busquedaEl;
+
+      if (e.key === "F12") {
+        e.preventDefault();
+        irACobrarRapido();
+        return;
+      }
+
+      if (e.key === " " && focusedBusqueda && !busqueda.trim()) {
+        e.preventDefault();
+        irACobrarRapido();
+        return;
+      }
+
+      if ((e.key === "Delete" || e.key === "Supr") && !editable) {
+        if (carrito.length > 0) {
+          e.preventDefault();
+          setCarrito((prev) => prev.slice(0, -1));
+        }
+        return;
+      }
+
+      // Captura global para lectores de código de barras (teclado wedge)
+      if (e.key === "Enter") {
+        const rawBuffer = scanBufferRef.current.trim();
+        const inputValue = (busquedaEl?.value || "").trim();
+        const code = rawBuffer || inputValue;
+
+        scanBufferRef.current = "";
+        scanLastTsRef.current = 0;
+
+        // Enter sobre el input principal lo resuelve handleBusquedaKeyDown
+        if (focusedBusqueda) return;
+
+        if (code.length >= 2) {
+          e.preventDefault();
+          const found = await buscarYAgregarPorCodigo(code);
+          setBusqueda("");
+          if (!found) {
+            errorSound();
+            mostrarToastRapido("Producto no encontrado", "err");
+          }
+          if (busquedaEl) busquedaEl.focus();
+        }
+        return;
+      }
+
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      if (e.key.length !== 1) return;
+
+      const now = Date.now();
+      if (now - scanLastTsRef.current > 80) {
+        scanBufferRef.current = "";
+      }
+      scanLastTsRef.current = now;
+      scanBufferRef.current += e.key;
+    };
+
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, [busqueda, carrito.length, productos]);
 
   const subtotal = carrito.reduce((acc, item) => {
     const bruto = item.precio * item.cantidad;
@@ -645,6 +780,58 @@ function Ventas() {
   }, 0);
   const descuentoNum = descuentoTipo === '%' ? (subtotal * (parseFloat(descuento) || 0) / 100) : (parseFloat(descuento) || 0);
   const total = Math.max(0, subtotal - descuentoNum);
+  const modalPagaConNum = parseFloat(modalPagaCon) || 0;
+  const vuelto = Math.max(0, modalPagaConNum - total);
+  const esPagoEfectivo = modalMetodoPago === "Efectivo";
+
+  const confirmarCobroModal = async () => {
+    if (guardandoCobro || carrito.length === 0) return;
+
+    if (esPagoEfectivo && modalPagaConNum > 0 && modalPagaConNum < total) {
+      mostrarToastRapido("El monto es menor al total", "warn");
+      return;
+    }
+
+    setGuardandoCobro(true);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      console.log("[POS] Venta simulada", {
+        items: carrito,
+        total,
+        metodo_pago: modalMetodoPago,
+        paga_con: esPagoEfectivo ? modalPagaConNum : null,
+        vuelto: esPagoEfectivo ? vuelto : 0,
+      });
+
+      successSound();
+      mostrarToastRapido("Venta registrada correctamente", "ok");
+
+      setModalCobroAbierto(false);
+      setCarrito([]);
+      setClienteSelec("");
+      setPagoAnticipado("");
+      setDescuento("");
+      setNotas("");
+      setMetodo("Efectivo");
+      setPagoMixto(false);
+      setMixtoMonto1("");
+      setMixtoMetodo1("Efectivo");
+      setMixtoMetodo2("Mercado Pago");
+      setModalMetodoPago("Efectivo");
+      setModalPagaCon("");
+
+      setTimeout(() => busquedaRef.current?.focus(), 80);
+    } finally {
+      setGuardandoCobro(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!modalCobroAbierto) return;
+    if (esPagoEfectivo) {
+      setTimeout(() => pagaConRef.current?.focus(), 60);
+    }
+  }, [modalCobroAbierto, esPagoEfectivo]);
 
   return (
     <div className="flex flex-col lg:flex-row h-full bg-[#f5f5f7] p-2 md:p-4 gap-3 md:gap-4 overflow-hidden">
@@ -666,11 +853,13 @@ function Ventas() {
           <input 
             ref={busquedaRef}
             className="w-full outline-none text-base bg-transparent" 
-            placeholder="Buscar producto o escanear código..." 
+            placeholder="Escanear código o buscar producto..." 
             value={busqueda}
             onChange={e => setBusqueda(e.target.value)}
             onKeyDown={handleBusquedaKeyDown}
             autoFocus
+            inputMode="text"
+            autoComplete="off"
           />
         </div>
 
@@ -1006,13 +1195,93 @@ function Ventas() {
             )}
 
             <button
-                onClick={confirmarVenta}
+              ref={cobrarBtnRef}
+                onClick={abrirModalCobro}
                 className={`w-full py-3 rounded-xl font-medium text-white text-sm transition-all active:scale-[0.98] ${ticketEditando ? 'bg-orange-500 hover:bg-orange-600' : 'bg-[#007aff] hover:bg-[#0071e3]'}`}
             >
-                {ticketEditando ? 'CONFIRMAR CORRECCIÓN' : (metodo === 'Fiado' ? 'CONFIRMAR FIADO' : 'CONFIRMAR VENTA')}
+                {ticketEditando ? 'COBRAR CORRECCIÓN' : 'COBRAR'}
             </button>
         </div>
       </div>
+
+      {/* MODAL COBRO RÁPIDO */}
+      {modalCobroAbierto && (
+        <div className="fixed inset-0 z-[85] flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm" onClick={cerrarModalCobro}>
+          <div className="w-full max-w-md rounded-2xl border border-white/70 bg-white/70 p-5 shadow-2xl backdrop-blur-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <CreditCard size={18} className="text-emerald-600" /> Cobro
+              </h3>
+              <button
+                type="button"
+                onClick={cerrarModalCobro}
+                className="rounded-lg p-1 text-slate-400 transition hover:bg-white hover:text-slate-700"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="rounded-xl border border-white/80 bg-white/80 p-4 text-center">
+              <p className="text-xs uppercase tracking-wide text-slate-500">Total a Pagar</p>
+              <p className="text-4xl font-black tracking-tight text-slate-900">$ {total.toFixed(0)}</p>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              <div>
+                <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Método de Pago</label>
+                <select
+                  className="w-full rounded-lg border border-slate-200 bg-white p-2 text-sm font-semibold text-slate-700"
+                  value={modalMetodoPago}
+                  onChange={(e) => {
+                    setModalMetodoPago(e.target.value);
+                    if (e.target.value !== "Efectivo") setModalPagaCon("");
+                  }}
+                >
+                  <option value="Efectivo">Efectivo</option>
+                  <option value="Mercado Pago">Mercado Pago</option>
+                  <option value="Fiado">Fiado</option>
+                </select>
+              </div>
+
+              {esPagoEfectivo && (
+                <div className="space-y-2">
+                  <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Paga con: $</label>
+                  <input
+                    ref={pagaConRef}
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={modalPagaCon}
+                    onChange={(e) => setModalPagaCon(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        confirmarCobroModal();
+                      }
+                    }}
+                    placeholder="Ej: 10000"
+                    className="w-full rounded-lg border border-slate-200 bg-white p-2.5 text-lg font-bold text-slate-800 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                  />
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-emerald-600">Vuelto</p>
+                    <p className="text-2xl font-black text-emerald-700">$ {vuelto.toFixed(0)}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <button
+              type="button"
+              disabled={guardandoCobro}
+              onClick={confirmarCobroModal}
+              className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 py-3 text-sm font-bold text-white transition hover:brightness-110 disabled:opacity-60"
+            >
+              {guardandoCobro ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />}
+              {guardandoCobro ? "Guardando..." : "Confirmar Venta"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* MODAL DE ÉXITO POST-VENTA */}
       {modalExito && (
@@ -1187,6 +1456,20 @@ function Ventas() {
             >
               Cerrar
             </button>
+          </div>
+        </div>
+      )}
+
+      {scanToast && (
+        <div className="fixed right-4 top-4 z-[90] animate-in fade-in slide-in-from-top-2">
+          <div className={`rounded-xl border px-4 py-3 text-sm font-semibold backdrop-blur-xl shadow-lg ${
+            scanToast.tipo === "ok"
+              ? "border-emerald-200 bg-emerald-100/90 text-emerald-700"
+              : scanToast.tipo === "warn"
+              ? "border-amber-200 bg-amber-100/90 text-amber-700"
+              : "border-rose-200 bg-rose-100/90 text-rose-700"
+          }`}>
+            {scanToast.texto}
           </div>
         </div>
       )}

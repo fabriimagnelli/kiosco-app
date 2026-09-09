@@ -7,6 +7,7 @@ const { exec, execSync } = require("child_process");
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const { URLSearchParams } = require("url");
 let multer, sharp;
 try {
     multer = require("multer");
@@ -17,6 +18,8 @@ try {
 
 const app = express();
 const port = 3001;
+
+const esArchivoTemporalWalShm = (filePath = "") => /-(wal|shm)$/i.test(filePath);
 
 // Secreto JWT — se regenera en cada inicio del servidor (sesiones expiran al reiniciar)
 const JWT_SECRET = crypto.randomBytes(64).toString("hex");
@@ -66,6 +69,7 @@ if (process.env.IS_ELECTRON === "true" && process.env.USER_DATA_PATH) {
 // NOTA: en Windows, fs.chmodSync NO quita el atributo "Solo lectura" del sistema de archivos.
 // Se usa 'attrib -R' que es el comando nativo de Windows para esto.
 const quitarReadonlyWindows = (filePath) => {
+    if (esArchivoTemporalWalShm(filePath)) return;
     try {
         // Método 1: chmodSync (funciona en Linux/Mac, parcialmente en Windows)
         fs.chmodSync(filePath, 0o666);
@@ -88,8 +92,8 @@ if (fs.existsSync(dbPath)) {
     } catch (e) {
         console.warn("[DB] No se pudo cambiar permisos de la base de datos:", e.message);
     }
-    // También quitar readonly de archivos journal/WAL si existen
-    [dbPath + "-journal", dbPath + "-wal", dbPath + "-shm"].forEach(f => {
+    // Solo se ajusta journal; SQLite administra -wal y -shm automáticamente
+    [dbPath + "-journal"].forEach(f => {
         try {
             if (fs.existsSync(f)) quitarReadonlyWindows(f);
         } catch (_) { }
@@ -122,7 +126,7 @@ const asegurarPermisosDB = (forzar = false) => {
     ultimoChequeoPermisos = ahora;
     try {
         quitarReadonlyWindows(dbPath);
-        [dbPath + "-journal", dbPath + "-wal", dbPath + "-shm"].forEach(f => {
+        [dbPath + "-journal"].forEach(f => {
             try { if (fs.existsSync(f)) quitarReadonlyWindows(f); } catch (_) { }
         });
     } catch (e) {
@@ -151,11 +155,6 @@ const esErrorReadonly = (err) => {
 const esperar = (ms) => new Promise(r => setTimeout(r, ms));
 
 const dbRun = (sql, params = []) => new Promise((resolve, reject) => {
-    // Chequeo preventivo ligero (solo si pasaron 10 seg desde el último)
-    const sqlUpper = sql.trim().toUpperCase();
-    if (sqlUpper.startsWith('BEGIN')) {
-        asegurarPermisosDB(); // chequeo con caché temporal
-    }
     const intentar = (intento) => {
         db.run(sql, params, function (err) {
             if (err && esErrorReadonly(err) && intento < MAX_READONLY_RETRIES) {
@@ -177,6 +176,45 @@ const dbGet = (sql, params = []) => new Promise((resolve, reject) => {
 const dbAll = (sql, params = []) => new Promise((resolve, reject) => {
     db.all(sql, params, (err, rows) => { err ? reject(err) : resolve(rows); });
 });
+
+// Migraciones puntuales para bases de clientes antiguas (sin pérdida de datos)
+const runStartupSchemaMigrations = async () => {
+    try {
+        await dbRun(`CREATE TABLE IF NOT EXISTS licencias (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            licencia_key TEXT,
+            hardware_id TEXT,
+            estado TEXT DEFAULT 'activa',
+            fecha_vencimiento TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
+
+        const configColumns = await dbAll("PRAGMA table_info(configuracion)");
+        const hasBackupPendiente = configColumns.some((col) => col.name === "backup_pendiente");
+        if (!hasBackupPendiente) {
+            await dbRun("ALTER TABLE configuracion ADD COLUMN backup_pendiente BOOLEAN DEFAULT 0");
+            console.log("[MIGRACIÓN] Columna configuracion.backup_pendiente creada");
+        }
+
+        const configColumnsAfterBackup = await dbAll("PRAGMA table_info(configuracion)");
+        const hasLastCloudBackupAt = configColumnsAfterBackup.some((col) => col.name === "last_cloud_backup_at");
+        if (!hasLastCloudBackupAt) {
+            await dbRun("ALTER TABLE configuracion ADD COLUMN last_cloud_backup_at TEXT");
+            console.log("[MIGRACIÓN] Columna configuracion.last_cloud_backup_at creada");
+        }
+
+        const configColumnsAfterAt = await dbAll("PRAGMA table_info(configuracion)");
+        const hasLastCloudBackupPath = configColumnsAfterAt.some((col) => col.name === "last_cloud_backup_path");
+        if (!hasLastCloudBackupPath) {
+            await dbRun("ALTER TABLE configuracion ADD COLUMN last_cloud_backup_path TEXT");
+            console.log("[MIGRACIÓN] Columna configuracion.last_cloud_backup_path creada");
+        }
+    } catch (error) {
+        console.error("[MIGRACIÓN] Error aplicando migraciones de esquema:", error.message);
+        throw new Error(`No se pudo migrar la base de datos: ${error.message}`);
+    }
+};
 
 // Mapa de clientes SSE esperando confirmación de pago MP
 // key: external_ref (string), value: Express res object
@@ -204,8 +242,9 @@ const garantizarCajaDiaria = async () => {
         }
 
         console.log(`Iniciando nuevo día. Saldo: $${saldoInicial}`);
-        await dbRun("INSERT INTO caja_diaria (fecha, inicio_caja) VALUES (date('now', 'localtime'), ?)", [saldoInicial]);
-        return { inicio_caja: saldoInicial };
+        await dbRun("INSERT OR IGNORE INTO caja_diaria (fecha, inicio_caja) VALUES (date('now', 'localtime'), ?)", [saldoInicial]);
+        const cajaActual = await dbGet("SELECT * FROM caja_diaria WHERE fecha = date('now', 'localtime')");
+        return cajaActual || { inicio_caja: saldoInicial };
     } catch (e) {
         console.error("Error garantizando caja:", e);
         return { inicio_caja: 0 };
@@ -231,6 +270,14 @@ const initDB = async () => {
         await dbRun(`CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL UNIQUE, password TEXT NOT NULL, rol TEXT DEFAULT 'cajero', activo INTEGER DEFAULT 1)`);
 
         await dbRun(`CREATE TABLE IF NOT EXISTS configuracion (key TEXT PRIMARY KEY, value TEXT)`);
+        await dbRun(`CREATE TABLE IF NOT EXISTS configuracion_licencia (
+            licencia_key TEXT,
+            fecha_vencimiento TEXT,
+            ultima_sincronizacion TEXT,
+            firma_seguridad TEXT
+        )`);
+
+        await runStartupSchemaMigrations();
 
         // Sincronizar version de package.json a la DB automaticamente
         const isElectron = process.env.IS_ELECTRON === 'true';
@@ -477,10 +524,13 @@ const initDB = async () => {
             console.error("Error migrando contraseña:", migErr);
         }
 
-    } catch (e) { console.error("Error initDB:", e); }
+    } catch (e) {
+        console.error("Error initDB:", e);
+        throw e;
+    }
 };
 
-initDB();
+const initDBPromise = initDB();
 
 // --- MIDDLEWARE DE AUTENTICACIÓN JWT ---
 const authMiddleware = (req, res, next) => {
@@ -516,6 +566,42 @@ app.use("/api", (req, res, next) => {
     }
     authMiddleware(req, res, next);
 });
+
+const guardarFotoArqueo = async (cierreId, file) => {
+    if (!upload || !sharp) throw new Error("Subida de imágenes no disponible");
+    if (!file?.buffer) throw new Error("No se envió imagen");
+
+    const filename = `arqueo_${cierreId}_${Date.now()}.webp`;
+    await sharp(file.buffer)
+        .resize(1200, 1200, { fit: "inside" })
+        .webp({ quality: 80 })
+        .toFile(path.join(uploadsPath, filename));
+
+    await dbRun("UPDATE historial_cierres SET foto_arqueo = ? WHERE id = ?", [filename, cierreId]);
+    return { success: true, foto: filename };
+};
+
+const guardarImagenProducto = async (productoId, file) => {
+    if (!upload || !sharp) throw new Error("Subida de imágenes no disponible (multer/sharp no instalados)");
+    if (!file?.buffer) throw new Error("No se envió imagen");
+
+    const filename = `prod_${productoId}_${Date.now()}.webp`;
+    const outputPath = path.join(uploadsPath, filename);
+
+    await sharp(file.buffer)
+        .resize(400, 400, { fit: 'cover', withoutEnlargement: true })
+        .webp({ quality: 80 })
+        .toFile(outputPath);
+
+    const prod = await dbGet("SELECT imagen FROM productos WHERE id=?", [productoId]);
+    if (prod && prod.imagen) {
+        const oldPath = path.join(uploadsPath, prod.imagen);
+        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+    }
+
+    await dbRun("UPDATE productos SET imagen=? WHERE id=?", [filename, productoId]);
+    return { success: true, imagen: filename };
+};
 
 // --- RUTAS API ---
 
@@ -634,20 +720,30 @@ app.get("/api/dashboard", async (req, res) => {
 // REPORTES
 app.get("/api/reportes/ventas_semana", (req, res) => {
     db.all(`SELECT strftime('%d/%m', fecha) as fecha, SUM(precio_total) as total FROM ventas WHERE date(fecha) >= date('now', '-6 days', 'localtime') GROUP BY date(fecha) ORDER BY date(fecha) ASC`, [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(rows);
+        if (err) {
+            console.error("[REPORTES] Error ventas_semana:", err.message);
+            return res.json([]);
+        }
+        res.json(Array.isArray(rows) ? rows : []);
     });
 });
 app.get("/api/reportes/productos_top", (req, res) => {
     db.all(`SELECT producto as name, SUM(cantidad) as value FROM ventas GROUP BY producto ORDER BY value DESC LIMIT 5`, [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(rows);
+        if (err) {
+            console.error("[REPORTES] Error productos_top:", err.message);
+            return res.json([]);
+        }
+        res.json(Array.isArray(rows) ? rows : []);
     });
 });
 app.get("/api/reportes/metodos_pago", (req, res) => {
     db.all(`SELECT metodo_pago as name, SUM(precio_total) as value FROM ventas GROUP BY metodo_pago`, [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(rows.map(r => ({ name: r.name || 'Otros', value: r.value })));
+        if (err) {
+            console.error("[REPORTES] Error metodos_pago:", err.message);
+            return res.json([]);
+        }
+        const safeRows = Array.isArray(rows) ? rows : [];
+        res.json(safeRows.map(r => ({ name: r.name || 'Otros', value: r.value })));
     });
 });
 
@@ -1123,11 +1219,8 @@ app.get("/api/historial_cierres/:id", async (req, res) => {
 if (upload) {
     app.post("/api/cierres/:id/foto_arqueo", upload.single("foto"), async (req, res) => {
         try {
-            if (!req.file) return res.status(400).json({ error: "No se envió imagen" });
-            const filename = `arqueo_${req.params.id}_${Date.now()}.webp`;
-            await sharp(req.file.buffer).resize(1200, 1200, { fit: "inside" }).webp({ quality: 80 }).toFile(path.join(uploadsPath, filename));
-            await dbRun("UPDATE historial_cierres SET foto_arqueo = ? WHERE id = ?", [filename, req.params.id]);
-            res.json({ success: true, foto: filename });
+            const data = await guardarFotoArqueo(req.params.id, req.file);
+            res.json(data);
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 } else {
@@ -1871,25 +1964,8 @@ app.delete("/api/productos/:id", async (req, res) => {
 if (upload && sharp) {
     app.post("/api/productos/:id/imagen", upload.single("imagen"), async (req, res) => {
         try {
-            if (!req.file) return res.status(400).json({ error: "No se envió imagen" });
-            const filename = `prod_${req.params.id}_${Date.now()}.webp`;
-            const outputPath = path.join(uploadsPath, filename);
-
-            // Redimensionar y convertir a webp con sharp
-            await sharp(req.file.buffer)
-                .resize(400, 400, { fit: 'cover', withoutEnlargement: true })
-                .webp({ quality: 80 })
-                .toFile(outputPath);
-
-            // Borrar imagen anterior si existe
-            const prod = await dbGet("SELECT imagen FROM productos WHERE id=?", [req.params.id]);
-            if (prod && prod.imagen) {
-                const oldPath = path.join(uploadsPath, prod.imagen);
-                if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
-            }
-
-            await dbRun("UPDATE productos SET imagen=? WHERE id=?", [filename, req.params.id]);
-            res.json({ success: true, imagen: filename });
+            const data = await guardarImagenProducto(req.params.id, req.file);
+            res.json(data);
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 } else {
@@ -2944,42 +3020,209 @@ app.post("/api/mp/webhook", (req, res) => {
 
 // ============================================================
 
+const buildInternalUrl = (requestPath, query = {}) => {
+    const params = new URLSearchParams();
+    Object.entries(query || {}).forEach(([key, value]) => {
+        if (value === undefined || value === null || value === "") return;
+        if (Array.isArray(value)) {
+            value.forEach((item) => params.append(key, item));
+            return;
+        }
+        params.append(key, String(value));
+    });
+    const qs = params.toString();
+    return qs ? `${requestPath}?${qs}` : requestPath;
+};
+
+const dispatchIpcRequest = async ({ path: requestPath, method = "GET", headers = {}, body, query } = {}) => {
+    await initDBPromise;
+
+    return new Promise((resolve, reject) => {
+        let finished = false;
+        const normalizedHeaders = Object.fromEntries(
+            Object.entries(headers || {}).map(([key, value]) => [String(key).toLowerCase(), value])
+        );
+        const url = buildInternalUrl(requestPath, query);
+        const req = {
+            app,
+            method: method.toUpperCase(),
+            url,
+            originalUrl: url,
+            headers: normalizedHeaders,
+            body,
+            protocol: "electron",
+            secure: true,
+            connection: { remoteAddress: "127.0.0.1" },
+            socket: { remoteAddress: "127.0.0.1" },
+            get(name) {
+                return this.headers[String(name).toLowerCase()];
+            },
+        };
+        const res = {
+            app,
+            locals: {},
+            statusCode: 200,
+            headersSent: false,
+            _headers: {},
+        };
+        const chunks = [];
+
+        const finish = (payload) => {
+            if (finished) return;
+            finished = true;
+            resolve({
+                ok: payload.status >= 200 && payload.status < 300,
+                status: payload.status,
+                headers: payload.headers || {},
+                body: payload.body,
+                bodyType: payload.bodyType || "json",
+                meta: payload.meta || null,
+            });
+        };
+
+        Object.assign(res, {
+            req,
+            setHeader(name, value) {
+                this._headers[String(name).toLowerCase()] = value;
+                return this;
+            },
+            getHeader(name) {
+                return this._headers[String(name).toLowerCase()];
+            },
+            removeHeader(name) {
+                delete this._headers[String(name).toLowerCase()];
+            },
+            status(code) {
+                this.statusCode = code;
+                return this;
+            },
+            json(payload) {
+                this.setHeader("content-type", "application/json; charset=utf-8");
+                finish({ status: this.statusCode, headers: this._headers, body: payload, bodyType: "json" });
+                return this;
+            },
+            send(payload) {
+                if (Buffer.isBuffer(payload)) {
+                    finish({ status: this.statusCode, headers: this._headers, body: payload.toString("base64"), bodyType: "base64" });
+                    return this;
+                }
+                if (typeof payload === "object" && payload !== null) {
+                    return this.json(payload);
+                }
+                finish({ status: this.statusCode, headers: this._headers, body: payload ?? "", bodyType: "text" });
+                return this;
+            },
+            write(chunk) {
+                chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+                return true;
+            },
+            end(chunk) {
+                if (chunk) this.write(chunk);
+                const buffer = chunks.length ? Buffer.concat(chunks) : Buffer.alloc(0);
+                finish({
+                    status: this.statusCode,
+                    headers: this._headers,
+                    body: buffer.length ? buffer.toString("utf-8") : "",
+                    bodyType: "text",
+                });
+                return this;
+            },
+            download(filePath, filename) {
+                const buffer = fs.readFileSync(filePath);
+                this.setHeader("content-disposition", `attachment; filename=${filename || path.basename(filePath)}`);
+                finish({
+                    status: this.statusCode,
+                    headers: this._headers,
+                    body: buffer.toString("base64"),
+                    bodyType: "base64",
+                    meta: { filePath, filename: filename || path.basename(filePath) },
+                });
+                return this;
+            },
+            sendFile(filePath) {
+                const buffer = fs.readFileSync(filePath);
+                finish({
+                    status: this.statusCode,
+                    headers: this._headers,
+                    body: buffer.toString("base64"),
+                    bodyType: "base64",
+                    meta: { filePath },
+                });
+                return this;
+            },
+        });
+
+        Object.setPrototypeOf(req, app.request);
+        Object.setPrototypeOf(res, app.response);
+
+        req.res = res;
+
+        app.handle(req, res, (err) => {
+            if (err) {
+                reject(err);
+                return;
+            }
+            if (!finished) {
+                finish({ status: res.statusCode || 404, headers: res._headers, body: { error: "Ruta no resuelta" }, bodyType: "json" });
+            }
+        });
+    });
+};
+
 // SPA FALLBACK
 app.get(/.*/, (req, res) => {
     res.sendFile(path.join(publicPath, 'index.html'));
 });
 
-const server = app.listen(port, () => { console.log(`Servidor corriendo en http://localhost:${port}`); });
+if (process.env.DISABLE_HTTP_SERVER !== 'true') {
+    initDBPromise
+        .then(() => {
+            const server = app.listen(port, () => { console.log(`Servidor corriendo en http://localhost:${port}`); });
 
-server.on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
-        console.log(`Puerto ${port} en uso. Intentando liberar...`);
-        // Intentar matar el proceso anterior y reintentar
-        const killCmd = process.platform === 'win32'
-            ? `netstat -ano | findstr :${port}`
-            : `lsof -ti:${port}`;
-        exec(killCmd, (error, stdout) => {
-            if (!error && stdout.trim()) {
-                const lines = stdout.trim().split('\n');
-                const pids = [...new Set(lines.map(l => l.trim().split(/\s+/).pop()).filter(p => p && /^\d+$/.test(p)))];
-                pids.forEach(pid => {
-                    try {
-                        if (process.platform === 'win32') {
-                            exec(`taskkill /PID ${pid} /F`, () => { });
+            server.on('error', (err) => {
+                if (err.code === 'EADDRINUSE') {
+                    console.log(`Puerto ${port} en uso. Intentando liberar...`);
+                    const killCmd = process.platform === 'win32'
+                        ? `netstat -ano | findstr :${port}`
+                        : `lsof -ti:${port}`;
+                    exec(killCmd, (error, stdout) => {
+                        if (!error && stdout.trim()) {
+                            const lines = stdout.trim().split('\n');
+                            const pids = [...new Set(lines.map(l => l.trim().split(/\s+/).pop()).filter(p => p && /^\d+$/.test(p)))];
+                            pids.forEach(pid => {
+                                try {
+                                    if (process.platform === 'win32') {
+                                        exec(`taskkill /PID ${pid} /F`, () => { });
+                                    } else {
+                                        process.kill(parseInt(pid), 'SIGTERM');
+                                    }
+                                } catch (e) { }
+                            });
+                            setTimeout(() => {
+                                app.listen(port, () => console.log(`Servidor corriendo en http://localhost:${port} (reintento)`));
+                            }, 1500);
                         } else {
-                            process.kill(parseInt(pid), 'SIGTERM');
+                            console.error(`No se pudo liberar el puerto ${port}. ¿Hay otra instancia abierta?`);
                         }
-                    } catch (e) { }
-                });
-                // Reintentar después de matar
-                setTimeout(() => {
-                    app.listen(port, () => console.log(`Servidor corriendo en http://localhost:${port} (reintento)`));
-                }, 1500);
-            } else {
-                console.error(`No se pudo liberar el puerto ${port}. ¿Hay otra instancia abierta?`);
-            }
+                    });
+                } else {
+                    console.error('Error del servidor:', err);
+                }
+            });
+        })
+        .catch((err) => {
+            console.error('[FATAL] No se pudo inicializar/migrar la base de datos. Se cancela el arranque del servidor.');
+            console.error(err?.message || err);
+            process.exit(1);
         });
-    } else {
-        console.error('Error del servidor:', err);
-    }
-});
+}
+
+module.exports = {
+    app,
+    dbPath,
+    uploadsPath,
+    dispatchIpcRequest,
+    guardarFotoArqueo,
+    guardarImagenProducto,
+    initDBPromise,
+};
