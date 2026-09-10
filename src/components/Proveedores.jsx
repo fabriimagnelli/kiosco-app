@@ -5,6 +5,7 @@ import {
   Clock, CheckCircle, AlertTriangle, RefreshCw, Bell, ShoppingCart, CreditCard
 } from "lucide-react";
 import { apiFetch } from "../lib/api";
+import { useNotify } from "../context/NotificationContext";
 
 const DIAS_SEMANA = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
 const ESTADOS_ORDEN = {
@@ -65,6 +66,7 @@ function Proveedores() {
 // TAB 1: PROVEEDORES (ABM + historial movimientos)
 // ═══════════════════════════════════════════════════════
 function TabProveedores() {
+  const { toast, confirmDialog } = useNotify();
   const [proveedores, setProveedores] = useState([]);
   const [busqueda, setBusqueda] = useState("");
   const [nombre, setNombre] = useState("");
@@ -120,7 +122,7 @@ function TabProveedores() {
 
   const registrarDeuda = async (e) => {
     e.preventDefault();
-    if (!montoDeuda || parseFloat(montoDeuda) <= 0) return alert("Ingresa un monto válido");
+    if (!montoDeuda || parseFloat(montoDeuda) <= 0) return toast("Ingresa un monto válido", "warn");
     setProcesandoDeuda(true);
     try {
       const monto = tipoMovimiento === "pago" ? -parseFloat(montoDeuda) : parseFloat(montoDeuda);
@@ -133,26 +135,26 @@ function TabProveedores() {
         apiFetch(`/api/movimientos_proveedores/${provSeleccionado.id}`).then(r => r.json()).then(setHistorialSeleccionado);
         setMontoDeuda(""); setTipoMovimiento("compra"); setDescripcionDeuda(""); setMostrarFormDeuda(false);
         cargarProveedores();
-      } else { alert("Error: " + (data.error || "No se pudo registrar")); }
-    } catch (error) { alert("Error: " + error.message); }
+      } else { toast("Error: " + (data.error || "No se pudo registrar"), "err"); }
+    } catch (error) { toast("Error: " + error.message, "err"); }
     finally { setProcesandoDeuda(false); }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!nombre) return alert("El nombre es obligatorio");
+    if (!nombre) return toast("El nombre es obligatorio", "warn");
     const provData = { nombre, telefono, direccion, dia_visita: diaVisita, rubro };
     try {
       const url = modoEdicion ? `/api/proveedores/${idEdicion}` : "/api/proveedores";
       const res = await apiFetch(url, { method: modoEdicion ? "PUT" : "POST", body: JSON.stringify(provData) });
       const data = await res.json();
       if (data.success) { cargarProveedores(); cancelarEdicion(); }
-      else alert("Error: " + (data.error || ""));
-    } catch (error) { alert("Error: " + error.message); }
+      else toast("Error: " + (data.error || ""), "err");
+    } catch (error) { toast("Error: " + error.message, "err"); }
   };
 
   const eliminarProveedor = async (id) => {
-    if (!confirm("¿Eliminar este proveedor y todo su historial?")) return;
+    if (!(await confirmDialog("¿Eliminar este proveedor y todo su historial?"))) return;
     await apiFetch(`/api/proveedores/${id}`, { method: "DELETE" });
     cargarProveedores();
   };
@@ -397,6 +399,7 @@ function TabProveedores() {
 // TAB 2: ÓRDENES DE COMPRA (#33)
 // ═══════════════════════════════════════════════════════
 function TabOrdenes() {
+  const { toast, confirmDialog } = useNotify();
   const [ordenes, setOrdenes] = useState([]);
   const [proveedores, setProveedores] = useState([]);
   const [productos, setProductos] = useState([]);
@@ -453,9 +456,9 @@ function TabOrdenes() {
 
   const crearOrden = async (e) => {
     e.preventDefault();
-    if (!proveedorId) return alert("Seleccioná un proveedor");
+    if (!proveedorId) return toast("Seleccioná un proveedor", "warn");
     const itemsValidos = items.filter(i => i.nombre && i.cantidad > 0);
-    if (!itemsValidos.length) return alert("Agregá al menos un item");
+    if (!itemsValidos.length) return toast("Agregá al menos un item", "warn");
     try {
       const res = await apiFetch("/api/ordenes_compra", {
         method: "POST", body: JSON.stringify({ proveedor_id: parseInt(proveedorId), observacion, fecha_entrega: fechaEntrega, items: itemsValidos }),
@@ -465,8 +468,8 @@ function TabOrdenes() {
         setMostrarFormOrden(false); setProveedorId(""); setObservacion(""); setFechaEntrega("");
         setItems([{ nombre: "", cantidad: 1, costo_unitario: 0, producto_id: null, tipo_producto: "producto" }]);
         cargar();
-      } else alert("Error: " + (data.error || ""));
-    } catch (e) { alert("Error: " + e.message); }
+      } else toast("Error: " + (data.error || ""), "err");
+    } catch (e) { toast("Error: " + e.message, "err"); }
   };
 
   const verDetalle = async (id) => {
@@ -482,7 +485,7 @@ function TabOrdenes() {
   };
 
   const eliminarOrden = async (id) => {
-    if (!confirm("¿Eliminar esta orden de compra?")) return;
+    if (!(await confirmDialog("¿Eliminar esta orden de compra?"))) return;
     await apiFetch(`/api/ordenes_compra/${id}`, { method: "DELETE" });
     cargar(); if (ordenDetalle?.id === id) setOrdenDetalle(null);
   };
@@ -498,10 +501,10 @@ function TabOrdenes() {
       });
       const data = await res.json();
       if (data.success) {
-        alert(`Orden recibida. Stock actualizado. Total: ${fmtMoney(data.totalRecibido)}`);
+        toast(`Orden recibida. Stock actualizado. Total: ${fmtMoney(data.totalRecibido)}`, "ok");
         setMostrarRecibir(false); cargar(); verDetalle(ordenDetalle.id);
-      } else alert("Error: " + (data.error || ""));
-    } catch (e) { alert("Error: " + e.message); }
+      } else toast("Error: " + (data.error || ""), "err");
+    } catch (e) { toast("Error: " + e.message, "err"); }
   };
 
   if (loading) return <div className="text-center py-10 text-slate-400">Cargando órdenes...</div>;

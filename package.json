@@ -7,8 +7,9 @@
   "author": "SAC Web Agency",
   "type": "commonjs",
   "scripts": {
-    "dev": "concurrently \"npm run server\" \"vite\"",
-    "server": "nodemon --watch server server/index.js",
+    "dev": "concurrently -k --success first --names \"VITE,ELECTRON\" -c \"cyan,green\" \"npm run renderer\" \"npm run electron:dev\"",
+    "renderer": "vite --host 127.0.0.1 --port 5173 --strictPort",
+    "electron:dev": "wait-on tcp:127.0.0.1:5173 && electron .",
     "build": "vite build",
     "version:patch": "npm version patch --no-git-tag-version",
     "version:minor": "npm version minor --no-git-tag-version",
@@ -18,10 +19,18 @@
     "dist:publish": "npm run build && electron-builder --publish always",
     "dist:win": "npm run build && electron-builder --win",
     "dist:portable": "npm run build && electron-packager . SACWare-Kiosco --platform=win32 --arch=x64 --out=dist_electron --overwrite --asar --extra-resource=server",
+    "clean": "node ./scripts/clean-legacy-files.mjs",
+    "clean:legacy": "npm run clean",
     "lint": "eslint .",
     "preview": "vite preview",
     "postinstall": "electron-builder install-app-deps",
-    "electron:build": "vite build && electron-builder"
+    "electron:build": "vite build && electron-builder",
+    "release": "node ./scripts/release.mjs",
+    "publish": "node ./scripts/release.mjs --publish=true",
+    "release:publish": "node ./scripts/release.mjs --publish=true",
+    "release:patch": "node ./scripts/release.mjs --bump=patch",
+    "release:minor": "node ./scripts/release.mjs --bump=minor",
+    "release:major": "node ./scripts/release.mjs --bump=major"
   },
   "repository": {
     "type": "git",
@@ -76,8 +85,10 @@
     }
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.112.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.7.3",
     "express": "^4.22.1",
@@ -85,7 +96,8 @@
     "multer": "^2.0.2",
     "qrcode.react": "^4.2.0",
     "sharp": "^0.34.5",
-    "sqlite3": "^5.1.6"
+    "sqlite3": "^5.1.6",
+    "ws": "^8.21.2"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.1",
@@ -106,6 +118,7 @@
     "recharts": "^2.12.0",
     "tailwindcss": "^3.4.1",
     "vite": "^5.1.0",
+    "wait-on": "^8.0.5",
     "xlsx": "^0.18.5"
   }
 }

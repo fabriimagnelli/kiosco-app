@@ -1,29 +1,29 @@
-import React, { useState, useEffect, useRef } from "react";
-import { Calculator, Save, AlertTriangle, Wallet, Coins, ArrowRight, ArrowDown, Edit2, Check, X, Camera } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { Calculator, Save, AlertTriangle, Wallet, Coins, ArrowRight, ShieldCheck, EyeOff, Edit2, Check, X, DollarSign } from "lucide-react";
 import { apiFetch } from "../lib/api";
+import { useNotify } from "../context/NotificationContext";
+import jsPDF from "jspdf";
 
 function CierreGeneral() {
+  const { toast, confirmDialog } = useNotify();
   const [resumen, setResumen] = useState(null);
-  
-  // Arqueo de Billetes
+
+  // Arqueo de Billetes (igual que Cierre Cigarrillos)
   const [billetes, setBilletes] = useState({
-    10000: "", 2000: "", 1000: "", 500: "", 200: "", 100: "", 50: "", 20: "", 10: ""
+    20000: "", 10000: "", 5000: "", 2000: "", 1000: "", 500: "", 200: "", 100: "", 50: "", 20: "", 10: ""
   });
   const [monedas, setMonedas] = useState("");
-  
-  // Lógica de Retiro
-  const [montoRetiro, setMontoRetiro] = useState(""); 
+
+  const [montoRetiro, setMontoRetiro] = useState("");
   const [observacion, setObservacion] = useState("");
 
-  // NUEVO: Estados para la edición manual del inicio
+  // Estados para Edición Manual del Inicio
   const [inicioManual, setInicioManual] = useState(null);
   const [editandoInicio, setEditandoInicio] = useState(false);
   const [valorTempInicio, setValorTempInicio] = useState("");
 
-  // 24. Foto del arqueo
-  const [fotoArqueo, setFotoArqueo] = useState(null);
-  const [fotoPreview, setFotoPreview] = useState(null);
-  const fotoInputRef = useRef(null);
+  // Cierre Ciego: se oculta lo esperado por el sistema hasta validar el arqueo
+  const [cierreValidado, setCierreValidado] = useState(false);
 
   useEffect(() => {
     apiFetch("/api/cierre/general")
@@ -46,10 +46,10 @@ function CierreGeneral() {
     setBilletes({ ...billetes, [denominacion]: valor });
   };
 
-  // Funciones para manejar la edición manual del inicio
   const activarEdicionInicio = () => {
-    // Si ya hay un manual, usamos ese, sino el calculado
-    const calculado = calcularTotalFisico() - (parseFloat(montoRetiro) || 0);
+    const contado = calcularTotalFisico();
+    const retiro = parseFloat(montoRetiro) || 0;
+    const calculado = contado - retiro;
     setValorTempInicio(inicioManual !== null ? inicioManual : calculado);
     setEditandoInicio(true);
   };
@@ -62,35 +62,74 @@ function CierreGeneral() {
     setEditandoInicio(false);
   };
 
-  const cancelarEdicionInicio = () => {
-    setEditandoInicio(false);
-    // Si estaba vacío o inválido, podrías resetearlo a null si quisieras "deshacer" el manual
-    // Pero aquí solo cancelamos la edición actual.
-  };
-  
   const limpiarManual = () => {
-      setInicioManual(null); // Vuelve al cálculo automático
+      setInicioManual(null);
       setEditandoInicio(false);
   }
 
+  const imprimirTicketZ = ({ esperado, contado, diferencia, fondo, retiro }) => {
+    const doc = new jsPDF({ unit: "mm", format: [80, 200] });
+    const ancho = 80;
+    const margen = 4;
+    let y = 8;
+
+    const centrado = (texto, tam = 10, negrita = true) => {
+      doc.setFontSize(tam);
+      doc.setFont(undefined, negrita ? "bold" : "normal");
+      doc.text(texto, ancho / 2, y, { align: "center" });
+      y += tam * 0.5 + 2;
+    };
+    const fila = (label, valor, negrita = false) => {
+      doc.setFontSize(9);
+      doc.setFont(undefined, negrita ? "bold" : "normal");
+      doc.text(label, margen, y);
+      doc.text(valor, ancho - margen, y, { align: "right" });
+      y += 5;
+    };
+    const linea = () => { doc.setLineDashPattern([1, 1], 0); doc.line(margen, y, ancho - margen, y); y += 5; };
+
+    centrado("REPORTE DE CIERRE", 11);
+    centrado("(TICKET Z)", 11);
+    centrado(new Date().toLocaleString("es-AR"), 8, false);
+    linea();
+
+    fila("Efectivo Esperado:", `$ ${esperado.toLocaleString()}`);
+    fila("Efectivo Contado:", `$ ${contado.toLocaleString()}`);
+    linea();
+
+    const esFaltante = diferencia < 0;
+    fila(`Diferencia (${esFaltante ? "Faltante" : "Sobrante"}):`, `$ ${Math.abs(diferencia).toLocaleString()}`, true);
+    linea();
+
+    fila("Retiro de Dinero:", `$ ${retiro.toLocaleString()}`);
+    fila("Inicio (Fondo) Mañana:", `$ ${fondo.toLocaleString()}`);
+    y += 8;
+
+    doc.setFontSize(9);
+    doc.setFont(undefined, "normal");
+    doc.text("......................................", ancho / 2, y, { align: "center" }); y += 5;
+    doc.text("Firma del Responsable", ancho / 2, y, { align: "center" });
+
+    doc.save(`ticket_z_${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
   const realizarCierre = async () => {
+    if (!cierreValidado) {
+      return toast("Primero validá el arqueo para revelar la diferencia.", "warn");
+    }
+
     const totalFisico = calcularTotalFisico();
     const retiro = parseFloat(montoRetiro) || 0;
-    
-    // Usamos el manual si existe, sino el calculado
+    const esperado = resumen.esperado || 0;
+
+    // Usamos el manual si existe, sino el cálculo automático
     const baseManana = inicioManual !== null ? inicioManual : (totalFisico - retiro);
 
     if (baseManana < 0) {
-      return alert("Error Crítico: El saldo para mañana no puede ser negativo.");
+      return toast("Error Crítico: El saldo para mañana no puede ser negativo.", "err");
     }
 
-    if (!confirm(`
-      ¿CONFIRMAR CIERRE?
-      -------------------------
-      Total Contado: $${totalFisico}
-      Se retira: $${retiro}
-      Inicio Mañana: $${baseManana} ${inicioManual !== null ? '(Modificado Manualmente)' : ''}
-    `)) return;
+    if (!(await confirmDialog(`¿CONFIRMAR CIERRE?\n-------------------------\nTotal Contado: $${totalFisico}\nSe retira: $${retiro}\nInicio Mañana: $${baseManana} ${inicioManual !== null ? '(Modificado Manualmente)' : ''}`))) return;
 
     const intentarCierre = async (intento = 1) => {
       try {
@@ -104,42 +143,26 @@ function CierreGeneral() {
             total_efectivo_real: totalFisico,
             monto_retiro: retiro,
             observacion: observacion,
-            nuevo_inicio_manual: inicioManual
+            nuevo_inicio_manual: inicioManual,
+            total_contado: totalFisico,
+            diferencia_caja: totalFisico - esperado,
           }),
         });
-        
+
         const data = await res.json();
         if (data.success) {
-          // Si hay foto, subirla al cierre recién creado
-          if (fotoArqueo) {
-            try {
-              const cierresRes = await apiFetch("/api/historial_cierres");
-              const cierres = await cierresRes.json();
-              if (cierres.length > 0) {
-                const ultimoCierreId = cierres[0].id;
-                const formData = new FormData();
-                formData.append("foto", fotoArqueo);
-                await apiFetch(`/api/cierres/${ultimoCierreId}/foto_arqueo`, {
-                  method: "POST",
-                  body: formData,
-                  headers: {}
-                });
-              }
-            } catch (fotoErr) {
-              console.warn("No se pudo subir la foto del arqueo:", fotoErr);
-            }
-          }
-          alert("Cierre exitoso.");
-          window.location.reload();
+          imprimirTicketZ({ esperado, contado: totalFisico, diferencia: totalFisico - esperado, fondo: baseManana, retiro });
+          toast("Cierre exitoso.", "ok");
+          setTimeout(() => window.location.reload(), 1200);
         } else if (data.error && data.error.includes("bloqueada temporalmente") && intento < 3) {
           // Reintento automático si la DB estaba bloqueada por OneDrive
           console.warn(`[CIERRE] Reintentando cierre (intento ${intento + 1}/3)...`);
           await new Promise(r => setTimeout(r, 2000));
           return intentarCierre(intento + 1);
         } else {
-          alert("Error: " + data.error);
+          toast("Error: " + data.error, "err");
         }
-      } catch (error) { console.error(error); alert("Error de conexión"); }
+      } catch (error) { console.error(error); toast("Error de conexión", "err"); }
     };
 
     await intentarCierre();
@@ -147,89 +170,107 @@ function CierreGeneral() {
 
   if (!resumen) return <div className="p-10 text-center">Cargando cierre general...</div>;
 
-  const totalFisico = calcularTotalFisico();
   const esperado = resumen.esperado || 0;
-  const diferencia = esperado - totalFisico;
-  
-  // Cálculo visual: Si hay manual usa ese, si no calcula
-  const quedaEnCaja = inicioManual !== null ? inicioManual : (totalFisico - (parseFloat(montoRetiro) || 0));
+  const totalFisico = calcularTotalFisico();
+  const retiro = parseFloat(montoRetiro) || 0;
+  const diferencia = totalFisico - esperado;
+  const esFaltante = diferencia < 0;
+  const diferenciaClase = esFaltante
+    ? "bg-rose-50/80 text-rose-700 border-rose-200/70"
+    : "bg-emerald-50/80 text-emerald-700 border-emerald-200/70";
+  const quedaEnCaja = inicioManual !== null ? inicioManual : (totalFisico - retiro);
 
   return (
-    <div className="flex flex-col lg:flex-row h-full gap-4 p-4 bg-slate-50 overflow-y-auto">
+    <div className="flex flex-col lg:flex-row h-full gap-4 p-4 bg-[#f5f5f7] overflow-y-auto">
       
       {/* IZQUIERDA: RESUMEN SISTEMA */}
       <div className="w-full lg:w-1/3 space-y-4">
-        <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
-          <h2 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
+        <div className="rounded-2xl border border-white/70 bg-white/65 p-5 shadow-sm backdrop-blur-xl">
+          <h2 className="font-medium text-slate-700 mb-3 flex items-center gap-2">
             <Calculator size={18} className="text-blue-600"/> Resumen General
           </h2>
+          {cierreValidado ? (
           <div className="space-y-2 text-sm">
-            <div className="flex justify-between"><span>Inicial:</span> <span className="font-bold">$ {resumen.saldo_inicial?.toLocaleString()}</span></div>
+            <div className="flex justify-between"><span>Inicial:</span> <span className="font-medium">$ {resumen.saldo_inicial?.toLocaleString()}</span></div>
             <div className="flex justify-between text-green-600">
                 <span className="flex items-center gap-1"><ArrowRight size={12}/> Ventas Efectivo:</span> 
-                <span className="font-bold">+ $ {resumen.ventas?.toLocaleString()}</span>
+                <span className="font-medium">+ $ {resumen.ventas?.toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-green-600">
                 <span className="flex items-center gap-1"><ArrowRight size={12}/> Cobros Efectivo:</span> 
-                <span className="font-bold">+ $ {resumen.cobros?.toLocaleString()}</span>
+                <span className="font-medium">+ $ {resumen.cobros?.toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-red-500">
-                <span>Gastos:</span> <span className="font-bold">- $ {resumen.gastos?.toLocaleString()}</span>
+                <span>Gastos:</span> <span className="font-medium">- $ {resumen.gastos?.toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-red-500">
-                <span>Proveedores:</span> <span className="font-bold">- $ {resumen.proveedores?.toLocaleString()}</span>
+                <span>Proveedores:</span> <span className="font-medium">- $ {resumen.proveedores?.toLocaleString()}</span>
             </div>
-            <hr className="my-2"/>
-            <div className="flex justify-between text-lg font-bold text-slate-800">
+            <hr className="my-2 border-slate-200/80"/>
+            <div className="flex justify-between text-lg font-medium text-slate-800">
               <span>DEBERÍA HABER:</span> <span>$ {esperado.toLocaleString()}</span>
             </div>
           </div>
+          ) : (
+            <div className="flex items-center gap-2 rounded-lg bg-slate-100/80 p-3 text-sm font-medium text-slate-400">
+              <EyeOff size={16}/> Realice el arqueo de billetes y valide para ver los resultados
+            </div>
+          )}
         </div>
         
         {/* INFO DIGITAL */}
-        <div className="bg-slate-800 text-white p-5 rounded-xl shadow-md border border-slate-700">
+        <div className="rounded-2xl border border-violet-200/60 bg-gradient-to-br from-violet-50/85 via-white/70 to-indigo-50/80 p-5 shadow-sm backdrop-blur-xl">
             <div className="flex justify-between items-start mb-2">
-                <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400">Total Digital Hoy</h3>
-                <Wallet className="text-purple-400" size={20}/>
+            <h3 className="text-xs font-medium uppercase tracking-widest text-slate-500">Total Digital Hoy</h3>
+            <Wallet className="text-violet-500" size={20}/>
             </div>
-            <p className="text-3xl font-bold text-purple-400">$ {resumen.digital?.toLocaleString()}</p>
+          <p className="text-3xl font-medium text-violet-700">$ {resumen.digital?.toLocaleString()}</p>
         </div>
 
-        {/* Info Diferencia */}
-        <div className={`p-4 rounded-xl border flex items-center gap-3 font-bold ${diferencia >= 0 ? 'bg-green-100 text-green-700 border-green-200' : 'bg-red-100 text-red-700 border-red-200'}`}>
-          <AlertTriangle size={24}/>
-          <div>
-            <p className="text-xs uppercase opacity-70">Diferencia de Caja</p>
-            <p className="text-xl">{diferencia >= 0 ? `+ $${diferencia.toLocaleString()}` : `- $${Math.abs(diferencia).toLocaleString()}`}</p>
+        {/* Info Diferencia (solo visible tras validar) */}
+        {cierreValidado ? (
+          <div className={`rounded-2xl border p-4 backdrop-blur-xl flex items-center gap-3 font-medium ${diferenciaClase}`}>
+            <AlertTriangle size={24}/>
+            <div>
+              <p className="text-xs uppercase opacity-70">Diferencia de Caja</p>
+              <p className="text-xl font-medium">{diferencia >= 0 ? `+ $${diferencia.toLocaleString()}` : `- $${Math.abs(diferencia).toLocaleString()}`}</p>
+              <p className="text-[11px] font-semibold uppercase tracking-wide opacity-80">{esFaltante ? "Faltante" : "Sobrante / Cuadre"}</p>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center gap-2 rounded-2xl border border-slate-200/80 bg-slate-100/80 p-4 text-sm font-medium text-slate-400">
+            <EyeOff size={16}/> Realice el arqueo de billetes y valide para ver los resultados
+          </div>
+        )}
       </div>
 
       {/* DERECHA: CONTEO DE BILLETES Y RETIRO */}
-      <div className="flex-1 bg-white p-5 rounded-xl shadow-lg border border-slate-200">
-        <h2 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+      <div className="flex-1 rounded-2xl border border-white/70 bg-white/65 p-5 shadow-sm backdrop-blur-xl">
+        <h2 className="font-medium text-slate-800 mb-4 flex items-center gap-2">
           <Wallet size={20} className="text-green-600"/> Arqueo de Caja
         </h2>
 
         {/* 1. GRILLA BILLETES */}
         <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 mb-4">
-          {[10000, 2000, 1000, 500, 200, 100, 50, 20, 10].map((val) => (
-            <div key={val} className="bg-slate-50 p-2 rounded border border-slate-200 text-center">
-              <label className="block text-xs font-bold text-slate-500 mb-1">${val}</label>
-              <input 
-                type="number" 
-                className="w-full text-center font-bold text-slate-800 bg-white border rounded py-1 focus:ring-2 focus:ring-blue-400 outline-none"
+          {[20000, 10000, 5000, 2000, 1000, 500, 200, 100, 50, 20, 10].map((val) => (
+            <div key={val} className="rounded-xl border border-white/75 bg-white/70 p-2 text-center backdrop-blur-sm">
+              <label className="block text-xs font-medium text-slate-500 mb-1">${val}</label>
+              <input
+                type="number"
+                disabled={cierreValidado}
+                className="w-full rounded-md border-0 bg-slate-100/80 py-1 text-center font-medium text-slate-800 outline-none focus:ring-2 focus:ring-sky-300 disabled:opacity-60"
                 placeholder="0"
                 value={billetes[val]}
                 onChange={(e) => handleBilleteChange(val, e.target.value)}
               />
             </div>
           ))}
-          <div className="bg-slate-50 p-2 rounded border border-slate-200 text-center col-span-3 sm:col-span-1">
-            <label className="block text-xs font-bold text-slate-500 mb-1 flex justify-center items-center gap-1"><Coins size={10}/> Monedas</label>
-            <input 
-              type="number" 
-              className="w-full text-center font-bold text-slate-800 bg-white border rounded py-1 focus:ring-2 focus:ring-blue-400 outline-none"
+          <div className="col-span-3 rounded-xl border border-white/75 bg-white/70 p-2 text-center backdrop-blur-sm sm:col-span-1">
+            <label className="block text-xs font-medium text-slate-500 mb-1 flex justify-center items-center gap-1"><Coins size={10}/> Monedas</label>
+            <input
+              type="number"
+              disabled={cierreValidado}
+              className="w-full rounded-md border-0 bg-slate-100/80 py-1 text-center font-medium text-slate-800 outline-none focus:ring-2 focus:ring-sky-300 disabled:opacity-60"
               placeholder="$ Total"
               value={monedas}
               onChange={(e) => setMonedas(e.target.value)}
@@ -238,20 +279,21 @@ function CierreGeneral() {
         </div>
 
         {/* TOTAL CONTADO */}
-        <div className="bg-slate-800 text-white p-3 rounded-lg flex justify-between items-center mb-6">
-          <span className="text-sm font-bold uppercase tracking-wider text-slate-300">Total Físico Contado</span>
-          <span className="text-2xl font-bold text-green-400">$ {totalFisico.toLocaleString()}</span>
+        <div className="mb-6 flex items-center justify-between rounded-xl border border-emerald-200/70 bg-gradient-to-r from-emerald-50/90 via-white/80 to-sky-50/80 p-3 backdrop-blur-sm">
+          <span className="text-sm font-medium uppercase tracking-wider text-slate-500">Total Físico Contado</span>
+          <span className="text-2xl font-medium text-emerald-700">$ {totalFisico.toLocaleString()}</span>
         </div>
 
-        {/* 2. SECCIÓN RETIRO Y APERTURA (MODIFICADA) */}
-        <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
-          <h3 className="font-bold text-blue-900 mb-3 flex items-center gap-2"><ArrowDown size={18}/> Retiro y Próxima Apertura</h3>
+        {/* 2. SECCIÓN RETIRO Y APERTURA */}
+        <div className="rounded-2xl border border-sky-100/80 bg-sky-50/65 p-4 backdrop-blur-sm">
+          <h3 className="font-medium text-blue-900 mb-3 flex items-center gap-2"><DollarSign size={18}/> Retiro y Próxima Apertura</h3>
           <div className="flex flex-col md:flex-row gap-4 items-end">
             <div className="flex-1 w-full">
-              <label className="block text-sm font-bold text-blue-800 mb-1">Retiro</label>
-              <input 
-                type="number" 
-                className="w-full p-3 border-2 border-blue-200 rounded-lg text-xl font-bold text-blue-700 focus:outline-none focus:border-blue-500"
+              <label className="block text-sm font-medium text-blue-800 mb-1">Retiro</label>
+              <input
+                type="number"
+                disabled={cierreValidado}
+                className="w-full rounded-lg border-0 bg-white/80 p-3 text-xl font-medium text-blue-700 outline-none focus:ring-2 focus:ring-blue-300 disabled:opacity-60"
                 placeholder="0.00"
                 value={montoRetiro}
                 onChange={(e) => {
@@ -260,17 +302,17 @@ function CierreGeneral() {
                 }}
               />
             </div>
-            
+
             {/* CAJA EDITABLE "QUEDA PARA MAÑANA" */}
-            <div className="flex-1 w-full bg-white p-3 rounded-lg border border-blue-100 relative group">
+            <div className="relative group w-full flex-1 rounded-xl border border-white/80 bg-white/75 p-3 backdrop-blur-sm">
               <span className="block text-xs font-bold text-slate-400 uppercase mb-1">Queda para mañana (Inicio)</span>
-              
+
               {editandoInicio ? (
                   <div className="flex items-center gap-2">
-                      <input 
+                      <input
                         autoFocus
-                        type="number" 
-                        className="w-full p-1 border-b-2 border-blue-500 font-black text-xl text-slate-800 outline-none"
+                        type="number"
+                        className="w-full rounded-md border-0 bg-slate-100/80 p-2 font-medium text-xl text-slate-800 outline-none focus:ring-2 focus:ring-blue-300"
                         value={valorTempInicio}
                         onChange={(e) => setValorTempInicio(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && guardarInicioManual()}
@@ -280,19 +322,21 @@ function CierreGeneral() {
                   </div>
               ) : (
                   <div className="flex justify-between items-center">
-                      <span className={`text-2xl font-black ${quedaEnCaja < 0 ? 'text-red-500' : 'text-slate-700'}`}>
+                      <span className={`text-2xl font-medium ${quedaEnCaja < 0 ? 'text-rose-600' : 'text-slate-700'}`}>
                         $ {quedaEnCaja.toLocaleString()}
                       </span>
-                      <button 
-                        onClick={activarEdicionInicio}
-                        className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
-                        title="Modificar manualmente"
-                      >
-                        <Edit2 size={18}/>
-                      </button>
+                      {!cierreValidado && (
+                        <button
+                          onClick={activarEdicionInicio}
+                          className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                          title="Modificar manualmente"
+                        >
+                          <Edit2 size={18}/>
+                        </button>
+                      )}
                   </div>
               )}
-              
+
               {inicioManual !== null && !editandoInicio && (
                   <span className="absolute top-2 right-10 text-[10px] bg-yellow-100 text-yellow-700 px-1 rounded border border-yellow-200">
                       Manual
@@ -301,7 +345,7 @@ function CierreGeneral() {
             </div>
           </div>
           {quedaEnCaja < 0 && (
-             <p className="text-red-600 text-xs font-bold mt-2 text-center bg-red-100 p-2 rounded">
+             <p className="mt-2 rounded-lg bg-rose-100/90 p-2 text-center text-xs font-medium text-rose-700">
                 CUIDADO: Estás retirando más de lo que contaste.
              </p>
           )}
@@ -309,62 +353,30 @@ function CierreGeneral() {
 
         {/* Observación y Botón */}
         <div className="mt-4">
-          <input 
-            className="w-full p-3 border rounded-lg text-sm mb-4" 
+          <input
+            className="mb-4 w-full rounded-lg border-0 bg-white/80 p-3 text-sm text-slate-700 outline-none ring-1 ring-slate-200/80 focus:ring-2 focus:ring-slate-300"
             placeholder="Observaciones (Opcional)..."
             value={observacion}
             onChange={e => setObservacion(e.target.value)}
           />
 
-          {/* 24. Foto del Arqueo */}
-          <div className="mb-4">
-            <label className="block text-sm font-bold text-slate-600 mb-2 flex items-center gap-1">
-              <Camera size={16} className="text-blue-600"/> Foto del Arqueo (Opcional)
-            </label>
-            <input
-              ref={fotoInputRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files[0];
-                if (file) {
-                  setFotoArqueo(file);
-                  setFotoPreview(URL.createObjectURL(file));
-                }
-              }}
-            />
-            <div className="flex gap-2 items-center">
+          <div className="flex justify-end">
+            {cierreValidado ? (
               <button
-                type="button"
-                onClick={() => fotoInputRef.current?.click()}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors border border-slate-200"
+                onClick={realizarCierre}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-green-600 px-6 py-3 text-sm font-medium text-white shadow-sm transition-colors hover:bg-green-700 active:scale-[0.99]"
               >
-                <Camera size={16}/>
-                {fotoPreview ? 'Cambiar Foto' : 'Tomar / Seleccionar Foto'}
+                <Save size={18}/> CERRAR TURNO
               </button>
-              {fotoPreview && (
-                <button
-                  type="button"
-                  onClick={() => { setFotoArqueo(null); setFotoPreview(null); }}
-                  className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                >
-                  <X size={16}/>
-                </button>
-              )}
-            </div>
-            {fotoPreview && (
-              <img src={fotoPreview} alt="Preview" className="mt-2 max-h-32 rounded-lg border shadow-sm"/>
+            ) : (
+              <button
+                onClick={() => setCierreValidado(true)}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 py-3 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700 active:scale-[0.99]"
+              >
+                <ShieldCheck size={18}/> VALIDAR ARQUEO
+              </button>
             )}
           </div>
-
-          <button 
-            onClick={realizarCierre}
-            className="w-full py-4 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl shadow-lg transition-transform active:scale-95 flex justify-center items-center gap-2"
-          >
-            <Save size={20}/> CERRAR TURNO Y GUARDAR
-          </button>
         </div>
 
       </div>

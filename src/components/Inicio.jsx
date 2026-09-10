@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { DollarSign, ShoppingCart, TrendingDown, AlertTriangle, TrendingUp, Award, PieChart as PieIcon, Download, RefreshCw, X } from "lucide-react";
+import { DollarSign, ShoppingCart, TrendingDown, AlertTriangle, TrendingUp, Award, PieChart as PieIcon, Download, RefreshCw, X, ShieldCheck, KeyRound } from "lucide-react";
 import { apiFetch } from "../lib/api";
+import { useLicenseState } from "../context/LicenseContext";
+import { useNotify } from "../context/NotificationContext";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Legend } from "recharts";
 
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
@@ -18,7 +20,34 @@ const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, per
   );
 };
 
+const ensureArray = (value) => {
+  if (Array.isArray(value)) return value;
+  if (value == null) return [];
+  if (typeof value === "object") {
+    if (Array.isArray(value.data)) return value.data;
+    if (Array.isArray(value.items)) return value.items;
+    if (Array.isArray(value.result)) return value.result;
+    if (Array.isArray(value.results)) return value.results;
+    return [];
+  }
+  return [];
+};
+
+const normalizeDashboardPayload = (payload) => {
+  const safe = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+  return {
+    ventas_hoy: Number(safe.ventas_hoy ?? 0),
+    tickets_hoy: Number(safe.tickets_hoy ?? 0),
+    gastos_hoy: Number(safe.gastos_hoy ?? 0),
+    bajo_stock: ensureArray(safe.bajo_stock),
+    visitas_hoy: ensureArray(safe.visitas_hoy),
+    top_deudas_proveedores: ensureArray(safe.top_deudas_proveedores),
+  };
+};
+
 function Inicio() {
+  const { licenseState, requestRenewalFlow } = useLicenseState() || {};
+  const { toast } = useNotify();
   const [dashboard, setDashboard] = useState(null);
   const [ventasSemana, setVentasSemana] = useState([]);
   const [productosTop, setProductosTop] = useState([]);
@@ -31,24 +60,36 @@ function Inicio() {
   useEffect(() => {
     apiFetch("/api/dashboard")
       .then((res) => res.json())
-      .then(setDashboard)
-      .catch((err) => console.error("Error Dashboard:", err));
+      .then((data) => setDashboard(normalizeDashboardPayload(data)))
+      .catch((err) => {
+        console.error("Error Dashboard:", err);
+        setDashboard(normalizeDashboardPayload({}));
+      });
 
     apiFetch("/api/reportes/ventas_semana")
       .then((res) => res.json())
-      .then(setVentasSemana)
-      .catch((err) => console.error("Error Ventas Semana:", err));
-    
+      .then((data) => setVentasSemana(ensureArray(data)))
+      .catch((err) => {
+        console.error("Error Ventas Semana:", err);
+        setVentasSemana([]);
+      });
+
     apiFetch("/api/reportes/productos_top")
       .then((res) => res.json())
-      .then(setProductosTop)
-      .catch((err) => console.error("Error Top Productos:", err));
+      .then((data) => setProductosTop(ensureArray(data)))
+      .catch((err) => {
+        console.error("Error Top Productos:", err);
+        setProductosTop([]);
+      });
 
     apiFetch("/api/reportes/metodos_pago")
       .then((res) => res.json())
-      .then(setMetodosPago)
-      .catch((err) => console.error("Error Metodos Pago:", err));
-      
+      .then((data) => setMetodosPago(ensureArray(data)))
+      .catch((err) => {
+        console.error("Error Metodos Pago:", err);
+        setMetodosPago([]);
+      });
+
     checkVersionSystem();
   }, []);
 
@@ -69,14 +110,14 @@ function Inicio() {
         const res = await apiFetch("/api/system/update", { method: "POST" });
         const data = await res.json();
         if (data.success) {
-            alert(`Actualizado a ${data.new_version}. Recargando...`);
+            toast(`Actualizado a ${data.new_version}. Recargando...`, "ok");
             window.location.reload();
         } else {
-            alert("Error: " + (data.error || "Intente manualmente."));
+            toast("Error: " + (data.error || "Intente manualmente."), "err");
             setUpdating(false);
         }
     } catch (error) {
-        alert("Error de conexión.");
+        toast("Error de conexión.", "err");
         setUpdating(false);
     }
   };
@@ -87,6 +128,19 @@ function Inicio() {
       if(parts.length === 3) parts[2] += 1;
       return parts.join('.');
   };
+
+  const fechaVencimientoFormateada = licenseState?.fechaVencimiento
+    ? new Date(licenseState.fechaVencimiento).toLocaleDateString("es-AR", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      })
+    : "Sin fecha registrada";
+
+  const ventasSemanaSafe = ensureArray(ventasSemana);
+  const productosTopSafe = ensureArray(productosTop);
+  const metodosPagoSafe = ensureArray(metodosPago);
+  const bajoStockSafe = ensureArray(dashboard?.bajo_stock);
 
   if (!dashboard) return <div className="p-10 text-center text-slate-500">Cargando tablero...</div>;
 
@@ -122,6 +176,31 @@ function Inicio() {
 
       {/* TARJETAS KPI */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/*
+        {licenseState ? (
+          <div className="md:col-span-2 lg:col-span-4 overflow-hidden rounded-3xl border border-cyan-200/60 bg-[linear-gradient(135deg,rgba(236,254,255,0.92),rgba(255,255,255,0.96),rgba(240,253,250,0.92))] p-5 shadow-[0_20px_60px_rgba(8,145,178,0.12)] backdrop-blur">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex items-start gap-4">
+                <div className="rounded-2xl border border-cyan-200 bg-cyan-100/80 p-3 text-cyan-700 shadow-sm">
+                  <ShieldCheck size={26} />
+                </div>
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-cyan-700">Licencia de uso</p>
+                  <h2 className="mt-2 text-xl font-bold tracking-tight text-slate-800">Estado: {licenseState.activa ? "Activa" : "Inactiva"}</h2>
+                  <p className="mt-1 text-sm text-slate-500">Vence el {fechaVencimientoFormateada}. Quedan {Math.max(0, Number(licenseState.diasRestantes || 0))} días de uso.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => requestRenewalFlow && requestRenewalFlow()}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-600 px-5 py-3 font-semibold text-white shadow-lg shadow-cyan-500/20 transition hover:brightness-110"
+              >
+                <KeyRound size={16} /> Ingresar nueva clave de renovación
+              </button>
+            </div>
+          </div>
+        ) : null}
+        */}
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4 hover:shadow-md transition-shadow">
           <div className="bg-blue-100 p-3 rounded-xl text-blue-600"><DollarSign size={28} /></div>
           <div><p className="text-slate-400 text-[11px] font-bold uppercase tracking-wider">Ventas Hoy</p><p className="text-2xl font-extrabold text-slate-800 tracking-tight">$ {dashboard.ventas_hoy?.toLocaleString()}</p></div>
@@ -145,9 +224,9 @@ function Inicio() {
         <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
             <h3 className="font-bold text-slate-700 mb-6 flex items-center gap-2 tracking-tight"><TrendingUp className="text-blue-500"/> Evolución de Ventas (7 días)</h3>
             <div className="h-64 w-full">
-                {ventasSemana.length > 0 ? (
+              {ventasSemanaSafe.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={ventasSemana}>
+                  <BarChart data={ventasSemanaSafe}>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/>
                             <XAxis dataKey="fecha" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} dy={10} />
                             <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
@@ -161,11 +240,11 @@ function Inicio() {
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col">
             <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2 tracking-tight"><PieIcon className="text-purple-500"/> Métodos de Pago</h3>
             <div className="flex-1 min-h-[200px] relative">
-                 {metodosPago.length > 0 ? (
+               {metodosPagoSafe.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
-                            <Pie data={metodosPago} cx="50%" cy="50%" labelLine={false} label={renderCustomizedLabel} innerRadius={40} outerRadius={80} paddingAngle={5} dataKey="value">
-                                {metodosPago.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                    <Pie data={metodosPagoSafe} cx="50%" cy="50%" labelLine={false} label={renderCustomizedLabel} innerRadius={40} outerRadius={80} paddingAngle={5} dataKey="value">
+                      {metodosPagoSafe.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
                             </Pie>
                             <Tooltip formatter={(value) => `$${value.toLocaleString()}`} />
                             <Legend verticalAlign="bottom" height={36}/>
@@ -181,7 +260,7 @@ function Inicio() {
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
             <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2 tracking-tight"><Award className="text-yellow-500"/> Productos Más Vendidos</h3>
             <div className="space-y-3">
-                {productosTop.map((prod, index) => (
+              {productosTopSafe.map((prod, index) => (
                     <div key={index} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
                         <div className="flex items-center gap-3">
                             <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${index === 0 ? "bg-yellow-100 text-yellow-700" : index === 1 ? "bg-gray-200 text-gray-700" : index === 2 ? "bg-orange-100 text-orange-700" : "bg-white border text-slate-500"}`}>{index + 1}</span>
@@ -190,15 +269,15 @@ function Inicio() {
                         <span className="font-bold text-blue-600">{prod.value} un.</span>
                     </div>
                 ))}
-                {productosTop.length === 0 && <p className="text-slate-400 text-center py-4">Sin datos aún.</p>}
+                {productosTopSafe.length === 0 && <p className="text-slate-400 text-center py-4">Sin datos aún.</p>}
             </div>
         </div>
 
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
             <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2 tracking-tight"><AlertTriangle className="text-red-500"/> Alerta de Reposición</h3>
             <div className="space-y-2 overflow-y-auto max-h-64 custom-scrollbar pr-2">
-                {dashboard.bajo_stock?.length > 0 ? (
-                    dashboard.bajo_stock.map((item, index) => (
+              {bajoStockSafe.length > 0 ? (
+                bajoStockSafe.map((item, index) => (
                         <div key={index} className="flex justify-between items-center p-2 border-b border-slate-50 last:border-0 hover:bg-red-50 transition-colors rounded">
                             <span className="text-slate-600 text-sm">{item.nombre}</span>
                             <span className="text-red-600 font-bold text-xs bg-red-100 px-2 py-1 rounded-full">Quedan {item.stock}</span>

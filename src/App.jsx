@@ -3,11 +3,13 @@ import React, { useState, useEffect, Component } from "react";
 import { HashRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { ThemeProvider } from "./context/ThemeContext";
+import { LicenseProvider, useLicenseState } from "./context/LicenseContext";
+import { NotificationProvider } from "./context/NotificationContext";
 import Sidebar from "./components/Sidebar";
 import Login from "./components/Login";
 import BusquedaGlobal from "./components/BusquedaGlobal";
 import Tutorial from "./components/Tutorial";
-import { Download, X, RefreshCw, Menu } from "lucide-react";
+import { Download, X, RefreshCw, Menu, Cloud, CloudOff } from "lucide-react";
 
 import Inicio from "./components/Inicio";
 import Ventas from "./components/Ventas";
@@ -26,6 +28,7 @@ import Configuracion from "./components/Configuracion";
 import Cajas from "./components/Cajas";
 import Conciliacion from "./components/Conciliacion";
 import Calculadora from "./components/Calculadora";
+import ActivationScreen from "./components/ActivationScreen";
 
 const SplashScreen = () => (
   <div className="fixed inset-0 bg-slate-900 flex flex-col items-center justify-center z-50">
@@ -40,7 +43,154 @@ const SplashScreen = () => (
   </div>
 );
 
+const LicenseGate = ({ children }) => {
+  const [checking, setChecking] = useState(true);
+  const [checkingManual, setCheckingManual] = useState(false);
+  const [activating, setActivating] = useState(false);
+  const [renewalModalOpen, setRenewalModalOpen] = useState(false);
+  const [activationMessage, setActivationMessage] = useState("");
+  const [activationReason, setActivationReason] = useState("");
+  const [licenciaInput, setLicenciaInput] = useState("");
+  const [licenseState, setLicenseState] = useState(null);
+
+  const normalizeLicensePayload = (response) => ({
+    activa: response?.activa === true,
+    diasRestantes: Number(response?.diasRestantes || 0),
+    motivo: response?.motivo || "unknown",
+    fechaVencimiento: response?.fechaVencimiento || null,
+  });
+
+  const verificarLicencia = async (forceSync = false) => {
+    if (!window.api) {
+      const blocked = { activa: false, diasRestantes: 0, motivo: "no-ipc" };
+      console.log("[LICENSE_GATE] Respuesta IPC (sin bridge):", blocked);
+      setLicenseState(blocked);
+      return;
+    }
+
+    const response = await window.api.request("check-license", { forceSync });
+    console.log("[LICENSE_GATE] Respuesta IPC check-license:", response);
+    setLicenseState(normalizeLicensePayload(response));
+  };
+
+  useEffect(() => {
+    // Bypass de licencia 
+    setLicenseState({ activa: true, diasRestantes: 9999, motivo: "bypass", fechaVencimiento: null });
+    setChecking(false);
+  }, []);
+
+  const handleRetry = async () => {
+    setCheckingManual(true);
+    setActivationMessage("");
+    setActivationReason("");
+    try {
+      if (window.api?.checkLicense) {
+        const data = await window.api.checkLicense({ forceSync: true });
+        console.log("[LICENSE_GATE] Respuesta IPC check-license (manual):", data);
+        setLicenseState(normalizeLicensePayload(data));
+      } else {
+        await verificarLicencia(true);
+      }
+    } catch (_) {
+      setLicenseState({ activa: false, diasRestantes: 0, motivo: "internal-error" });
+    } finally {
+      setCheckingManual(false);
+    }
+  };
+
+  const handleActivate = async (event) => {
+    event.preventDefault();
+    if (!licenciaInput.trim()) return;
+
+    setActivating(true);
+    setActivationMessage("");
+    setActivationReason("");
+    try {
+      const data = await window.api?.activateLicense?.({ licenciaKey: licenciaInput.trim() });
+      console.log("[LICENSE_GATE] Respuesta IPC activate-license:", data);
+      const nextState = normalizeLicensePayload(data);
+      setLicenseState(nextState);
+      setActivationReason(data?.motivo || data?.reason || "");
+      setActivationMessage(
+        data?.activa
+          ? "Licencia activada correctamente. La app se volverá a verificar en breve."
+          : data?.motivo === "hardware-mismatch" || data?.reason === "hardware-mismatch"
+            ? ""
+            : "No se pudo activar la licencia. Verificá el código e intentá nuevamente."
+      );
+      if (data?.activa) {
+        setLicenciaInput("");
+        setTimeout(() => {
+          verificarLicencia(true);
+        }, 500);
+        setRenewalModalOpen(false);
+      }
+    } catch (error) {
+      setActivationMessage(error?.message || "No se pudo activar la licencia.");
+      setLicenseState({ activa: false, diasRestantes: 0, motivo: "activation-error" });
+    } finally {
+      setActivating(false);
+    }
+  };
+
+  if (checking || licenseState === null) return <SplashScreen />;
+
+  // Fail-Closed estricto: cualquier estado distinto de activa===true bloquea la app.
+  if (licenseState.activa !== true) {
+    return (
+      <ActivationScreen
+        diasRestantes={licenseState.diasRestantes}
+        motivo={licenseState.motivo}
+        onRetry={handleRetry}
+        loading={checkingManual}
+        onActivate={handleActivate}
+        activationMessage={activationMessage}
+        activationReason={activationReason}
+        licenciaInput={licenciaInput}
+        setLicenciaInput={setLicenciaInput}
+        activating={activating}
+        mode="blocked"
+      />
+    );
+  }
+
+  const contextValue = {
+    licenseState,
+    refreshLicenseStatus: () => handleRetry(),
+    requestRenewalFlow: () => {
+      setActivationMessage("");
+      setActivationReason("");
+      setLicenciaInput("");
+      setRenewalModalOpen(true);
+    },
+  };
+
+  return (
+    <LicenseProvider value={contextValue}>
+      {children}
+      {renewalModalOpen ? (
+        <ActivationScreen
+          diasRestantes={licenseState.diasRestantes}
+          motivo={licenseState.motivo}
+          onRetry={handleRetry}
+          loading={checkingManual}
+          onActivate={handleActivate}
+          activationMessage={activationMessage}
+          activationReason={activationReason}
+          licenciaInput={licenciaInput}
+          setLicenciaInput={setLicenciaInput}
+          activating={activating}
+          mode="renewal"
+          onClose={() => setRenewalModalOpen(false)}
+        />
+      ) : null}
+    </LicenseProvider>
+  );
+};
+
 const Layout = ({ children }) => {
+  const { licenseState } = useLicenseState() || {};
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     const saved = localStorage.getItem("sidebarOpen");
     return saved !== null ? JSON.parse(saved) : true;
@@ -63,6 +213,26 @@ const Layout = ({ children }) => {
   useEffect(() => {
     localStorage.setItem("sidebarOpen", JSON.stringify(sidebarOpen));
   }, [sidebarOpen]);
+
+  useEffect(() => {
+    const onOnline = async () => {
+      setIsOnline(true);
+      try {
+        await window.api?.processPendingBackups?.();
+      } catch (_) {
+        // No bloquear UI por fallos de sync diferido.
+      }
+    };
+    const onOffline = () => setIsOnline(false);
+
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
+  }, []);
 
   // Verificar actualización pendiente al montar
   useEffect(() => {
@@ -119,7 +289,7 @@ const Layout = ({ children }) => {
         F6: "/reportes",
         F7: "/gastos",
         F8: "/configuracion",
-        F9: "/calculadora",
+        // F9: "/calculadora",
         F10: "/clientes",
       };
 
@@ -134,7 +304,7 @@ const Layout = ({ children }) => {
   }, [navigate]);
 
   return (
-    <div className="flex h-screen bg-slate-100 overflow-hidden font-sans text-slate-900">
+    <div className="flex h-screen bg-[#f5f5f7] overflow-hidden font-sans text-[#1d1d1f]">
       <Sidebar 
         isOpen={sidebarOpen} 
         toggleSidebar={() => setSidebarOpen(!sidebarOpen)} 
@@ -143,6 +313,30 @@ const Layout = ({ children }) => {
         setMobileOpen={setMobileOpen}
       />
       <div className="flex-1 flex flex-col h-full overflow-hidden relative transition-all duration-300">
+        {/*
+        <div className="absolute right-4 top-4 z-50">
+          <div
+            title={isOnline
+              ? "Conectado - Copias de seguridad automáticas activas"
+              : "Sin conexión - Se respaldará al reconectar"
+            }
+            className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold backdrop-blur-md shadow-sm ${
+              isOnline
+                ? "border-cyan-200 bg-cyan-50/85 text-cyan-700"
+                : "border-amber-200 bg-amber-50/85 text-amber-700"
+            }`}
+          >
+            {isOnline ? <Cloud size={14} /> : <CloudOff size={14} />}
+            <span className="hidden sm:inline">{isOnline ? "Nube activa" : "Sin conexión"}</span>
+          </div>
+        </div>
+        */}
+
+        {licenseState && licenseState.diasRestantes > 0 && licenseState.diasRestantes <= 5 ? (
+          <div className="z-40 border-b border-amber-300/60 bg-gradient-to-r from-amber-100/95 via-orange-100/95 to-amber-100/95 px-4 py-2 text-center text-sm font-medium text-amber-900 shadow-sm backdrop-blur">
+            Tu licencia de uso vence en <strong>{licenseState.diasRestantes}</strong> días. Por favor, contacta a SACWare para renovar tu suscripción.
+          </div>
+        ) : null}
         
         {/* BOTÓN HAMBURGUESA MOBILE */}
         <div className="md:hidden flex items-center gap-3 px-4 py-3 bg-white border-b border-slate-200 shadow-sm">
@@ -299,13 +493,17 @@ class ErrorBoundary extends Component {
 function App() {
   return (
     <ErrorBoundary>
-      <ThemeProvider>
-        <AuthProvider>
-          <HashRouter>
-            <RutasApp />
-          </HashRouter>
-        </AuthProvider>
-      </ThemeProvider>
+      <NotificationProvider>
+        <LicenseGate>
+          <ThemeProvider>
+            <AuthProvider>
+              <HashRouter>
+                <RutasApp />
+              </HashRouter>
+            </AuthProvider>
+          </ThemeProvider>
+        </LicenseGate>
+      </NotificationProvider>
     </ErrorBoundary>
   );
 }

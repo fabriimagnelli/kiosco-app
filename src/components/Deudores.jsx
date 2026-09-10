@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { User, Plus, Search, Trash2, Edit2, Phone, MapPin, Save, X, Eye, Calendar, Star, Gift, AlertTriangle, TrendingUp, ShoppingBag, Clock, Bell, DollarSign, CreditCard, Award, ChevronDown, ChevronUp, History, Shield } from "lucide-react";
 import { apiFetch } from "../lib/api";
+import { useNotify } from "../context/NotificationContext";
 
 function Deudores() {
+  const { toast, confirmDialog } = useNotify();
   const [clientes, setClientes] = useState([]);
   const [busqueda, setBusqueda] = useState("");
   const [loading, setLoading] = useState(true);
@@ -54,8 +56,20 @@ function Deudores() {
   const cargarClientes = () => {
     apiFetch("/api/clientes")
       .then(r => r.json())
-      .then(data => { setClientes(data); setLoading(false); })
-      .catch(err => console.error(err));
+      .then(data => { 
+        if (Array.isArray(data)) {
+            setClientes(data);
+        } else {
+            console.error("Error desde el servidor al cargar clientes:", data);
+            setClientes([]);
+        }
+        setLoading(false); 
+      })
+      .catch(err => {
+          console.error("Error de red o parseo:", err);
+          setClientes([]);
+          setLoading(false);
+      });
   };
 
   const cargarConfigPuntos = () => {
@@ -83,20 +97,24 @@ function Deudores() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!nombre) return alert("El nombre es obligatorio");
+    if (!nombre) return toast("El nombre es obligatorio", "warn");
     const data = { nombre, telefono, direccion, email, limite_credito: parseFloat(limiteCredito) || 0 };
     try {
       const url = modoEdicion ? `/api/clientes/${idEdicion}` : "/api/clientes";
       const method = modoEdicion ? "PUT" : "POST";
       const res = await apiFetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
       const result = await res.json();
-      if (result.id || result.success) { cargarClientes(); cancelarEdicion(); }
-      else alert("Error al guardar");
+      if (result.id || result.success) {
+        toast(modoEdicion ? "Cliente actualizado correctamente" : "Cliente agregado correctamente", "ok");
+        cargarClientes();
+        cancelarEdicion();
+      }
+      else toast("Error al guardar", "err");
     } catch (err) { console.error(err); }
   };
 
   const eliminarCliente = async (id) => {
-    if (!confirm("¿Eliminar este cliente y todo su historial?")) return;
+    if (!(await confirmDialog("¿Eliminar este cliente y todo su historial?"))) return;
     try {
       await apiFetch(`/api/clientes/${id}`, { method: "DELETE" });
       cargarClientes();
@@ -127,7 +145,7 @@ function Deudores() {
   };
 
   const eliminarFiado = async (fiadoId) => {
-    if (!confirm("¿Eliminar esta transacción? La deuda volverá al estado anterior.")) return;
+    if (!(await confirmDialog("¿Eliminar esta transacción? La deuda volverá al estado anterior."))) return;
     try {
       const res = await apiFetch(`/api/fiados/${fiadoId}`, { method: "DELETE" });
       const data = await res.json();
@@ -136,14 +154,14 @@ function Deudores() {
         setHistorialFiados(nuevosFiados);
         cargarClientes();
       } else {
-        alert("Error al eliminar la transacción");
+        toast("Error al eliminar la transacción", "err");
       }
-    } catch (err) { console.error(err); alert("Error al eliminar"); }
+    } catch (err) { console.error(err); toast("Error al eliminar", "err"); }
   };
 
   const registrarPago = async (e) => {
     e.preventDefault();
-    if (!montoPago || parseFloat(montoPago) <= 0) return alert("Ingresa un monto válido mayor a 0");
+    if (!montoPago || parseFloat(montoPago) <= 0) return toast("Ingresa un monto válido mayor a 0", "warn");
     setProcesandoPago(true);
     try {
       const res = await apiFetch("/api/fiados", {
@@ -153,21 +171,21 @@ function Deudores() {
       });
       const data = await res.json();
       if (data.id || data.success) {
-        alert("Pago registrado");
+        toast("Pago registrado", "ok");
         const nuevosFiados = await apiFetch(`/api/fiados/${clienteSel.id}`).then(r => r.json());
         setHistorialFiados(nuevosFiados);
         cargarClientes();
         setMontoPago(""); setDescripcionPago("");
       }
-    } catch (err) { console.error(err); alert("Error al registrar pago"); }
+    } catch (err) { console.error(err); toast("Error al registrar pago", "err"); }
     finally { setProcesandoPago(false); }
   };
 
   // --- Puntos ---
   const canjearPuntos = async () => {
     const pts = parseInt(puntosACanjear);
-    if (!pts || pts <= 0) return alert("Ingresá una cantidad válida de puntos");
-    if (pts > (clienteSel?.puntos || 0)) return alert("Puntos insuficientes");
+    if (!pts || pts <= 0) return toast("Ingresá una cantidad válida de puntos", "warn");
+    if (pts > (clienteSel?.puntos || 0)) return toast("Puntos insuficientes", "warn");
     try {
       const res = await apiFetch(`/api/clientes/${clienteSel.id}/canjear_puntos`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -175,19 +193,19 @@ function Deudores() {
       });
       const data = await res.json();
       if (data.success) {
-        alert(`Canjeados ${pts} puntos = $${data.descuento.toFixed(2)} de descuento`);
+        toast(`Canjeados ${pts} puntos = $${data.descuento.toFixed(2)} de descuento`, "ok");
         setPuntosACanjear("");
         cargarClientes();
         const histPts = await apiFetch(`/api/clientes/${clienteSel.id}/puntos`).then(r => r.json());
         setHistorialPuntos(histPts);
         setClienteSel(prev => ({ ...prev, puntos: data.puntos_restantes }));
-      } else { alert(data.error || "Error al canjear"); }
+      } else { toast(data.error || "Error al canjear", "err"); }
     } catch (err) { console.error(err); }
   };
 
   const ajustarPuntos = async () => {
     const pts = parseInt(ajustePuntos);
-    if (!pts) return alert("Ingresá una cantidad válida");
+    if (!pts) return toast("Ingresá una cantidad válida", "warn");
     try {
       await apiFetch(`/api/clientes/${clienteSel.id}/ajustar_puntos`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -207,7 +225,7 @@ function Deudores() {
         method: "PUT", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(puntosConfig)
       });
-      alert("Configuración de puntos guardada");
+      toast("Configuración de puntos guardada", "ok");
     } catch (err) { console.error(err); }
   };
 

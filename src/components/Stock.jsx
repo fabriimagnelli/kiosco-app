@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { Search, AlertTriangle, Download, Copy, Package, Cigarette, TrendingUp, CheckCircle, X } from "lucide-react";
 import { apiFetch } from "../lib/api";
+import { useNotify } from "../context/NotificationContext";
 
 function Stock() {
+  const { toast } = useNotify();
   const [productos, setProductos] = useState([]);
   const [cigarrillos, setCigarrillos] = useState([]);
   const [itemsUnificados, setItemsUnificados] = useState([]);
@@ -64,7 +66,7 @@ function Stock() {
     const texto = itemsBajoStock.map(i => `- ${i.nombre} (Quedan: ${i.stock})`).join("\n");
     const mensaje = `*LISTA DE REPOSICIÓN - KIOSCO*\n\n${texto}`;
     navigator.clipboard.writeText(mensaje);
-    alert("Lista copiada al portapapeles.");
+    toast("Lista copiada al portapapeles.", "ok");
   };
 
   return (

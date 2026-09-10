@@ -3,18 +3,22 @@ import { Search, ShoppingCart, Trash2, CreditCard, User, RefreshCw, Plus, Printe
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiFetch } from "../lib/api";
 import { beepScan, successSound, errorSound } from "../lib/sounds";
+import { useNotify } from "../context/NotificationContext";
 import jsPDF from "jspdf";
 import { QRCodeSVG } from "qrcode.react";
 
 function Ventas() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { confirmDialog } = useNotify();
 
   // Estados
   const [busqueda, setBusqueda] = useState("");
   const [productos, setProductos] = useState([]);
   const [carrito, setCarrito] = useState([]);
   const [metodo, setMetodo] = useState("Efectivo");
+  const [pagaCon, setPagaCon] = useState("");
+  const [ticketsEnEspera, setTicketsEnEspera] = useState([]);
   
   // Estados para Carga Manual
   const [manualNombre, setManualNombre] = useState("");
@@ -44,6 +48,18 @@ function Ventas() {
 
   // Ref para foco automático
   const busquedaRef = useRef(null);
+  const cobrarBtnRef = useRef(null);
+  const pagaConRef = useRef(null);
+  const scanBufferRef = useRef("");
+  const scanLastTsRef = useRef(0);
+  const toastTimerRef = useRef(null);
+
+  // Toast rápido para feedback de escaneo
+  const [scanToast, setScanToast] = useState(null);
+  const [modalCobroAbierto, setModalCobroAbierto] = useState(false);
+  const [modalMetodoPago, setModalMetodoPago] = useState("Efectivo");
+  const [modalPagaCon, setModalPagaCon] = useState("");
+  const [guardandoCobro, setGuardandoCobro] = useState(false);
 
   // Datos del negocio para ticket
   const [configNegocio, setConfigNegocio] = useState({ kiosco_nombre: "", kiosco_direccion: "", kiosco_telefono: "" });
@@ -79,13 +95,59 @@ function Ventas() {
         busquedaRef.current.focus();
       }
     };
+
+    if (busquedaRef.current) {
+      busquedaRef.current.focus();
+    }
+
     document.addEventListener('visibilitychange', handleVisibility);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibility);
       if (mpPollingRef.current) clearInterval(mpPollingRef.current);
       if (mpTimeoutRef.current) clearTimeout(mpTimeoutRef.current);
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     };
   }, [location.state]);
+
+  const sugerirBilletes = (monto) => {
+    if (monto <= 0) return [];
+    const billetes = [1000, 2000, 5000, 10000, 20000];
+    const sugerencias = new Set();
+    billetes.forEach(b => {
+      if (b > monto) sugerencias.add(b);
+      const multiplo = Math.ceil(monto / b) * b;
+      if (multiplo > monto && multiplo <= monto + 20000) sugerencias.add(multiplo);
+    });
+    return Array.from(sugerencias).sort((a, b) => a - b).slice(0, 4);
+  };
+
+  const pausarTicket = () => {
+    if (carrito.length === 0) return;
+    setTicketsEnEspera(prev => [...prev, {
+      id: Date.now(),
+      carrito: [...carrito],
+      clienteSelec,
+      total,
+      hora: new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }),
+    }]);
+    setCarrito([]);
+    setClienteSelec("");
+    setPagoAnticipado("");
+    setDescuento("");
+    setNotas("");
+    setMetodo("Efectivo");
+    setPagoMixto(false);
+    setMixtoMonto1("");
+    setPagaCon("");
+  };
+
+  const recuperarTicket = (ticketId) => {
+    const ticket = ticketsEnEspera.find(t => t.id === ticketId);
+    if (!ticket) return;
+    setCarrito(ticket.carrito);
+    setClienteSelec(ticket.clienteSelec || "");
+    setTicketsEnEspera(prev => prev.filter(t => t.id !== ticketId));
+  };
 
   const cargarConfigNegocio = async () => {
     try {
@@ -139,11 +201,45 @@ function Ventas() {
         });
   };
 
+  const mostrarToastRapido = (texto, tipo = "err") => {
+    setScanToast({ texto, tipo });
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setScanToast(null), 1800);
+  };
+
+  const irACobrarRapido = () => {
+    if (carrito.length === 0) {
+      mostrarToastRapido("El carrito está vacío", "warn");
+      return;
+    }
+    cobrarBtnRef.current?.click();
+  };
+
+  /* Función mock deshabilitada: reemplazada por confirmarVenta
+  const abrirModalCobro = () => {
+    if (carrito.length === 0) {
+      mostrarToastRapido("El carrito está vacío", "warn");
+      return;
+    }
+    setModalCobroAbierto(true);
+    setModalMetodoPago("Efectivo");
+    setModalPagaCon("");
+  };
+
+  const cerrarModalCobro = () => {
+    if (guardandoCobro) return;
+    setModalCobroAbierto(false);
+    setModalMetodoPago("Efectivo");
+    setModalPagaCon("");
+    setTimeout(() => busquedaRef.current?.focus(), 60);
+  };
+  */
+
   const agregarAlCarrito = (prod) => {
     // Validar stock para TODOS los productos (no solo promos)
     if (prod.tipo !== 'Manual' && prod.stock !== '-') {
       if (!prod.stock || prod.stock <= 0) {
-        return alert(`No hay stock disponible de "${prod.nombre}".`);
+        return mostrarToastRapido(`No hay stock disponible de "${prod.nombre}".`, "warn");
       }
     }
 
@@ -154,7 +250,7 @@ function Ventas() {
           p.nombre === comp.nombre && p.tipo === comp.tipo
         );
         if (!productoComponente || productoComponente.stock < comp.cantidad) {
-          return alert(`No hay suficiente stock de "${comp.nombre}" para esta promo.\nRequerido: ${comp.cantidad} | Disponible: ${productoComponente?.stock || 0}`);
+          return mostrarToastRapido(`No hay suficiente stock de "${comp.nombre}" para esta promo. Requerido: ${comp.cantidad} | Disponible: ${productoComponente?.stock || 0}`, "warn");
         }
       }
     }
@@ -171,7 +267,7 @@ function Ventas() {
       if (prod.tipo !== 'Manual' && prod.stock !== '-') {
         const stock = prod.stock || 0;
         if (existe.cantidad >= stock) {
-          return alert(`No hay más stock disponible de "${prod.nombre}". Disponible: ${stock}`);
+          return mostrarToastRapido(`No hay más stock disponible de "${prod.nombre}". Disponible: ${stock}`, "warn");
         }
       }
       setCarrito(carrito.map(item => item.nombre === prod.nombre ? { ...item, cantidad: item.cantidad + 1 } : item));
@@ -428,11 +524,11 @@ function Ventas() {
   };
 
   const confirmarVenta = async () => {
-    if (carrito.length === 0) return alert("El carrito está vacío");
+    if (carrito.length === 0) return mostrarToastRapido("El carrito está vacío", "warn");
 
     // VALIDACIÓN IMPORTANTE: Si es fiado, DEBE haber cliente
     if (metodo === "Fiado" && !clienteSelec) {
-        return alert("Para fiar, debes seleccionar un CLIENTE obligatoriamente.");
+        return mostrarToastRapido("Para fiar, debes seleccionar un CLIENTE obligatoriamente.", "warn");
     }
 
     // Calcular montos para pago mixto
@@ -442,10 +538,10 @@ function Ventas() {
     // Validar pago mixto
     if (pagoMixto) {
       if (montoMixto1 <= 0 || montoMixto1 >= total) {
-        return alert(`El monto del primer método debe ser entre $1 y $${(total - 1).toFixed(0)}`);
+        return mostrarToastRapido(`El monto del primer método debe ser entre $1 y $${(total - 1).toFixed(0)}`, "warn");
       }
       if (mixtoMetodo1 === mixtoMetodo2) {
-        return alert("Los dos métodos de pago deben ser diferentes.");
+        return mostrarToastRapido("Los dos métodos de pago deben ser diferentes.", "warn");
       }
     }
 
@@ -482,7 +578,7 @@ function Ventas() {
     };
 
     if (ticketEditando) {
-        if(!confirm(`ESTÁS EDITANDO EL TICKET #${String(parseInt(ticketEditando, 10) || ticketEditando).padStart(4, '0')}\n\n¿Continuar?`)) return;
+        if(!(await confirmDialog(`ESTÁS EDITANDO EL TICKET #${String(parseInt(ticketEditando, 10) || ticketEditando).padStart(4, '0')}\n\n¿Continuar?`))) return;
     }
 
     const res = await apiFetch("/api/ventas", {
@@ -572,9 +668,10 @@ function Ventas() {
       setMixtoMonto1("");
       setMixtoMetodo1("Efectivo");
       setMixtoMetodo2("Mercado Pago");
+      setPagaCon("");
       navigate("/ventas", { state: {} });
     } else {
-      alert("Error: " + data.error);
+      mostrarToastRapido("Error: " + data.error, "err");
     }
   };
 
@@ -585,7 +682,7 @@ function Ventas() {
 
   // Buscar por código de barras (incluye secundarios) al presionar Enter
   const buscarPorCodigo = async (codigo) => {
-    if (!codigo || codigo.length < 3) return;
+    if (!codigo || codigo.length < 2) return false;
     try {
       const res = await apiFetch(`/api/buscar_codigo/${encodeURIComponent(codigo.trim())}`);
       const data = await res.json();
@@ -599,6 +696,28 @@ function Ventas() {
     return false;
   };
 
+  const buscarYAgregarPorCodigo = async (codigo) => {
+    const valor = (codigo || "").trim();
+    if (!valor) return false;
+
+    // Prioridad 1: coincidencia exacta local por código principal
+    const exactoLocal = productos.find(p => p.codigo_barras && String(p.codigo_barras).trim() === valor);
+    if (exactoLocal) {
+      agregarAlCarrito(exactoLocal);
+      setBusqueda("");
+      return true;
+    }
+
+    // Prioridad 2: búsqueda en SQLite (incluye códigos secundarios)
+    const found = await buscarPorCodigo(valor);
+    if (found) {
+      setBusqueda("");
+      return true;
+    }
+
+    return false;
+  };
+
   const handleBusquedaKeyDown = async (e) => {
     if (e.key === 'Enter') {
       // Usar el valor real del input (e.target.value) en vez del estado,
@@ -608,35 +727,98 @@ function Ventas() {
       if (!valorActual) return;
       e.preventDefault();
 
-      // Filtrar productos con el valor actual del input
+      const foundByCode = await buscarYAgregarPorCodigo(valorActual);
+      if (foundByCode) return;
+
+      // Fallback para búsqueda manual por nombre
       const filtrados = productos.filter(p =>
         p.nombre.toLowerCase().includes(valorActual.toLowerCase()) ||
         (p.codigo_barras && p.codigo_barras.includes(valorActual))
       );
-
-      // Si hay exactamente 1 resultado en filtro local, agregarlo
-      if (filtrados.length === 1) {
+      if (filtrados.length > 0) {
         agregarAlCarrito(filtrados[0]);
         setBusqueda("");
         return;
       }
 
-      // Buscar coincidencia exacta por código de barras
-      const exacto = productos.find(p => p.codigo_barras && p.codigo_barras === valorActual);
-      if (exacto) {
-        agregarAlCarrito(exacto);
-        setBusqueda("");
-        return;
-      }
-
-      // Si no, buscar por código secundario en el servidor
-      const found = await buscarPorCodigo(valorActual);
-      if (!found && filtrados.length > 0) {
-        agregarAlCarrito(filtrados[0]);
-        setBusqueda("");
-      }
+      setBusqueda("");
+      errorSound();
+      mostrarToastRapido("Producto no encontrado", "err");
     }
   };
+
+  useEffect(() => {
+    const isEditableTarget = (target) => {
+      if (!target || !(target instanceof HTMLElement)) return false;
+      const tag = target.tagName;
+      return target.isContentEditable || tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+    };
+
+    const handleGlobalKeyDown = async (e) => {
+      const target = e.target;
+      const editable = isEditableTarget(target);
+      const busquedaEl = busquedaRef.current;
+      const focusedBusqueda = busquedaEl && document.activeElement === busquedaEl;
+
+      if (e.key === "F12") {
+        e.preventDefault();
+        irACobrarRapido();
+        return;
+      }
+
+      if (e.key === " " && focusedBusqueda && !busqueda.trim()) {
+        e.preventDefault();
+        irACobrarRapido();
+        return;
+      }
+
+      if ((e.key === "Delete" || e.key === "Supr") && !editable) {
+        if (carrito.length > 0) {
+          e.preventDefault();
+          setCarrito((prev) => prev.slice(0, -1));
+        }
+        return;
+      }
+
+      // Captura global para lectores de código de barras (teclado wedge)
+      if (e.key === "Enter") {
+        const rawBuffer = scanBufferRef.current.trim();
+        const inputValue = (busquedaEl?.value || "").trim();
+        const code = rawBuffer || inputValue;
+
+        scanBufferRef.current = "";
+        scanLastTsRef.current = 0;
+
+        // Enter sobre el input principal lo resuelve handleBusquedaKeyDown
+        if (focusedBusqueda) return;
+
+        if (code.length >= 2) {
+          e.preventDefault();
+          const found = await buscarYAgregarPorCodigo(code);
+          setBusqueda("");
+          if (!found) {
+            errorSound();
+            mostrarToastRapido("Producto no encontrado", "err");
+          }
+          if (busquedaEl) busquedaEl.focus();
+        }
+        return;
+      }
+
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      if (e.key.length !== 1) return;
+
+      const now = Date.now();
+      if (now - scanLastTsRef.current > 80) {
+        scanBufferRef.current = "";
+      }
+      scanLastTsRef.current = now;
+      scanBufferRef.current += e.key;
+    };
+
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, [busqueda, carrito.length, productos]);
 
   const subtotal = carrito.reduce((acc, item) => {
     const bruto = item.precio * item.cantidad;
@@ -645,80 +827,136 @@ function Ventas() {
   }, 0);
   const descuentoNum = descuentoTipo === '%' ? (subtotal * (parseFloat(descuento) || 0) / 100) : (parseFloat(descuento) || 0);
   const total = Math.max(0, subtotal - descuentoNum);
+  const modalPagaConNum = parseFloat(modalPagaCon) || 0;
+  const vuelto = Math.max(0, modalPagaConNum - total);
+  const esPagoEfectivo = modalMetodoPago === "Efectivo";
+
+  /* Función mock deshabilitada: no persistía la venta en la base de datos
+  const confirmarCobroModal = async () => {
+    if (guardandoCobro || carrito.length === 0) return;
+
+    if (esPagoEfectivo && modalPagaConNum > 0 && modalPagaConNum < total) {
+      mostrarToastRapido("El monto es menor al total", "warn");
+      return;
+    }
+
+    setGuardandoCobro(true);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      console.log("[POS] Venta simulada", {
+        items: carrito,
+        total,
+        metodo_pago: modalMetodoPago,
+        paga_con: esPagoEfectivo ? modalPagaConNum : null,
+        vuelto: esPagoEfectivo ? vuelto : 0,
+      });
+
+      successSound();
+      mostrarToastRapido("Venta registrada correctamente", "ok");
+
+      setModalCobroAbierto(false);
+      setCarrito([]);
+      setClienteSelec("");
+      setPagoAnticipado("");
+      setDescuento("");
+      setNotas("");
+      setMetodo("Efectivo");
+      setPagoMixto(false);
+      setMixtoMonto1("");
+      setMixtoMetodo1("Efectivo");
+      setMixtoMetodo2("Mercado Pago");
+      setModalMetodoPago("Efectivo");
+      setModalPagaCon("");
+
+      setTimeout(() => busquedaRef.current?.focus(), 80);
+    } finally {
+      setGuardandoCobro(false);
+    }
+  };
+  */
+
+  useEffect(() => {
+    if (!modalCobroAbierto) return;
+    if (esPagoEfectivo) {
+      setTimeout(() => pagaConRef.current?.focus(), 60);
+    }
+  }, [modalCobroAbierto, esPagoEfectivo]);
 
   return (
-    <div className="flex flex-col lg:flex-row h-full bg-slate-100 p-2 md:p-4 gap-3 md:gap-4 overflow-hidden">
+    <div className="flex flex-col lg:flex-row h-full bg-[#f5f5f7] p-2 md:p-4 gap-3 md:gap-4 overflow-hidden">
       
       {/* IZQUIERDA: BUSCADOR Y PRODUCTOS */}
-      <div className="flex-1 flex flex-col gap-4 overflow-hidden">
+      <div className="flex-1 flex flex-col gap-3 overflow-hidden">
         {ticketEditando && (
-            <div className="bg-orange-100 border border-orange-300 text-orange-800 p-3 rounded-xl flex items-center gap-3 font-bold animate-pulse">
+            <div className="bg-orange-50 border border-orange-200 text-orange-700 p-3 rounded-xl flex items-center gap-3 font-medium animate-pulse">
                 <RefreshCw className="animate-spin-slow"/>
                 <span>MODO EDICIÓN: Ticket #{String(parseInt(ticketEditando, 10) || ticketEditando).padStart(4, '0')}</span>
-                <button onClick={() => { setTicketEditando(null); setCarrito([]); navigate("/ventas", {state:{}}); }} className="ml-auto text-xs bg-white border border-orange-300 px-3 py-1 rounded hover:bg-orange-50">
+                <button onClick={() => { setTicketEditando(null); setCarrito([]); navigate("/ventas", {state:{}}); }} className="ml-auto text-xs bg-white border border-orange-200 px-3 py-1 rounded-lg hover:bg-orange-50">
                     Cancelar
                 </button>
             </div>
         )}
 
-        <div className="bg-white p-4 rounded-2xl shadow-sm flex items-center gap-2 border border-slate-200">
-          <Search className="text-slate-400" />
+        <div className="bg-white/80 backdrop-blur-xl p-3.5 rounded-xl flex items-center gap-2 border border-black/[0.04] shadow-sm">
+          <Search className="text-slate-400" size={20} />
           <input 
             ref={busquedaRef}
-            className="w-full outline-none text-lg" 
-            placeholder="Buscar producto o escanear código..." 
+            className="w-full outline-none text-base bg-transparent" 
+            placeholder="Escanear código o buscar producto..." 
             value={busqueda}
             onChange={e => setBusqueda(e.target.value)}
             onKeyDown={handleBusquedaKeyDown}
             autoFocus
+            inputMode="text"
+            autoComplete="off"
           />
         </div>
 
         {/* CARGA MANUAL */}
-        <form onSubmit={agregarManual} className="bg-white p-3 md:p-4 rounded-2xl shadow-sm flex flex-wrap items-center gap-2 border border-slate-200">
-            <Plus className="text-slate-400" />
+        <form onSubmit={agregarManual} className="bg-white/80 backdrop-blur-xl p-3 rounded-xl flex flex-wrap items-center gap-2 border border-black/[0.04] shadow-sm">
+            <Plus className="text-slate-400" size={18} />
             <input 
-                className="flex-1 min-w-[120px] outline-none text-base md:text-lg" 
+                className="flex-1 min-w-[120px] outline-none text-sm bg-transparent" 
                 placeholder="Producto manual..." 
                 value={manualNombre}
                 onChange={e => setManualNombre(e.target.value)}
             />
             <input 
                 type="number"
-                className="w-24 md:w-32 outline-none text-base md:text-lg border-l border-slate-200 pl-4" 
+                className="w-24 md:w-28 outline-none text-sm border-l border-black/[0.06] pl-3 bg-transparent" 
                 placeholder="$ Precio"
                 value={manualPrecio}
                 onChange={e => setManualPrecio(e.target.value)}
             />
-            <button type="submit" className="bg-slate-900 text-white font-normal px-4 py-1 rounded-lg hover:bg-slate-800">
+            <button type="submit" className="bg-[#007aff] text-white font-normal text-sm px-4 py-1.5 rounded-lg hover:bg-[#0071e3] transition-colors">
                 Agregar
             </button>
         </form>
         
-        <div className="flex-1 overflow-y-auto grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 pb-2 content-start">
+        <div className="flex-1 overflow-y-auto grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2.5 pb-2 content-start">
           {productosFiltrados.slice(0, busqueda ? 100 : 50).map((prod, i) => (
              <button 
                key={i} 
                onClick={() => agregarAlCarrito(prod)}
-               className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 hover:border-blue-400 hover:shadow-md transition-all flex flex-col justify-between text-left group h-[120px]"
+               className="bg-white/80 backdrop-blur-xl p-3.5 rounded-xl border border-black/[0.04] shadow-sm hover:shadow-md hover:scale-[1.02] transition-all flex flex-col justify-between text-left group h-[110px]"
                title={prod.nombre}
              >
                {/* Fila superior: Nombre + Stock */}
                <div className="flex items-start justify-between gap-2 min-w-0 w-full">
-                 <p className="font-bold text-slate-700 leading-tight group-hover:text-blue-600 line-clamp-2 min-w-0">{prod.nombre}</p>
-                 <span className="text-xs text-slate-400 whitespace-nowrap shrink-0">Stock: {prod.stock}</span>
+                 <p className="font-medium text-[#1d1d1f] leading-snug group-hover:text-[#007aff] line-clamp-2 min-w-0 text-[13px]">{prod.nombre}</p>
+                 <span className="text-[11px] text-[#86868b] whitespace-nowrap shrink-0">{prod.stock}</span>
                </div>
                {/* Fila inferior: Precio + Badge */}
                <div className="flex items-end justify-between w-full mt-auto">
                  {prod.tipo === 'Cigarrillo' && prod.precio_qr && prod.precio_qr !== prod.precio ? (
                    <div>
-                     <p className={`text-lg font-black leading-tight ${['Mercado Pago', 'Débito', 'Transferencia'].includes(metodo) ? 'text-slate-400 text-xs line-through' : 'text-green-700'}`}>$ {prod.precio} <span className="text-[10px] font-normal">Efvo</span></p>
-                     <p className={`text-lg font-black leading-tight ${['Mercado Pago', 'Débito', 'Transferencia'].includes(metodo) ? 'text-blue-600' : 'text-slate-400 text-xs line-through'}`}>$ {prod.precio_qr} <span className="text-[10px] font-normal">Digital</span></p>
+                     <p className={`text-base font-semibold leading-tight ${['Mercado Pago', 'Débito', 'Transferencia'].includes(metodo) ? 'text-[#86868b] text-xs line-through' : 'text-[#1d1d1f]'}`}>$ {prod.precio} <span className="text-[10px] font-normal text-[#86868b]">Efvo</span></p>
+                     <p className={`text-base font-semibold leading-tight ${['Mercado Pago', 'Débito', 'Transferencia'].includes(metodo) ? 'text-[#007aff]' : 'text-[#86868b] text-xs line-through'}`}>$ {prod.precio_qr} <span className="text-[10px] font-normal text-[#86868b]">Digital</span></p>
                    </div>
                  ) : (
-                   <p className="text-xl font-extrabold text-slate-800">$ {prod.precio}</p>
+                   <p className="text-lg font-semibold text-[#1d1d1f]">$ {prod.precio}</p>
                  )}
-                 <span className={`text-[10px] font-bold px-2 py-1 rounded-full shrink-0 ${prod.tipo === 'Cigarrillo' ? 'bg-orange-100 text-orange-600' : prod.tipo === 'Promo' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
+                 <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full shrink-0 ${prod.tipo === 'Cigarrillo' ? 'bg-orange-50 text-orange-500' : prod.tipo === 'Promo' ? 'bg-purple-50 text-purple-500' : 'bg-blue-50 text-[#007aff]'}`}>
                    {prod.tipo}
                  </span>
                </div>
@@ -728,11 +966,38 @@ function Ventas() {
       </div>
 
       {/* DERECHA: CARRITO */}
-      <div className="w-full lg:w-96 bg-white rounded-2xl shadow-xl flex flex-col border border-slate-200 max-h-[calc(100vh-2rem)]">
-        <div className={`px-4 py-2.5 text-white flex justify-between items-center rounded-t-2xl ${ticketEditando ? 'bg-orange-600' : 'bg-slate-900'}`}>
-          <h2 className="font-bold text-sm flex items-center gap-2 tracking-tight"><ShoppingCart size={16}/> Carrito</h2>
-          <span className="bg-white/20 px-2 py-0.5 rounded-full text-xs font-bold">{carrito.length} items</span>
+      <div className="w-full lg:w-96 bg-white/80 backdrop-blur-xl rounded-2xl shadow-sm flex flex-col border border-black/[0.04] max-h-[calc(100vh-2rem)]">
+        <div className={`px-4 py-2.5 text-white flex justify-between items-center rounded-t-2xl ${ticketEditando ? 'bg-orange-500' : 'bg-[#1c1c1e]'}`}>
+          <h2 className="font-medium text-sm flex items-center gap-2 tracking-tight"><ShoppingCart size={15}/> Carrito</h2>
+          <div className="flex items-center gap-2">
+            {carrito.length > 0 && !ticketEditando && (
+              <button
+                type="button"
+                onClick={pausarTicket}
+                className="bg-white/15 hover:bg-white/25 transition-colors px-2 py-0.5 rounded-full text-xs font-medium"
+              >
+                Pausar
+              </button>
+            )}
+            <span className="bg-white/15 px-2 py-0.5 rounded-full text-xs font-medium">{carrito.length} items</span>
+          </div>
         </div>
+
+        {ticketsEnEspera.length > 0 && (
+          <div className="flex gap-1.5 overflow-x-auto px-3 py-2 border-b border-black/[0.04] bg-amber-50">
+            {ticketsEnEspera.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => recuperarTicket(t.id)}
+                className="shrink-0 flex flex-col items-start px-2.5 py-1.5 rounded-lg border border-amber-300 bg-white text-left hover:bg-amber-100 transition-colors"
+              >
+                <span className="text-[10px] font-bold text-amber-700">{t.hora}</span>
+                <span className="text-xs font-semibold text-slate-700">$ {t.total.toFixed(0)}</span>
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
           {carrito.length === 0 ? (
@@ -742,21 +1007,21 @@ function Ventas() {
             </div>
           ) : (
             carrito.map((item, index) => (
-              <div key={index} className="bg-slate-50 p-2 rounded-lg border border-slate-100 space-y-0.5">
+              <div key={index} className="bg-[#f5f5f7] p-2 rounded-lg border border-black/[0.04] space-y-0.5">
                 <div className="flex justify-between items-center">
                   <div className="flex-1 min-w-0">
-                    <p className="font-bold text-xs text-slate-700 truncate">
+                    <p className="font-medium text-xs text-[#1d1d1f] truncate">
                       {item.nombre} 
-                      {item.tipo === 'Manual' && <span className="text-[10px] bg-slate-200 text-slate-500 px-1 ml-1 rounded">Manual</span>}
+                      {item.tipo === 'Manual' && <span className="text-[10px] bg-black/[0.04] text-[#86868b] px-1 ml-1 rounded">Manual</span>}
                       {item.tipo === 'Cigarrillo' && item.precio_qr && item.precio !== item.precio_original && (
-                        <span className="text-[10px] bg-blue-100 text-blue-600 px-1 ml-1 rounded">QR</span>
+                        <span className="text-[10px] bg-blue-50 text-[#007aff] px-1 ml-1 rounded">QR</span>
                       )}
                     </p>
-                    <p className="text-[11px] text-slate-500">$ {item.precio} x {item.cantidad}</p>
+                    <p className="text-[11px] text-[#86868b]">$ {item.precio} x {item.cantidad}</p>
                   </div>
                   <div className="flex items-center gap-2">
-                      <p className="font-bold text-sm text-slate-800">$ {(item.precio * item.cantidad - calcularDescuentoItem(item)).toFixed(0)}</p>
-                      <button onClick={() => eliminarDelCarrito(index)} className="text-red-400 hover:text-red-600"><Trash2 size={15}/></button>
+                      <p className="font-semibold text-sm text-[#1d1d1f]">$ {(item.precio * item.cantidad - calcularDescuentoItem(item)).toFixed(0)}</p>
+                      <button onClick={() => eliminarDelCarrito(index)} className="text-red-400 hover:text-red-500 transition-colors"><Trash2 size={14}/></button>
                   </div>
                 </div>
                 {/* Descuento por ítem */}
@@ -787,11 +1052,11 @@ function Ventas() {
           )}
         </div>
 
-        <div className="px-3 py-2 bg-slate-50 border-t border-slate-200 space-y-2">
+        <div className="px-3 py-2 bg-[#f5f5f7]/50 border-t border-black/[0.04] space-y-2">
             
             {/* CLIENTE (Opcional o Requerido si es Fiado) */}
             <div>
-                <label className="text-[11px] font-bold text-slate-500 uppercase flex items-center gap-1 mb-0.5">
+                <label className="text-[11px] font-medium text-[#86868b] uppercase flex items-center gap-1 mb-0.5 tracking-wide">
                     <User size={11}/> Cliente {metodo === 'Fiado' ? '(Obligatorio)' : '(Opcional)'}
                 </label>
                 <select 
@@ -835,7 +1100,7 @@ function Ventas() {
 
             {/* MÉTODO DE PAGO */}
             <div>
-                <label className="text-[11px] font-bold text-slate-500 uppercase flex items-center gap-1 mb-0.5">
+                <label className="text-[11px] font-medium text-[#86868b] uppercase flex items-center gap-1 mb-0.5 tracking-wide">
                     <CreditCard size={11}/> Método de Pago
                 </label>
                 <select 
@@ -945,9 +1210,51 @@ function Ventas() {
                 )}
             </div>
 
+            {/* CALCULADORA DE VUELTO RÁPIDA */}
+            {metodo === 'Efectivo' && !pagoMixto && total > 0 && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-2 space-y-1.5 animate-in fade-in slide-in-from-top-1">
+                <label className="text-[11px] font-bold text-emerald-700 uppercase tracking-wide">Calculadora de Vuelto</label>
+                <div className="flex gap-1.5">
+                  <input
+                    type="number"
+                    placeholder="Paga con $"
+                    min="0"
+                    className="flex-1 p-1.5 border border-emerald-200 rounded-lg text-xs bg-white font-bold"
+                    value={pagaCon}
+                    onChange={e => setPagaCon(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setPagaCon(String(total))}
+                    className="px-2 py-1.5 rounded-lg font-bold text-xs border border-emerald-300 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-colors"
+                  >
+                    Exacto
+                  </button>
+                </div>
+                <div className="flex gap-1.5 flex-wrap">
+                  {sugerirBilletes(total).map((billete) => (
+                    <button
+                      key={billete}
+                      type="button"
+                      onClick={() => setPagaCon(String(billete))}
+                      className="px-2 py-1 rounded-lg text-[11px] font-bold border border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-100 transition-colors"
+                    >
+                      $ {billete}
+                    </button>
+                  ))}
+                </div>
+                {parseFloat(pagaCon) > 0 && (
+                  <div className="flex justify-between items-center rounded-lg bg-emerald-100 px-2 py-1.5">
+                    <span className="text-[11px] font-bold text-emerald-700">Vuelto</span>
+                    <span className="text-lg font-black text-emerald-700">$ {Math.max(0, (parseFloat(pagaCon) || 0) - total).toFixed(0)}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* DESCUENTO POR TICKET */}
             <div>
-                <label className="text-[11px] font-bold text-slate-500 uppercase flex items-center gap-1 mb-0.5">
+                <label className="text-[11px] font-medium text-[#86868b] uppercase flex items-center gap-1 mb-0.5 tracking-wide">
                     <Tag size={11}/> Descuento General
                 </label>
                 <div className="flex gap-1.5">
@@ -972,7 +1279,7 @@ function Ventas() {
 
             {/* NOTAS / COMENTARIOS */}
             <div>
-                <label className="text-[11px] font-bold text-slate-500 uppercase flex items-center gap-1 mb-0.5">
+                <label className="text-[11px] font-medium text-[#86868b] uppercase flex items-center gap-1 mb-0.5 tracking-wide">
                     <MessageSquare size={11}/> Notas (opcional)
                 </label>
                 <textarea
@@ -987,12 +1294,12 @@ function Ventas() {
             <div className="flex justify-between items-center pt-1">
                 {descuentoNum > 0 && (
                   <div className="flex flex-col">
-                    <span className="text-[11px] text-slate-400 line-through">$ {subtotal + descuentoNum}</span>
-                    <span className="text-[11px] text-green-600 font-bold">-$ {descuentoNum.toFixed(0)} desc.{descuentoTipo === '%' ? ` (${descuento}%)` : ''}</span>
+                    <span className="text-[11px] text-[#86868b] line-through">$ {subtotal + descuentoNum}</span>
+                    <span className="text-[11px] text-green-600 font-medium">-$ {descuentoNum.toFixed(0)} desc.{descuentoTipo === '%' ? ` (${descuento}%)` : ''}</span>
                   </div>
                 )}
-                <span className="text-slate-500 text-sm font-bold">{descuentoNum <= 0 ? "Total" : ""}</span>
-                <span className="text-2xl font-extrabold text-slate-800 tracking-tight">$ {total.toFixed(0)}</span>
+                <span className="text-[#86868b] text-sm font-normal">{descuentoNum <= 0 ? "Total" : ""}</span>
+                <span className="text-2xl font-semibold text-[#1d1d1f] tracking-tight">$ {total.toFixed(0)}</span>
             </div>
 
             {(configNegocio.mp_qr_base64 || configNegocio.mp_alias || configNegocio.mp_pos_qr_image_url) && carrito.length > 0 && (
@@ -1006,13 +1313,94 @@ function Ventas() {
             )}
 
             <button
+              ref={cobrarBtnRef}
                 onClick={confirmarVenta}
-                className={`w-full py-3 rounded-xl font-bold text-white text-sm shadow-lg transition-transform active:scale-95 ${ticketEditando ? 'bg-orange-600 hover:bg-orange-700' : 'bg-slate-900 hover:bg-slate-800'}`}
+                className={`w-full py-3 rounded-xl font-medium text-white text-sm transition-all active:scale-[0.98] ${ticketEditando ? 'bg-orange-500 hover:bg-orange-600' : 'bg-[#007aff] hover:bg-[#0071e3]'}`}
             >
-                {ticketEditando ? 'CONFIRMAR CORRECCIÓN' : (metodo === 'Fiado' ? 'CONFIRMAR FIADO' : 'CONFIRMAR VENTA')}
+                {ticketEditando ? 'COBRAR CORRECCIÓN' : 'COBRAR'}
             </button>
         </div>
       </div>
+
+      {/* MODAL COBRO RÁPIDO - deshabilitado, reemplazado por confirmarVenta
+      {modalCobroAbierto && (
+        <div className="fixed inset-0 z-[85] flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm" onClick={cerrarModalCobro}>
+          <div className="w-full max-w-md rounded-2xl border border-white/70 bg-white/70 p-5 shadow-2xl backdrop-blur-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <CreditCard size={18} className="text-emerald-600" /> Cobro
+              </h3>
+              <button
+                type="button"
+                onClick={cerrarModalCobro}
+                className="rounded-lg p-1 text-slate-400 transition hover:bg-white hover:text-slate-700"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="rounded-xl border border-white/80 bg-white/80 p-4 text-center">
+              <p className="text-xs uppercase tracking-wide text-slate-500">Total a Pagar</p>
+              <p className="text-4xl font-black tracking-tight text-slate-900">$ {total.toFixed(0)}</p>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              <div>
+                <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Método de Pago</label>
+                <select
+                  className="w-full rounded-lg border border-slate-200 bg-white p-2 text-sm font-semibold text-slate-700"
+                  value={modalMetodoPago}
+                  onChange={(e) => {
+                    setModalMetodoPago(e.target.value);
+                    if (e.target.value !== "Efectivo") setModalPagaCon("");
+                  }}
+                >
+                  <option value="Efectivo">Efectivo</option>
+                  <option value="Mercado Pago">Mercado Pago</option>
+                  <option value="Fiado">Fiado</option>
+                </select>
+              </div>
+
+              {esPagoEfectivo && (
+                <div className="space-y-2">
+                  <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Paga con: $</label>
+                  <input
+                    ref={pagaConRef}
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={modalPagaCon}
+                    onChange={(e) => setModalPagaCon(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        confirmarCobroModal();
+                      }
+                    }}
+                    placeholder="Ej: 10000"
+                    className="w-full rounded-lg border border-slate-200 bg-white p-2.5 text-lg font-bold text-slate-800 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                  />
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-emerald-600">Vuelto</p>
+                    <p className="text-2xl font-black text-emerald-700">$ {vuelto.toFixed(0)}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <button
+              type="button"
+              disabled={guardandoCobro}
+              onClick={confirmarCobroModal}
+              className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 py-3 text-sm font-bold text-white transition hover:brightness-110 disabled:opacity-60"
+            >
+              {guardandoCobro ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />}
+              {guardandoCobro ? "Guardando..." : "Confirmar Venta"}
+            </button>
+          </div>
+        </div>
+      )}
+      */}
 
       {/* MODAL DE ÉXITO POST-VENTA */}
       {modalExito && (
@@ -1187,6 +1575,20 @@ function Ventas() {
             >
               Cerrar
             </button>
+          </div>
+        </div>
+      )}
+
+      {scanToast && (
+        <div className="fixed right-4 top-4 z-[90] animate-in fade-in slide-in-from-top-2">
+          <div className={`rounded-xl border px-4 py-3 text-sm font-semibold backdrop-blur-xl shadow-lg ${
+            scanToast.tipo === "ok"
+              ? "border-emerald-200 bg-emerald-100/90 text-emerald-700"
+              : scanToast.tipo === "warn"
+              ? "border-amber-200 bg-amber-100/90 text-amber-700"
+              : "border-rose-200 bg-rose-100/90 text-rose-700"
+          }`}>
+            {scanToast.texto}
           </div>
         </div>
       )}

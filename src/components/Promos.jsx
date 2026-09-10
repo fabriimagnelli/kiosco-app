@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Trash2, Save, Search, X, ShoppingBag, Pencil } from "lucide-react";
 import { apiFetch } from "../lib/api";
+import { useNotify } from "../context/NotificationContext";
 
 function Promos() {
+  const { toast, confirmDialog } = useNotify();
   const [promos, setPromos] = useState([]);
   const [productosDisponibles, setProductosDisponibles] = useState([]);
   
@@ -88,7 +90,7 @@ function Promos() {
 
   const guardarPromo = async () => {
     if (!nuevaPromo.nombre || !nuevaPromo.precio || nuevaPromo.componentes.length === 0) {
-      alert("Completa el nombre, precio y agrega al menos un producto.");
+      toast("Completa el nombre, precio y agrega al menos un producto.", "warn");
       return;
     }
 
@@ -108,21 +110,21 @@ function Promos() {
       const data = await res.json();
 
       if (res.ok) {
-        alert(nuevaPromo.id ? "Promo actualizada" : "Promo creada");
+        toast(nuevaPromo.id ? "Promo actualizada" : "Promo creada", "ok");
         setMostrarModal(false);
         setNuevaPromo({ id: null, nombre: "", precio: "", codigo_barras: "", componentes: [] });
         cargarDatos();
       } else {
-        alert("Error: " + (data.error || "Error al guardar promo"));
+        toast("Error: " + (data.error || "Error al guardar promo"), "err");
       }
     } catch (error) {
       console.error(error);
-      alert("Error: " + error.message);
+      toast("Error: " + error.message, "err");
     }
   };
 
   const eliminarPromo = async (id) => {
-    if(!window.confirm("¿Borrar esta promo?")) return;
+    if(!(await confirmDialog("¿Borrar esta promo?"))) return;
     await apiFetch(`/api/promos/${id}`, { method: "DELETE" });
     cargarDatos();
   };
@@ -174,7 +176,7 @@ function Promos() {
                 <div className="flex flex-wrap gap-1 mb-2">
                     {promo.componentes && promo.componentes.slice(0, 3).map((comp, i) => (
                         <span key={i} className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded border">
-                            {comp.cantidad} un.
+                            {comp.cantidad} un. {comp.nombre}
                         </span>
                     ))}
                     {promo.componentes && promo.componentes.length > 3 && <span className="text-[10px] text-slate-400">...</span>}

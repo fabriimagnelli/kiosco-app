@@ -1,8 +1,9 @@
-const { app, BrowserWindow, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, protocol, net } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const log = require('electron-log');
 const path = require('path');
 const fs = require('fs');
+const { pathToFileURL } = require('url');
 
 // ─── Configuración de logging ───────────────────────────────────────────────
 // electron-log guarda en: %USERPROFILE%\AppData\Roaming\sacware-kiosco\logs\main.log
@@ -35,9 +36,79 @@ if (!gotTheLock) {
   app.quit();
 } else {
   let mainWindow;
-  let serverStarted = false;
   let updateCheckInterval = null;
   let pendingUpdate = null; // Almacena info de actualización pendiente
+  let backend = null;
+
+  function initializeBackend() {
+    process.env.IS_ELECTRON = 'true';
+    process.env.DISABLE_HTTP_SERVER = 'true';
+    process.env.USER_DATA_PATH = app.getPath('userData');
+    process.env.SERVER_ROOT = path.join(__dirname, 'server');
+
+    backend = require('./server/index.js');
+    const { registerIpcHandlers } = require('./server/ipcHandlers');
+    const { initializeLicenseManager, registerLicenseHandlers } = require('./server/licenseManager');
+    registerIpcHandlers();
+
+    initializeLicenseManager({
+      dbPath: backend.dbPath,
+      machineScope: app.getPath('userData'),
+    }).catch((error) => {
+      log.error('Error inicializando gestor de licencias:', error.message);
+    });
+
+    registerLicenseHandlers(ipcMain);
+  }
+
+  function registerMediaProtocol() {
+    if (typeof protocol.handle === 'function') {
+      protocol.handle('kiosco-media', async (request) => {
+        try {
+          const url = new URL(request.url);
+          if (url.hostname !== 'uploads' || !backend?.uploadsPath) {
+            return new Response('Not found', { status: 404 });
+          }
+
+          const fileName = path.basename(decodeURIComponent(url.pathname));
+          const filePath = path.join(backend.uploadsPath, fileName);
+          if (!fs.existsSync(filePath)) {
+            return new Response('Not found', { status: 404 });
+          }
+
+          return net.fetch(pathToFileURL(filePath).toString());
+        } catch (error) {
+          log.error('Error sirviendo recurso local:', error.message);
+          return new Response('Internal error', { status: 500 });
+        }
+      });
+      return;
+    }
+
+    if (typeof protocol.registerFileProtocol === 'function') {
+      protocol.registerFileProtocol('kiosco-media', (request, callback) => {
+        try {
+          const url = new URL(request.url);
+          if (url.hostname !== 'uploads' || !backend?.uploadsPath) {
+            callback({ error: -6 });
+            return;
+          }
+
+          const fileName = path.basename(decodeURIComponent(url.pathname));
+          const filePath = path.join(backend.uploadsPath, fileName);
+          if (!fs.existsSync(filePath)) {
+            callback({ error: -6 });
+            return;
+          }
+
+          callback({ path: filePath });
+        } catch (error) {
+          log.error('Error sirviendo recurso local:', error.message);
+          callback({ error: -6 });
+        }
+      });
+    }
+  }
 
   function createWindow() {
     // El preload debe apuntar al archivo desempaquetado en disco
@@ -60,9 +131,12 @@ if (!gotTheLock) {
     });
 
     const loadApp = () => {
-      const url = app.isPackaged ? 'http://localhost:3001' : 'http://localhost:5173';
-      mainWindow.loadURL(url).catch(() => {
-        console.log("Falló la carga, reintentando en 1.5s...");
+      const loadPromise = app.isPackaged
+        ? mainWindow.loadFile(path.join(__dirname, 'server', 'public', 'index.html'))
+        : mainWindow.loadURL('http://localhost:5173');
+
+      loadPromise.catch(() => {
+        console.log('Falló la carga, reintentando en 1.5s...');
         setTimeout(loadApp, 1500);
       });
     };
@@ -85,32 +159,6 @@ if (!gotTheLock) {
     mainWindow.on('closed', () => mainWindow = null);
   }
 
-  function startServer() {
-    if (!app.isPackaged) return;
-
-    try {
-      process.env.IS_ELECTRON = "true";
-      process.env.USER_DATA_PATH = app.getPath('userData');
-      
-      // El servidor está dentro del ASAR (en server/index.js)
-      const serverPath = path.join(__dirname, 'server', 'index.js');
-      
-      console.log("Iniciando servidor interno desde:", serverPath);
-      require(serverPath);
-      serverStarted = true;
-      console.log("Servidor requerido correctamente");
-
-    } catch (e) {
-      console.error("Error al iniciar servidor:", e);
-      // Escribir error en el escritorio para diagnóstico
-      try {
-        const logPath = path.join(app.getPath('desktop'), 'error_kiosco.txt');
-        const errorMsg = `[${new Date().toISOString()}] Error arranque servidor\nMessage: ${e.message}\nStack: ${e.stack}`;
-        fs.writeFileSync(logPath, errorMsg);
-      } catch (_) {}
-    }
-  }
-
   // ─── Función de chequeo de actualizaciones ──────────────────────────────
   function checkForUpdates() {
     if (!app.isPackaged) return;
@@ -131,11 +179,10 @@ if (!gotTheLock) {
   }
 
   app.on('ready', () => {
-    startServer();
+    initializeBackend();
+    registerMediaProtocol();
     setupAutoUpdater();
-
-    // Esperar a que Express arranque antes de abrir la ventana
-    setTimeout(createWindow, app.isPackaged ? 2500 : 500);
+    createWindow();
   });
 
   app.on('second-instance', () => {

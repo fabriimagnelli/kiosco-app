@@ -1,111 +1,219 @@
-import React, { useState, useEffect } from "react";
-import { Settings, Save, User, Key, Building2, Phone, MapPin, LogOut, Eye, EyeOff, Database, Download, RotateCcw, Loader2, CheckCircle, AlertTriangle, Users, Plus, Trash2, Shield, RefreshCw, BookOpen, QrCode, MessageCircle, Cloud, CloudUpload, CloudDownload, ExternalLink, Printer } from "lucide-react";
+﻿import React, { useState, useEffect } from "react";
+import {
+  Settings,
+  Save,
+  Key,
+  Building2,
+  Phone,
+  MapPin,
+  LogOut,
+  Eye,
+  EyeOff,
+  Download,
+  Loader2,
+  CheckCircle,
+  AlertTriangle,
+  Users,
+  Plus,
+  Trash2,
+  Shield,
+  RefreshCw,
+  BookOpen,
+  QrCode,
+  MessageCircle,
+  Cloud,
+  CloudUpload,
+  Printer,
+} from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import { useLicenseState } from "../context/LicenseContext";
+import { useNotify } from "../context/NotificationContext";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "../lib/api";
 import { QRCodeSVG } from "qrcode.react";
 
+const DATOS_INICIALES = {
+  admin_user: "",
+  admin_password: "",
+  kiosco_nombre: "",
+  kiosco_direccion: "",
+  kiosco_telefono: "",
+  mp_alias: "",
+  mp_nombre: "",
+  mp_qr_base64: "",
+  mp_access_token: "",
+  mp_user_id: "",
+  mp_webhook_url: "",
+  mp_api_configurada: "false",
+  mp_pos_qr_image_url: "",
+  whatsapp_numero: "",
+};
+
+const normalizarDatos = (payload = {}) => {
+  const normalized = { ...DATOS_INICIALES };
+  Object.keys(DATOS_INICIALES).forEach((key) => {
+    const value = payload?.[key];
+    normalized[key] = value === undefined || value === null ? DATOS_INICIALES[key] : String(value);
+  });
+  return normalized;
+};
+
+const GLASS_CARD =
+  "overflow-hidden rounded-2xl border border-white/70 bg-white/55 p-6 backdrop-blur-xl";
+const GLASS_PANEL = "rounded-xl border border-white/70 bg-white/70 p-4";
+const INPUT_BASE =
+  "w-full rounded-lg border border-slate-200/80 bg-white/80 p-2.5 text-sm text-slate-700 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100";
+
 function Configuracion() {
   const { logout, rol: rolActual } = useAuth();
+  const { licenseState, requestRenewalFlow, refreshLicenseStatus } = useLicenseState() || {};
+  const { toast, confirmDialog } = useNotify();
   const navigate = useNavigate();
+
   const [loading, setLoading] = useState(false);
   const [mostrarPassword, setMostrarPassword] = useState(false);
 
-  // Backup states
-  const [backups, setBackups] = useState([]);
-  const [backupLoading, setBackupLoading] = useState(false);
-  const [backupMsg, setBackupMsg] = useState(null);
-
-  // User management states
   const [usuarios, setUsuarios] = useState([]);
   const [nuevoUser, setNuevoUser] = useState({ nombre: "", password: "", rol: "cajero" });
   const [userLoading, setUserLoading] = useState(false);
 
-  // Update state
   const [updateAvailable, setUpdateAvailable] = useState(null);
 
-  // Sync states
-  const [syncLoading, setSyncLoading] = useState(false);
-  const [syncMsg, setSyncMsg] = useState(null);
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
+  const [cloudBackupLoading, setCloudBackupLoading] = useState(false);
+  const [cloudBackupMsg, setCloudBackupMsg] = useState(null);
+  const [lastCloudBackupAt, setLastCloudBackupAt] = useState(null);
+  const [cloudBackupPending, setCloudBackupPending] = useState(false);
 
-  // MP API (Modelo Asistido) states
   const [mpApiMsg, setMpApiMsg] = useState(null);
   const [mpSetupLoading, setMpSetupLoading] = useState(false);
   const [mpSetupMsg, setMpSetupMsg] = useState(null);
-  const [mostrarGuiaToken, setMostrarGuiaToken] = useState(false);
-  const [mostrarWebhook, setMostrarWebhook] = useState(false);
+  const [mostrarMpAvanzado, setMostrarMpAvanzado] = useState(false);
 
-  // Estados de datos
-  const [datos, setDatos] = useState({
-    admin_user: "",
-    admin_password: "",
-    kiosco_nombre: "",
-    kiosco_direccion: "",
-    kiosco_telefono: "",
-    mp_alias: "",
-    mp_nombre: "",
-    mp_qr_base64: "",
-    mp_access_token: "",       // write-only — nunca se devuelve del backend
-    mp_user_id: "",
-    mp_webhook_url: "",
-    mp_api_configurada: "false",
-    mp_pos_qr_image_url: "",
-    whatsapp_numero: "",
-    sync_url: "",
-    sync_token: ""
-  });
+  const [datos, setDatos] = useState(() => ({ ...DATOS_INICIALES }));
 
   useEffect(() => {
     cargarConfiguracion();
-    cargarBackups();
+    cargarEstadoBackupCloud();
     if (rolActual === "admin") cargarUsuarios();
-    // Verificar si hay actualización pendiente
+
     if (window.electronAPI) {
-      window.electronAPI.getUpdateStatus().then(status => {
-        if (status) setUpdateAvailable(status);
-      }).catch(() => {});
+      window.electronAPI
+        .getUpdateStatus()
+        .then((status) => {
+          if (status) setUpdateAvailable(status);
+        })
+        .catch(() => {});
+
       window.electronAPI.onUpdateReady((data) => setUpdateAvailable(data));
+      window.electronAPI.onBackupUpdated((data) => {
+        setCloudBackupPending(!!data?.pending);
+        if (data?.lastBackupAt) {
+          setLastCloudBackupAt(data.lastBackupAt);
+          setCloudBackupMsg({ tipo: "ok", texto: "Backup en la nube actualizado automáticamente." });
+        }
+      });
     }
+
+    const onOnline = () => setIsOnline(true);
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
   }, []);
 
-  const cargarBackups = async () => {
-    try {
-      const res = await apiFetch("/api/backup/list");
-      const data = await res.json();
-      setBackups(Array.isArray(data) ? data : []);
-    } catch (e) { console.error("Error backups:", e); }
+  const formatearUltimoBackup = (value) => {
+    if (!value) return "Nunca";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "Nunca";
+
+    const now = new Date();
+    const sameDay = date.toDateString() === now.toDateString();
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    const isYesterday = date.toDateString() === yesterday.toDateString();
+    const hour = date.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
+
+    if (sameDay) return `Hoy a las ${hour}`;
+    if (isYesterday) return `Ayer a las ${hour}`;
+
+    return date.toLocaleString("es-AR", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   };
 
-  const crearBackup = async () => {
-    setBackupLoading(true);
-    setBackupMsg(null);
+  const cargarEstadoBackupCloud = async () => {
     try {
-      const res = await apiFetch("/api/backup");
-      const data = await res.json();
-      if (data.success) {
-        setBackupMsg({ tipo: "ok", texto: "Backup creado correctamente" });
-        cargarBackups();
-      } else { setBackupMsg({ tipo: "err", texto: data.error }); }
-    } catch (e) { setBackupMsg({ tipo: "err", texto: "Error de conexión" }); }
-    finally { setBackupLoading(false); }
+      if (!window.api?.getLastBackupAt) return;
+      const result = await window.api.getLastBackupAt();
+      setCloudBackupPending(!!result?.pending);
+      if (result?.success && result?.lastBackupAt) {
+        setLastCloudBackupAt(result.lastBackupAt);
+      } else {
+        setLastCloudBackupAt(null);
+      }
+    } catch (error) {
+      console.error("Error consultando último backup cloud:", error);
+    }
   };
 
-  const restaurarBackup = async (archivo) => {
-    if (!confirm(`¿Restaurar la base de datos desde "${archivo}"?\nEsto reemplazará TODOS los datos actuales.`)) return;
-    setBackupLoading(true);
-    try {
-      const res = await apiFetch("/api/backup/restore", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ archivo })
+  const respaldarAhoraCloud = async () => {
+    setCloudBackupMsg(null);
+
+    if (!navigator.onLine) {
+      try {
+        await window.api?.markBackupPending?.();
+        setCloudBackupPending(true);
+      } catch (_) {
+        // Ignorar para no interrumpir UX local.
+      }
+      setCloudBackupMsg({
+        tipo: "warn",
+        texto:
+          "No hay conexión a internet. Reconéctate para subir el respaldo. Lo encolamos para sincronizar al volver online.",
       });
-      const data = await res.json();
-      if (data.success) {
-        alert("Base de datos restaurada. La app se recargará.");
-        window.location.reload();
-      } else { alert("Error: " + data.error); }
-    } catch (e) { alert("Error de conexión"); }
-    finally { setBackupLoading(false); }
+      return;
+    }
+
+    setCloudBackupLoading(true);
+    try {
+      const result = await window.api?.forceBackup?.();
+      if (result?.success) {
+        setCloudBackupPending(false);
+        setCloudBackupMsg({ tipo: "ok", texto: "Backup en la nube subido correctamente." });
+        await cargarEstadoBackupCloud();
+      } else {
+        if (result?.pending) {
+          setCloudBackupPending(true);
+          setCloudBackupMsg({
+            tipo: "warn",
+            texto: "No se pudo subir ahora. Se encoló para reintentar al reconectar.",
+          });
+          return;
+        }
+        console.error("Error cloud backup (resultado no exitoso):", result?.error || result);
+        setCloudBackupMsg({
+          tipo: "err",
+          texto: "No se pudo completar el respaldo en este momento. Por favor, reintenta en unos minutos.",
+        });
+      }
+    } catch (error) {
+      console.error("Error cloud backup (exception):", error);
+      setCloudBackupMsg({
+        tipo: "err",
+        texto: "No se pudo completar el respaldo en este momento. Por favor, reintenta en unos minutos.",
+      });
+    } finally {
+      setCloudBackupLoading(false);
+    }
   };
 
   const cargarUsuarios = async () => {
@@ -113,34 +221,47 @@ function Configuracion() {
       const res = await apiFetch("/api/usuarios");
       const data = await res.json();
       setUsuarios(Array.isArray(data) ? data : []);
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const crearUsuario = async (e) => {
     e.preventDefault();
-    if (!nuevoUser.nombre || !nuevoUser.password) return alert("Nombre y contraseña son obligatorios");
+    if (!nuevoUser.nombre || !nuevoUser.password) {
+      toast("Nombre y contraseña son obligatorios", "warn");
+      return;
+    }
+
     setUserLoading(true);
     try {
       const res = await apiFetch("/api/usuarios", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(nuevoUser)
+        body: JSON.stringify(nuevoUser),
       });
       const data = await res.json();
       if (data.success) {
         setNuevoUser({ nombre: "", password: "", rol: "cajero" });
         cargarUsuarios();
-      } else { alert("Error: " + data.error); }
-    } catch (e) { alert("Error de conexión"); }
-    finally { setUserLoading(false); }
+      } else {
+        toast("Error: " + data.error, "err");
+      }
+    } catch (e) {
+      toast("Error de conexión", "err");
+    } finally {
+      setUserLoading(false);
+    }
   };
 
   const eliminarUsuario = async (id, nombre) => {
-    if (!confirm(`¿Eliminar el usuario "${nombre}"?`)) return;
+    if (!(await confirmDialog(`¿Eliminar el usuario "${nombre}"?`))) return;
     try {
       await apiFetch(`/api/usuarios/${id}`, { method: "DELETE" });
       cargarUsuarios();
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const toggleUsuarioActivo = async (user) => {
@@ -148,24 +269,26 @@ function Configuracion() {
       await apiFetch(`/api/usuarios/${user.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...user, activo: user.activo ? 0 : 1 })
+        body: JSON.stringify({ ...user, activo: user.activo ? 0 : 1 }),
       });
       cargarUsuarios();
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const cargarConfiguracion = async () => {
     try {
       const res = await apiFetch("/api/config");
       const data = await res.json();
-      setDatos(data);
+      setDatos(normalizarDatos(data));
     } catch (error) {
       console.error("Error cargando config:", error);
     }
   };
 
   const handleChange = (e) => {
-    setDatos({ ...datos, [e.target.name]: e.target.value });
+    setDatos((prev) => ({ ...prev, [e.target.name]: e.target.value }));
   };
 
   const guardarCambios = async (e) => {
@@ -175,53 +298,57 @@ function Configuracion() {
       const res = await apiFetch("/api/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(datos)
+        body: JSON.stringify(datos),
       });
       const data = await res.json();
       if (data.success) {
-        alert("¡Configuración guardada correctamente!");
+        toast("¡Configuración guardada correctamente!", "ok");
       } else {
-        alert("Error al guardar");
+        toast("Error al guardar", "err");
       }
     } catch (error) {
       console.error(error);
-      alert("Error de conexión");
+      toast("Error de conexión", "err");
     } finally {
       setLoading(false);
     }
   };
 
-  // ---- Handlers MP API (Modelo Asistido) ----
   const guardarYObtenerUserId = async () => {
     setMpApiMsg(null);
     if (!datos.mp_access_token || datos.mp_access_token.trim() === "") {
-      return setMpApiMsg({ tipo: 'err', texto: 'Ingresá el Access Token primero.' });
+      setMpApiMsg({ tipo: "err", texto: "Ingresá el Access Token primero." });
+      return;
     }
+
     setLoading(true);
     try {
-      // Guardar credenciales (token + webhook_url)
       const saveRes = await apiFetch("/api/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(datos)
+        body: JSON.stringify(datos),
       });
       const saveData = await saveRes.json();
-      if (!saveData.success) return setMpApiMsg({ tipo: 'err', texto: 'Error al guardar: ' + (saveData.error || '') });
+      if (!saveData.success) {
+        setMpApiMsg({ tipo: "err", texto: "Error al guardar: " + (saveData.error || "") });
+        return;
+      }
 
-      // Limpiar el campo del token en el UI (write-only)
-      setDatos(prev => ({ ...prev, mp_access_token: "" }));
+      setDatos((prev) => ({ ...prev, mp_access_token: "" }));
 
-      // Obtener user_id automáticamente
       const res = await apiFetch("/api/mp/fetch-user-id", { method: "POST" });
       const data = await res.json();
       if (data.success) {
-        setDatos(prev => ({ ...prev, mp_user_id: String(data.user_id) }));
-        setMpApiMsg({ tipo: 'ok', texto: `Token guardado. User ID: ${data.user_id}${data.name ? ' (' + data.name + ')' : ''}` });
+        setDatos((prev) => ({ ...prev, mp_user_id: String(data.user_id) }));
+        setMpApiMsg({
+          tipo: "ok",
+          texto: `Token guardado. User ID: ${data.user_id}${data.name ? " (" + data.name + ")" : ""}`,
+        });
       } else {
-        setMpApiMsg({ tipo: 'err', texto: 'Token guardado pero error al obtener User ID: ' + data.error });
+        setMpApiMsg({ tipo: "err", texto: "Token guardado pero error al obtener User ID: " + data.error });
       }
     } catch (e) {
-      setMpApiMsg({ tipo: 'err', texto: 'Error de conexión' });
+      setMpApiMsg({ tipo: "err", texto: "Error de conexión" });
     } finally {
       setLoading(false);
     }
@@ -234,25 +361,29 @@ function Configuracion() {
       const res = await apiFetch("/api/mp/setup-store", { method: "POST" });
       const data = await res.json();
       if (data.success) {
-        setDatos(prev => ({ ...prev, mp_api_configurada: 'true', mp_pos_qr_image_url: data.qr_image_url }));
-        setMpSetupMsg({ tipo: 'ok', texto: '¡Sucursal y caja creadas! El QR para el mostrador aparece más abajo.' });
+        setDatos((prev) => ({
+          ...prev,
+          mp_api_configurada: "true",
+          mp_pos_qr_image_url: data.qr_image_url,
+        }));
+        setMpSetupMsg({ tipo: "ok", texto: "¡Sucursal y caja creadas! El QR para mostrador quedó generado." });
       } else {
-        setMpSetupMsg({ tipo: 'err', texto: data.error });
+        setMpSetupMsg({ tipo: "err", texto: data.error });
       }
     } catch (e) {
-      setMpSetupMsg({ tipo: 'err', texto: 'Error de conexión' });
+      setMpSetupMsg({ tipo: "err", texto: "Error de conexión" });
     } finally {
       setMpSetupLoading(false);
     }
   };
 
   const imprimirQRMostrador = () => {
-    const printW = window.open('', '_blank');
+    const printW = window.open("", "_blank");
     printW.document.write(`
       <html><head><title>QR MercadoPago Mostrador</title>
       <style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:Arial,sans-serif;margin:0;}
       h2{margin-bottom:4px} p{margin:4px 0;color:#666;font-size:14px;}</style></head>
-      <body><h2>${datos.kiosco_nombre || 'Mi Kiosco'}</h2>
+      <body><h2>${datos.kiosco_nombre || "Mi Kiosco"}</h2>
       <p>Escaneá para pagar</p>
       <img src="${datos.mp_pos_qr_image_url}" style="width:250px;height:250px;object-fit:contain"/>
       <p style="margin-top:12px;font-size:12px;color:#999;">MercadoPago</p>
@@ -262,35 +393,8 @@ function Configuracion() {
     setTimeout(() => printW.print(), 500);
   };
 
-  const syncPush = async () => {
-    setSyncLoading(true);
-    setSyncMsg(null);
-    try {
-      const res = await apiFetch("/api/sync/push", { method: "POST" });
-      const data = await res.json();
-      if (data.success) { setSyncMsg({ tipo: "ok", texto: "Backup subido al servidor remoto exitosamente" }); }
-      else { setSyncMsg({ tipo: "err", texto: data.error || "Error al subir" }); }
-    } catch (e) { setSyncMsg({ tipo: "err", texto: "Error de conexión con el servidor" }); }
-    finally { setSyncLoading(false); }
-  };
-
-  const syncPull = async () => {
-    if (!confirm("¿Descargar y restaurar la base de datos desde el servidor remoto?\nEsto reemplazará TODOS los datos locales.")) return;
-    setSyncLoading(true);
-    setSyncMsg(null);
-    try {
-      const res = await apiFetch("/api/sync/pull", { method: "POST" });
-      const data = await res.json();
-      if (data.success) {
-        alert("Base de datos sincronizada. La app se recargará.");
-        window.location.reload();
-      } else { setSyncMsg({ tipo: "err", texto: data.error || "Error al descargar" }); }
-    } catch (e) { setSyncMsg({ tipo: "err", texto: "Error de conexión" }); }
-    finally { setSyncLoading(false); }
-  };
-
-  const manejarCierreSesion = () => {
-    if (confirm("¿Estás seguro que quieres cerrar sesión?")) {
+  const manejarCierreSesion = async () => {
+    if (await confirmDialog("¿Estás seguro que quieres cerrar sesión?")) {
       logout();
       navigate("/login");
     }
@@ -302,646 +406,657 @@ function Configuracion() {
     }
   };
 
+  const subirImagenQr = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => setDatos((prev) => ({ ...prev, mp_qr_base64: ev.target.result }));
+    reader.readAsDataURL(file);
+  };
+
+  const fechaVencimientoFormateada = licenseState?.fechaVencimiento
+    ? new Date(licenseState.fechaVencimiento).toLocaleDateString("es-AR", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      })
+    : "Sin fecha registrada";
+
   return (
-    // AGREGADO: h-full y overflow-y-auto para permitir hacer scroll
-    <div className="p-4 md:p-6 max-w-4xl mx-auto animate-in fade-in duration-500 h-full overflow-y-auto">
-      
-      <div className="mb-6 md:mb-8">
-        <h1 className="text-2xl md:text-3xl font-extrabold text-slate-800 flex items-center gap-3 tracking-tight">
-          <Settings className="text-purple-600" size={32} />
-          Configuración y Administración
-        </h1>
-        <p className="text-slate-500 mt-1">Gestiona los datos de tu negocio y credenciales de acceso.</p>
-      </div>
+    <div className="h-full overflow-y-auto p-4 md:p-6">
+      <div className="mx-auto max-w-7xl animate-in fade-in duration-500">
+        <div className="mb-6 md:mb-8">
+          <h1 className="flex items-center gap-3 text-2xl font-extrabold tracking-tight text-slate-800 md:text-3xl">
+            <Settings className="text-emerald-600" size={32} />
+            Configuración y Administración
+          </h1>
+          <p className="mt-1 text-slate-500">Unificá tus datos, accesos y cobros en un solo flujo limpio.</p>
+        </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pb-10">
-        
-        {/* COLUMNA IZQUIERDA: FORMULARIOS */}
-        <div className="space-y-6">
-            
-            <form onSubmit={guardarCambios} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                <h2 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
-                    <Building2 size={20} className="text-blue-500"/> Datos del Kiosco
-                </h2>
-                
-                <div className="space-y-4">
-                    <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">Nombre del Negocio</label>
-                        <input 
-                            name="kiosco_nombre"
-                            value={datos.kiosco_nombre}
-                            onChange={handleChange}
-                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
-                            placeholder="Ej: Kiosco Centro"
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">Dirección</label>
-                        <div className="relative">
-                            <MapPin size={16} className="absolute left-3 top-3 text-slate-400"/>
-                            <input 
-                                name="kiosco_direccion"
-                                value={datos.kiosco_direccion}
-                                onChange={handleChange}
-                                className="w-full pl-9 p-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
-                                placeholder="Calle Alpes 123"
-                            />
-                        </div>
-                    </div>
-                    <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">Teléfono</label>
-                        <div className="relative">
-                            <Phone size={16} className="absolute left-3 top-3 text-slate-400"/>
-                            <input 
-                                name="kiosco_telefono"
-                                value={datos.kiosco_telefono}
-                                onChange={handleChange}
-                                className="w-full pl-9 p-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
-                                placeholder="959-1114"
-                            />
-                        </div>
-                    </div>
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+          <form onSubmit={guardarCambios} className="space-y-6">
+            <section className={GLASS_CARD}>
+              <h2 className="mb-4 flex items-center gap-2 text-lg font-bold text-slate-800">
+                <Building2 size={20} className="text-emerald-600" /> Datos del Negocio
+              </h2>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                    Nombre del negocio
+                  </label>
+                  <input
+                    name="kiosco_nombre"
+                    value={datos.kiosco_nombre}
+                    onChange={handleChange}
+                    className={INPUT_BASE}
+                    placeholder="Ej: Kiosco Centro"
+                  />
                 </div>
 
-                <hr className="my-6 border-slate-100"/>
-
-                <h2 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
-                    <User size={20} className="text-green-500"/> Credenciales de Acceso
-                </h2>
-
-                <div className="space-y-4">
-                    <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">Usuario Administrador</label>
-                        <input 
-                            name="admin_user"
-                            value={datos.admin_user}
-                            onChange={handleChange}
-                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none bg-slate-50"
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">Nueva Contraseña</label>
-                        <p className="text-xs text-slate-400 mb-1">Dejar vacío para mantener la actual</p>
-                        <div className="relative">
-                            <Key size={16} className="absolute left-3 top-3 text-slate-400"/>
-                            <input 
-                                type={mostrarPassword ? "text" : "password"}
-                                name="admin_password"
-                                value={datos.admin_password}
-                                onChange={handleChange}
-                                placeholder="••••••••"
-                                className="w-full pl-9 pr-10 p-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none bg-slate-50"
-                            />
-                            <button 
-                                type="button"
-                                onClick={() => setMostrarPassword(!mostrarPassword)}
-                                className="absolute right-3 top-2.5 text-slate-400 hover:text-purple-600"
-                            >
-                                {mostrarPassword ? <EyeOff size={18}/> : <Eye size={18}/>}
-                            </button>
-                        </div>
-                    </div>
+                <div>
+                  <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Dirección</label>
+                  <div className="relative">
+                    <MapPin size={16} className="pointer-events-none absolute left-3 top-3 text-slate-400" />
+                    <input
+                      name="kiosco_direccion"
+                      value={datos.kiosco_direccion}
+                      onChange={handleChange}
+                      className={`${INPUT_BASE} pl-9`}
+                      placeholder="Calle Alpes 123"
+                    />
+                  </div>
                 </div>
 
-                <hr className="my-6 border-slate-100"/>
-
-                <h2 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
-                    <QrCode size={20} className="text-cyan-500"/> MercadoPago (QR)
-                </h2>
-                <p className="text-xs text-slate-400 mb-3">
-                    Subí la imagen de tu QR oficial de Mercado Pago (descargala desde la app de MP → Cobrar → Mi QR). Este QR funciona con cualquier escáner de pagos.
-                </p>
-                <div className="space-y-4">
-                    <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">Alias de MercadoPago (opcional)</label>
-                        <input
-                            name="mp_alias"
-                            value={datos.mp_alias}
-                            onChange={handleChange}
-                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-cyan-500 outline-none"
-                            placeholder="Ej: mikiosco.mp"
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">Nombre del titular (opcional)</label>
-                        <input
-                            name="mp_nombre"
-                            value={datos.mp_nombre}
-                            onChange={handleChange}
-                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-cyan-500 outline-none"
-                            placeholder="Ej: Juan Pérez"
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-2">
-                            Imagen del QR de Mercado Pago
-                        </label>
-                        {datos.mp_qr_base64 ? (
-                            <div className="flex items-center gap-4">
-                                <div className="bg-white border border-slate-200 rounded-xl p-3 inline-block">
-                                    <img src={datos.mp_qr_base64} alt="QR Mercado Pago" className="w-32 h-32 object-contain" />
-                                </div>
-                                <div className="space-y-2">
-                                    <p className="text-xs text-green-600 font-semibold">✓ QR cargado correctamente</p>
-                                    <label className="block cursor-pointer bg-cyan-50 border border-cyan-200 hover:bg-cyan-100 text-cyan-700 font-semibold text-xs px-3 py-2 rounded-lg transition-colors text-center">
-                                        Cambiar imagen
-                                        <input
-                                            type="file"
-                                            accept="image/*"
-                                            className="hidden"
-                                            onChange={e => {
-                                                const file = e.target.files?.[0];
-                                                if (!file) return;
-                                                const reader = new FileReader();
-                                                reader.onload = ev => setDatos(prev => ({ ...prev, mp_qr_base64: ev.target.result }));
-                                                reader.readAsDataURL(file);
-                                            }}
-                                        />
-                                    </label>
-                                    <button
-                                        type="button"
-                                        onClick={() => setDatos(prev => ({ ...prev, mp_qr_base64: "" }))}
-                                        className="block w-full text-xs text-red-500 hover:text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors text-center"
-                                    >
-                                        Eliminar QR
-                                    </button>
-                                </div>
-                            </div>
-                        ) : (
-                            <label className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-cyan-200 rounded-xl p-6 cursor-pointer hover:bg-cyan-50 transition-colors text-center">
-                                <QrCode size={32} className="text-cyan-300" />
-                                <span className="text-sm font-semibold text-cyan-600">Hacé clic para subir la imagen del QR</span>
-                                <span className="text-xs text-slate-400">PNG, JPG, WEBP</span>
-                                <input
-                                    type="file"
-                                    accept="image/*"
-                                    className="hidden"
-                                    onChange={e => {
-                                        const file = e.target.files?.[0];
-                                        if (!file) return;
-                                        const reader = new FileReader();
-                                        reader.onload = ev => setDatos(prev => ({ ...prev, mp_qr_base64: ev.target.result }));
-                                        reader.readAsDataURL(file);
-                                    }}
-                                />
-                            </label>
-                        )}
-                    </div>
+                <div>
+                  <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Teléfono</label>
+                  <div className="relative">
+                    <Phone size={16} className="pointer-events-none absolute left-3 top-3 text-slate-400" />
+                    <input
+                      name="kiosco_telefono"
+                      value={datos.kiosco_telefono}
+                      onChange={handleChange}
+                      className={`${INPUT_BASE} pl-9`}
+                      placeholder="959-1114"
+                    />
+                  </div>
                 </div>
 
-                {/* Vista previa del QR para imprimir */}
-                {(datos.mp_qr_base64 || datos.mp_alias) && (
-                  <div className="mt-4 bg-cyan-50 border border-cyan-200 rounded-xl p-4 text-center space-y-3">
-                    <p className="text-sm font-bold text-cyan-800">Tu QR de cobro</p>
-                    <div id="qr-mp-preview" className="bg-white p-4 rounded-lg inline-block mx-auto">
-                      <p className="text-xs font-bold text-slate-600 mb-2">{datos.mp_nombre || datos.kiosco_nombre || 'Mi Kiosco'}</p>
-                      {datos.mp_qr_base64 ? (
-                        <img src={datos.mp_qr_base64} alt="QR Mercado Pago" className="w-48 h-48 object-contain mx-auto" />
-                      ) : (
-                        <QRCodeSVG
-                          value={`https://link.mercadopago.com.ar/${datos.mp_alias}`}
-                          size={200}
-                          level="M"
-                          includeMargin={true}
-                        />
-                      )}
-                      {datos.mp_alias && <p className="text-xs text-slate-500 mt-2">Alias: <strong>{datos.mp_alias}</strong></p>}
-                    </div>
+                <div>
+                  <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                    Número de WhatsApp
+                  </label>
+                  <div className="relative">
+                    <MessageCircle size={16} className="pointer-events-none absolute left-3 top-3 text-slate-400" />
+                    <input
+                      name="whatsapp_numero"
+                      value={datos.whatsapp_numero}
+                      onChange={handleChange}
+                      className={`${INPUT_BASE} pl-9`}
+                      placeholder="5491112345678"
+                    />
+                  </div>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Formato internacional sin + ni espacios. Ejemplo: 5491112345678
+                  </p>
+                </div>
+              </div>
+            </section>
+
+            {/*
+            <section className={GLASS_CARD}>
+              <h2 className="mb-4 flex items-center gap-2 text-lg font-bold text-slate-800">
+                <Users size={20} className="text-emerald-600" /> Usuarios y Accesos
+              </h2>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                    Usuario administrador
+                  </label>
+                  <input
+                    name="admin_user"
+                    value={datos.admin_user}
+                    onChange={handleChange}
+                    className={INPUT_BASE}
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                    Nueva contraseña
+                  </label>
+                  <p className="mb-1 text-[11px] text-slate-500">Dejá vacío para mantener la actual.</p>
+                  <div className="relative">
+                    <Key size={16} className="pointer-events-none absolute left-3 top-3 text-slate-400" />
+                    <input
+                      type={mostrarPassword ? "text" : "password"}
+                      name="admin_password"
+                      value={datos.admin_password}
+                      onChange={handleChange}
+                      placeholder="••••••••"
+                      className={`${INPUT_BASE} pl-9 pr-10`}
+                    />
                     <button
                       type="button"
-                      onClick={() => {
-                        const printW = window.open('', '_blank', 'width=400,height=600');
-                        const el = document.getElementById('qr-mp-preview');
-                        printW.document.write(`
-                          <html><head><title>QR MercadoPago</title>
-                          <style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:Arial,sans-serif;margin:0;}
-                          h2{margin-bottom:4px} p{margin:4px 0;color:#666;font-size:14px;}</style></head>
-                          <body>
-                            <h2>${datos.mp_nombre || datos.kiosco_nombre || 'Mi Kiosco'}</h2>
-                            <p>Escaneá para pagar</p>
-                            ${el.innerHTML}
-                            ${datos.mp_alias ? `<p style="margin-top:12px;font-size:12px;color:#999;">Alias: ${datos.mp_alias}</p>` : ''}
-                          </body></html>`);
-                        printW.document.close();
-                        setTimeout(() => { printW.print(); }, 500);
-                      }}
-                      className="flex items-center justify-center gap-2 bg-cyan-600 hover:bg-cyan-700 text-white px-4 py-2 rounded-lg font-bold text-sm transition-colors mx-auto"
+                      onClick={() => setMostrarPassword((prev) => !prev)}
+                      className="absolute right-3 top-2.5 text-slate-400 transition hover:text-emerald-700"
                     >
-                      <Printer size={14}/> Imprimir QR para el mostrador
+                      {mostrarPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                     </button>
+                  </div>
+                </div>
+
+                {rolActual === "admin" && (
+                  <div className={`${GLASS_PANEL} space-y-3`}>
+                    <p className="text-sm font-semibold text-slate-700">Alta de cajeros y operadores</p>
+                    <div className="space-y-2">
+                      <input
+                        placeholder="Nombre de usuario"
+                        className={INPUT_BASE}
+                        value={nuevoUser.nombre}
+                        onChange={(e) => setNuevoUser({ ...nuevoUser, nombre: e.target.value })}
+                      />
+                      <input
+                        type="password"
+                        placeholder="Contraseña"
+                        className={INPUT_BASE}
+                        value={nuevoUser.password}
+                        onChange={(e) => setNuevoUser({ ...nuevoUser, password: e.target.value })}
+                      />
+                      <select
+                        className={INPUT_BASE}
+                        value={nuevoUser.rol}
+                        onChange={(e) => setNuevoUser({ ...nuevoUser, rol: e.target.value })}
+                      >
+                        <option value="cajero">Cajero</option>
+                        <option value="supervisor">Supervisor</option>
+                        <option value="admin">Administrador</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={crearUsuario}
+                        disabled={userLoading}
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
+                      >
+                        {userLoading ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />} Crear usuario
+                      </button>
+                    </div>
+
+                    {usuarios.length > 0 && (
+                      <div className="max-h-56 space-y-1 overflow-y-auto">
+                        {usuarios.map((u) => (
+                          <div
+                            key={u.id}
+                            className={`flex items-center justify-between rounded-lg border p-2 text-sm ${
+                              u.activo ? "border-slate-200/80 bg-white" : "border-rose-200/80 bg-rose-50/60 opacity-70"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <Shield
+                                size={14}
+                                className={
+                                  u.rol === "admin"
+                                    ? "text-rose-500"
+                                    : u.rol === "supervisor"
+                                    ? "text-amber-500"
+                                    : "text-blue-500"
+                                }
+                              />
+                              <span className="font-medium text-slate-700">{u.nombre}</span>
+                              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase text-slate-600">{u.rol}</span>
+                            </div>
+
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => toggleUsuarioActivo(u)}
+                                className={`rounded px-2 py-1 text-[10px] font-bold ${
+                                  u.activo ? "text-amber-700 hover:bg-amber-50" : "text-emerald-700 hover:bg-emerald-50"
+                                }`}
+                              >
+                                {u.activo ? "Desactivar" : "Activar"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => eliminarUsuario(u.id, u.nombre)}
+                                className="rounded p-1 text-rose-500 transition hover:bg-rose-50"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 
-                <hr className="my-6 border-slate-100"/>
+                <button
+                  type="button"
+                  onClick={manejarCierreSesion}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-slate-300/80 bg-white/80 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  <LogOut size={16} /> Cerrar sesión
+                </button>
+              </div>
+            </section>
+            */}
 
-                {/* ---- COBRO CON QR AUTOMATICO ---- */}
-                <h2 className="text-lg font-bold text-slate-700 mb-2 flex items-center gap-2">
-                    <Key size={20} className="text-blue-500"/> Cobro con QR Automatico
-                </h2>
-                <span className={`text-xs font-semibold px-2 py-1 rounded-full inline-block mb-3 ${datos.mp_api_configurada === 'true' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-400'}`}>
-                    {datos.mp_api_configurada === 'true' ? '✓ Configurado y activo' : 'Sin configurar'}
-                </span>
-                <p className="text-xs text-slate-400 mb-4">
-                    Conecta tu cuenta de MercadoPago para que el sistema genere cobros automaticos. Cuando cobras con MercadoPago, el QR del mostrador muestra el monto exacto. El cliente escanea, paga y el sistema confirma solo.
-                </p>
+            {/*
+            <section className={GLASS_CARD}>
+              <h2 className="mb-2 flex items-center gap-2 text-lg font-bold text-slate-800">
+                <QrCode size={20} className="text-emerald-600" /> Métodos de Cobro (QR)
+              </h2>
+              <p className="mb-4 text-sm text-slate-600">
+                Configurá tu alias y cargá el QR estático oficial de Mercado Pago para cobros en mostrador.
+              </p>
 
-                {/* PASO 1: Token */}
-                <div className="bg-slate-50 rounded-xl p-4 space-y-4 mb-4">
-                    <p className="text-xs font-bold text-slate-600">Paso 1 — Conectar tu cuenta de MercadoPago</p>
+              <div className="space-y-4">
+                <div>
+                  <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Alias</label>
+                  <input
+                    name="mp_alias"
+                    value={datos.mp_alias}
+                    onChange={handleChange}
+                    className={INPUT_BASE}
+                    placeholder="Ej: mikiosco.mp"
+                  />
+                </div>
 
-                    {/* Guía para obtener el token */}
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <div>
+                  <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                    Nombre del titular
+                  </label>
+                  <input
+                    name="mp_nombre"
+                    value={datos.mp_nombre}
+                    onChange={handleChange}
+                    className={INPUT_BASE}
+                    placeholder="Ej: Juan Pérez"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Imagen QR</label>
+                  {datos.mp_qr_base64 ? (
+                    <div className="flex flex-wrap items-center gap-4">
+                      <div className="rounded-xl border border-slate-200 bg-white p-3">
+                        <img src={datos.mp_qr_base64} alt="QR Mercado Pago" className="h-32 w-32 object-contain" />
+                      </div>
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold text-emerald-700">QR cargado correctamente</p>
+                        <label className="block cursor-pointer rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-center text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100">
+                          Cambiar imagen
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => subirImagenQr(e.target.files?.[0])}
+                          />
+                        </label>
                         <button
-                            type="button"
-                            onClick={() => setMostrarGuiaToken(!mostrarGuiaToken)}
-                            className="flex items-center justify-between w-full text-left"
+                          type="button"
+                          onClick={() => setDatos((prev) => ({ ...prev, mp_qr_base64: "" }))}
+                          className="w-full rounded-lg px-3 py-1.5 text-xs font-semibold text-rose-600 transition hover:bg-rose-50"
                         >
-                            <span className="text-xs font-bold text-blue-700">
-                                {mostrarGuiaToken ? 'Ocultar instrucciones' : 'Como obtener tu Access Token de MercadoPago'}
-                            </span>
-                            <span className="text-blue-500 text-sm">{mostrarGuiaToken ? '▲' : '▼'}</span>
+                          Eliminar QR
                         </button>
-                        {mostrarGuiaToken && (
-                            <div className="mt-3 space-y-2 text-xs text-blue-800">
-                                <p className="font-semibold">Segui estos pasos:</p>
-                                <ol className="list-decimal pl-4 space-y-1.5">
-                                    <li>Ingresa a <a href="https://www.mercadopago.com.ar/developers/panel/app" target="_blank" rel="noopener noreferrer" className="underline font-bold hover:text-blue-600">MercadoPago Developers</a> con tu cuenta de MercadoPago (la misma donde recibis los pagos).</li>
-                                    <li>Si no tenes una aplicacion creada, hace clic en <strong>"Crear aplicacion"</strong>. Ponele cualquier nombre (ej: "Mi Kiosco") y selecciona <strong>"Pagos presenciales &gt; Codigo QR modelo asistido"</strong>.</li>
-                                    <li>Una vez creada, entra a la aplicacion y anda a <strong>"Credenciales de produccion"</strong>.</li>
-                                    <li>Copia el <strong>Access Token</strong> (empieza con <code>APP_USR-</code>) y pegalo abajo.</li>
-                                </ol>
-                                <div className="mt-2 bg-blue-100 rounded px-3 py-2 text-[11px]">
-                                    <strong>Importante:</strong> Usa las credenciales de <strong>produccion</strong>, no las de prueba (test). Las de produccion empiezan con <code>APP_USR-</code>.
-                                </div>
-                            </div>
-                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-emerald-200 bg-emerald-50/60 p-6 text-center transition hover:bg-emerald-50">
+                      <QrCode size={32} className="text-emerald-400" />
+                      <span className="text-sm font-semibold text-emerald-700">Hacé clic para subir la imagen del QR</span>
+                      <span className="text-xs text-slate-500">PNG, JPG o WEBP</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => subirImagenQr(e.target.files?.[0])}
+                      />
+                    </label>
+                  )}
+                </div>
+              </div>
+
+              {(datos.mp_qr_base64 || datos.mp_alias) && (
+                <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 text-center">
+                  <p className="mb-2 text-sm font-bold text-emerald-800">Vista previa de cobro</p>
+                  <div id="qr-mp-preview" className="mx-auto inline-block rounded-lg bg-white p-4">
+                    <p className="mb-2 text-xs font-bold text-slate-600">{datos.mp_nombre || datos.kiosco_nombre || "Mi Kiosco"}</p>
+                    {datos.mp_qr_base64 ? (
+                      <img src={datos.mp_qr_base64} alt="QR Mercado Pago" className="mx-auto h-48 w-48 object-contain" />
+                    ) : (
+                      <QRCodeSVG
+                        value={`https://link.mercadopago.com.ar/${datos.mp_alias}`}
+                        size={200}
+                        level="M"
+                        includeMargin={true}
+                      />
+                    )}
+                    {datos.mp_alias ? <p className="mt-2 text-xs text-slate-500">Alias: {datos.mp_alias}</p> : null}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const printW = window.open("", "_blank", "width=400,height=600");
+                      const el = document.getElementById("qr-mp-preview");
+                      printW.document.write(`
+                        <html><head><title>QR MercadoPago</title>
+                        <style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:Arial,sans-serif;margin:0;}
+                        h2{margin-bottom:4px} p{margin:4px 0;color:#666;font-size:14px;}</style></head>
+                        <body>
+                          <h2>${datos.mp_nombre || datos.kiosco_nombre || "Mi Kiosco"}</h2>
+                          <p>Escaneá para pagar</p>
+                          ${el?.innerHTML || ""}
+                          ${datos.mp_alias ? `<p style=\"margin-top:12px;font-size:12px;color:#999;\">Alias: ${datos.mp_alias}</p>` : ""}
+                        </body></html>`);
+                      printW.document.close();
+                      setTimeout(() => {
+                        printW.print();
+                      }, 500);
+                    }}
+                    className="mx-auto mt-3 inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+                  >
+                    <Printer size={14} /> Imprimir QR para mostrador
+                  </button>
+                </div>
+              )}
+
+              <div className="mt-5 border-t border-white/80 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setMostrarMpAvanzado((prev) => !prev)}
+                  className="text-xs font-semibold uppercase tracking-wide text-slate-600 transition hover:text-slate-900"
+                >
+                  {mostrarMpAvanzado ? "Ocultar opciones avanzadas" : "Mostrar opciones avanzadas"}
+                </button>
+
+                {mostrarMpAvanzado && (
+                  <div className={`${GLASS_PANEL} mt-3 space-y-4`}>
+                    <div className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                      {datos.mp_api_configurada === "true" ? "Configurado y activo" : "Sin configurar"}
+                    </div>
+
+                    <p className="text-xs text-slate-600">
+                      Integración API para cobro QR automático con confirmación de pago y creación de punto de cobro.
+                    </p>
+
+                    <div>
+                      <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                        Access Token
+                      </label>
+                      <input
+                        name="mp_access_token"
+                        value={datos.mp_access_token}
+                        onChange={handleChange}
+                        type="password"
+                        autoComplete="new-password"
+                        className={`${INPUT_BASE} font-mono text-xs`}
+                        placeholder="APP_USR-..."
+                      />
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        Por seguridad, el token guardado no se muestra. Ingresalo solo para actualizarlo.
+                      </p>
                     </div>
 
                     <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">Access Token <span className="text-red-400">*</span></label>
-                        <input
-                            name="mp_access_token"
-                            value={datos.mp_access_token}
-                            onChange={handleChange}
-                            type="password"
-                            autoComplete="new-password"
-                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono text-xs"
-                            placeholder="APP_USR-... (dejalo vacio para no modificarlo)"
-                        />
-                        <p className="text-[10px] text-slate-400 mt-1">Por seguridad, el token guardado no se muestra. Solo ingresalo si queres cambiarlo.</p>
-                    </div>
-
-                    {/* Webhook oculto por defecto */}
-                    <div>
-                        <button
-                            type="button"
-                            onClick={() => setMostrarWebhook(!mostrarWebhook)}
-                            className="text-[11px] text-slate-400 hover:text-slate-600 transition-colors"
-                        >
-                            {mostrarWebhook ? '▲ Ocultar opciones avanzadas' : '▼ Opciones avanzadas (opcional)'}
-                        </button>
-                        {mostrarWebhook && (
-                            <div className="mt-2 space-y-2">
-                                <label className="block text-xs font-bold text-slate-500 mb-1">URL de notificaciones (opcional)</label>
-                                <input
-                                    name="mp_webhook_url"
-                                    value={datos.mp_webhook_url || ""}
-                                    onChange={handleChange}
-                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono text-xs"
-                                    placeholder="https://tu-dominio.com/api/mp/webhook"
-                                />
-                                <p className="text-[10px] text-slate-400">Sin esto el sistema funciona igual (verifica el pago cada 2 segundos). Solo es necesario si tenes un dominio publico apuntando al sistema.</p>
-                            </div>
-                        )}
+                      <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                        URL de notificaciones (opcional)
+                      </label>
+                      <input
+                        name="mp_webhook_url"
+                        value={datos.mp_webhook_url || ""}
+                        onChange={handleChange}
+                        className={`${INPUT_BASE} font-mono text-xs`}
+                        placeholder="https://tu-dominio.com/api/mp/webhook"
+                      />
                     </div>
 
                     {datos.mp_user_id && (
-                        <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-500">
-                            Cuenta conectada (ID): <strong className="text-slate-700">{datos.mp_user_id}</strong>
-                        </div>
+                      <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+                        Cuenta conectada (ID): <strong className="text-slate-800">{datos.mp_user_id}</strong>
+                      </div>
                     )}
-                    <button
+
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <button
                         type="button"
                         onClick={guardarYObtenerUserId}
                         disabled={loading}
-                        className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold text-sm transition-colors disabled:opacity-50"
-                    >
-                        {loading ? <Loader2 size={14} className="animate-spin"/> : <Key size={14}/>}
-                        {datos.mp_user_id ? 'Actualizar credenciales' : 'Conectar cuenta de MercadoPago'}
-                    </button>
-                    {mpApiMsg && (
-                        <div className={`flex items-start gap-2 text-xs p-3 rounded-lg ${mpApiMsg.tipo === 'ok' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
-                            {mpApiMsg.tipo === 'ok' ? <CheckCircle size={14} className="mt-0.5 shrink-0"/> : <AlertTriangle size={14} className="mt-0.5 shrink-0"/>}
-                            {mpApiMsg.texto}
-                        </div>
-                    )}
-                </div>
+                        className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
+                      >
+                        {loading ? <Loader2 size={14} className="animate-spin" /> : <Key size={14} />}
+                        Conectar cuenta
+                      </button>
 
-                {/* PASO 2: Crear sucursal y caja */}
-                <div className="bg-slate-50 rounded-xl p-4 space-y-3">
-                    <p className="text-xs font-bold text-slate-600">Paso 2 — Crear punto de cobro</p>
-                    <p className="text-[10px] text-slate-400">Esto registra tu negocio en MercadoPago y genera un QR para el mostrador. Solo hay que hacerlo una vez.</p>
-                    {datos.mp_api_configurada === 'true' && (
-                        <div className="bg-white border border-green-200 rounded-lg px-3 py-2 text-xs text-green-700 flex items-center gap-2">
-                            <CheckCircle size={14}/> Punto de cobro creado. Podes recrearlo si es necesario.
-                        </div>
-                    )}
-                    <button
+                      <button
                         type="button"
                         onClick={crearSucursalYCaja}
                         disabled={mpSetupLoading || !datos.mp_user_id}
-                        className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-700 text-white px-4 py-2 rounded-lg font-bold text-sm transition-colors disabled:opacity-50"
-                    >
-                        {mpSetupLoading ? <Loader2 size={14} className="animate-spin"/> : <Building2 size={14}/>}
-                        {datos.mp_api_configurada === 'true' ? 'Re-crear punto de cobro' : 'Crear punto de cobro'}
-                    </button>
-                    {mpSetupMsg && (
-                        <div className={`flex items-start gap-2 text-xs p-3 rounded-lg ${mpSetupMsg.tipo === 'ok' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
-                            {mpSetupMsg.tipo === 'ok' ? <CheckCircle size={14} className="mt-0.5 shrink-0"/> : <AlertTriangle size={14} className="mt-0.5 shrink-0"/>}
-                            {mpSetupMsg.texto}
-                        </div>
-                    )}
-                    {/* QR del mostrador */}
-                    {datos.mp_pos_qr_image_url && (
-                        <div className="mt-2 bg-white border border-cyan-200 rounded-xl p-4 text-center space-y-3">
-                            <p className="text-sm font-bold text-cyan-800">QR del Mostrador (imprimir y pegar)</p>
-                            <div className="inline-block bg-white p-3 border border-slate-100 rounded-lg mx-auto">
-                                <img src={datos.mp_pos_qr_image_url} alt="QR Mostrador" className="w-48 h-48 object-contain mx-auto"/>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={imprimirQRMostrador}
-                                className="flex items-center justify-center gap-2 bg-cyan-600 hover:bg-cyan-700 text-white px-4 py-2 rounded-lg font-bold text-sm transition-colors mx-auto"
-                            >
-                                <Printer size={14}/> Imprimir QR del Mostrador
-                            </button>
-                        </div>
-                    )}
-                </div>
-
-                <hr className="my-6 border-slate-100"/>
-
-                <h2 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
-                    <MessageCircle size={20} className="text-green-500"/> WhatsApp
-                </h2>
-                <div className="space-y-4">
-                    <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">Número de WhatsApp del negocio</label>
-                        <input 
-                            name="whatsapp_numero"
-                            value={datos.whatsapp_numero}
-                            onChange={handleChange}
-                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none"
-                            placeholder="Ej: 5491112345678 (con código de país)"
-                        />
-                        <p className="text-[10px] text-slate-400 mt-1">Formato internacional sin + ni espacios. Ej: 5491112345678</p>
+                        className="inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
+                      >
+                        {mpSetupLoading ? <Loader2 size={14} className="animate-spin" /> : <Building2 size={14} />}
+                        {datos.mp_api_configurada === "true" ? "Re-crear punto" : "Crear punto"}
+                      </button>
                     </div>
-                </div>
 
-                <hr className="my-6 border-slate-100"/>
-
-                <h2 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
-                    <Cloud size={20} className="text-blue-500"/> Sincronización en la Nube
-                </h2>
-                <p className="text-xs text-slate-400 mb-3">Configura un servidor para respaldar tus datos automáticamente.</p>
-                <div className="space-y-4">
-                    <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">URL del servidor de sync</label>
-                        <input 
-                            name="sync_url"
-                            value={datos.sync_url}
-                            onChange={handleChange}
-                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                            placeholder="https://mi-servidor.com/api/sync"
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-1">Token de autenticación (opcional)</label>
-                        <input 
-                            name="sync_token"
-                            value={datos.sync_token}
-                            onChange={handleChange}
-                            type="password"
-                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                            placeholder="Token secreto"
-                        />
-                    </div>
-                </div>
-
-                <div className="mt-8">
-                    <button 
-                        type="submit" 
-                        disabled={loading}
-                        className="w-full bg-slate-900 text-white py-3 rounded-lg font-bold hover:bg-slate-800 transition-all flex justify-center items-center gap-2 shadow-lg"
-                    >
-                        <Save size={18}/> {loading ? "Guardando..." : "Guardar Cambios"}
-                    </button>
-                </div>
-            </form>
-        </div>
-
-        {/* COLUMNA DERECHA: ACCIONES */}
-        <div className="space-y-6">
-
-            {/* TARJETA ACTUALIZAR SISTEMA (Solo visible si hay actualización) */}
-            {updateAvailable && (
-            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-6 rounded-xl shadow-sm border-2 border-blue-300 animate-in fade-in slide-in-from-top-2 duration-300">
-                <h3 className="font-bold text-blue-800 mb-2 flex items-center gap-2">
-                    <RefreshCw size={20} className="text-blue-600 animate-spin" style={{ animationDuration: '3s' }}/> Actualización Disponible
-                </h3>
-                <p className="text-sm text-blue-600 mb-1">Versión <strong>v{updateAvailable.version}</strong> lista para instalar.</p>
-                <p className="text-xs text-blue-400 mb-4">La app se reiniciará automáticamente para aplicar la actualización.</p>
-                <button 
-                    onClick={instalarActualizacion}
-                    className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700 transition-all flex justify-center items-center gap-2 shadow-lg hover:shadow-xl"
-                >
-                    <Download size={18}/> Actualizar Sistema
-                </button>
-            </div>
-            )}
-            
-            {/* TARJETA CERRAR SESIÓN */}
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                <h3 className="font-bold text-slate-700 mb-2">Sesión Actual</h3>
-                <p className="text-sm text-slate-500 mb-4">Estás logueado como administrador. Cierra sesión si terminaste tu turno.</p>
-                <button 
-                    onClick={manejarCierreSesion}
-                    className="w-full border border-slate-300 text-slate-700 py-2 rounded-lg font-bold hover:bg-slate-50 transition-colors flex justify-center items-center gap-2"
-                >
-                    <LogOut size={18}/> Cerrar Sesión
-                </button>
-            </div>
-
-            {/* TARJETA TUTORIAL */}
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                <h3 className="font-bold text-slate-700 mb-2 flex items-center gap-2">
-                    <BookOpen size={20} className="text-indigo-500"/> Guía de Inicio
-                </h3>
-                <p className="text-sm text-slate-500 mb-4">¿Necesitás repasar las funciones principales? Volvé a ver el tutorial de bienvenida.</p>
-                <button 
-                    onClick={() => { localStorage.removeItem("sacware_tutorial_visto"); window.location.reload(); }}
-                    className="w-full border border-indigo-300 text-indigo-700 py-2 rounded-lg font-bold hover:bg-indigo-50 transition-colors flex justify-center items-center gap-2"
-                >
-                    <BookOpen size={18}/> Ver Tutorial
-                </button>
-            </div>
-
-            {/* TARJETA BACKUPS */}
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                <h3 className="font-bold text-slate-700 mb-2 flex items-center gap-2">
-                    <Database size={20} className="text-blue-500"/> Respaldo de Datos
-                </h3>
-                <p className="text-sm text-slate-500 mb-4">El sistema crea backups automáticos al iniciar. También puedes crear uno manual.</p>
-                
-                {backupMsg && (
-                  <div className={`mb-3 p-2 rounded-lg text-sm flex items-center gap-2 ${backupMsg.tipo === "ok" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
-                    {backupMsg.tipo === "ok" ? <CheckCircle size={16}/> : <AlertTriangle size={16}/>}
-                    {backupMsg.texto}
-                  </div>
-                )}
-
-                <button 
-                    onClick={crearBackup}
-                    disabled={backupLoading}
-                    className="w-full bg-blue-600 text-white py-2.5 rounded-lg font-bold hover:bg-blue-700 transition-colors flex justify-center items-center gap-2 mb-4 disabled:opacity-60"
-                >
-                    {backupLoading ? <Loader2 size={18} className="animate-spin"/> : <Download size={18}/>}
-                    {backupLoading ? "Procesando..." : "Crear Backup Manual"}
-                </button>
-
-                {backups.length > 0 && (
-                  <div>
-                    <p className="text-xs font-bold text-slate-500 mb-2">Backups disponibles ({backups.length})</p>
-                    <div className="space-y-1 max-h-40 overflow-y-auto">
-                      {backups.map((b, i) => {
-                        const nombre = typeof b === 'string' ? b : b.nombre;
-                        const detalle = typeof b === 'object' ? ` (${b.tamaño})` : '';
-                        return (
-                          <div key={i} className="flex items-center justify-between bg-slate-50 p-2 rounded-lg border border-slate-100 text-xs">
-                            <span className="text-slate-600 truncate flex-1 mr-2" title={nombre}>{nombre}{detalle}</span>
-                            <button
-                              onClick={() => restaurarBackup(nombre)}
-                              className="text-orange-600 hover:text-orange-800 font-bold flex items-center gap-1 flex-shrink-0"
-                            >
-                              <RotateCcw size={14}/> Restaurar
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-            </div>
-
-            {/* TARJETA SINCRONIZACIÓN EN LA NUBE */}
-            {datos.sync_url && (
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                <h3 className="font-bold text-slate-700 mb-2 flex items-center gap-2">
-                    <Cloud size={20} className="text-blue-500"/> Sincronización en la Nube
-                </h3>
-                <p className="text-sm text-slate-500 mb-4">Subí o descargá tu base de datos del servidor remoto.</p>
-                
-                {syncMsg && (
-                  <div className={`mb-3 p-2 rounded-lg text-sm flex items-center gap-2 ${syncMsg.tipo === "ok" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
-                    {syncMsg.tipo === "ok" ? <CheckCircle size={16}/> : <AlertTriangle size={16}/>}
-                    {syncMsg.texto}
-                  </div>
-                )}
-
-                <div className="space-y-2">
-                  <button 
-                    onClick={syncPush}
-                    disabled={syncLoading}
-                    className="w-full bg-blue-600 text-white py-2.5 rounded-lg font-bold hover:bg-blue-700 transition-colors flex justify-center items-center gap-2 disabled:opacity-60"
-                  >
-                    {syncLoading ? <Loader2 size={16} className="animate-spin"/> : <CloudUpload size={16}/>}
-                    Subir backup al servidor
-                  </button>
-                  <button 
-                    onClick={syncPull}
-                    disabled={syncLoading}
-                    className="w-full border border-blue-300 text-blue-700 py-2.5 rounded-lg font-bold hover:bg-blue-50 transition-colors flex justify-center items-center gap-2 disabled:opacity-60"
-                  >
-                    {syncLoading ? <Loader2 size={16} className="animate-spin"/> : <CloudDownload size={16}/>}
-                    Descargar desde el servidor
-                  </button>
-                </div>
-            </div>
-            )}
-
-            {/* TARJETA GESTIÓN DE USUARIOS (Solo Admin) */}
-            {rolActual === "admin" && (
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                <h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
-                    <Users size={20} className="text-purple-500"/> Gestión de Usuarios
-                </h3>
-
-                {/* Formulario nuevo usuario */}
-                <form onSubmit={crearUsuario} className="space-y-2 mb-4">
-                  <input 
-                    placeholder="Nombre de usuario"
-                    className="w-full p-2 border rounded-lg text-sm focus:ring-2 focus:ring-purple-500 outline-none"
-                    value={nuevoUser.nombre}
-                    onChange={e => setNuevoUser({...nuevoUser, nombre: e.target.value})}
-                  />
-                  <input 
-                    type="password"
-                    placeholder="Contraseña"
-                    className="w-full p-2 border rounded-lg text-sm focus:ring-2 focus:ring-purple-500 outline-none"
-                    value={nuevoUser.password}
-                    onChange={e => setNuevoUser({...nuevoUser, password: e.target.value})}
-                  />
-                  <select
-                    className="w-full p-2 border rounded-lg text-sm bg-white"
-                    value={nuevoUser.rol}
-                    onChange={e => setNuevoUser({...nuevoUser, rol: e.target.value})}
-                  >
-                    <option value="cajero">Cajero</option>
-                    <option value="supervisor">Supervisor</option>
-                    <option value="admin">Administrador</option>
-                  </select>
-                  <button 
-                    type="submit" 
-                    disabled={userLoading}
-                    className="w-full bg-purple-600 text-white py-2 rounded-lg font-bold hover:bg-purple-700 flex justify-center items-center gap-2 text-sm"
-                  >
-                    <Plus size={16}/> Crear Usuario
-                  </button>
-                </form>
-
-                {/* Lista de usuarios */}
-                {usuarios.length > 0 && (
-                  <div className="space-y-1 max-h-48 overflow-y-auto">
-                    {usuarios.map(u => (
-                      <div key={u.id} className={`flex items-center justify-between p-2 rounded-lg border text-sm ${u.activo ? 'bg-slate-50 border-slate-100' : 'bg-red-50 border-red-100 opacity-60'}`}>
-                        <div className="flex items-center gap-2">
-                          <Shield size={14} className={u.rol === 'admin' ? 'text-red-500' : u.rol === 'supervisor' ? 'text-yellow-500' : 'text-blue-500'}/>
-                          <span className="font-medium text-slate-700">{u.nombre}</span>
-                          <span className="text-[10px] bg-slate-200 px-1.5 py-0.5 rounded uppercase">{u.rol}</span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <button 
-                            onClick={() => toggleUsuarioActivo(u)} 
-                            className={`text-[10px] px-2 py-1 rounded font-bold ${u.activo ? 'text-orange-600 hover:bg-orange-50' : 'text-green-600 hover:bg-green-50'}`}
-                          >
-                            {u.activo ? "Desactivar" : "Activar"}
-                          </button>
-                          <button onClick={() => eliminarUsuario(u.id, u.nombre)} className="text-red-400 hover:text-red-600 p-1">
-                            <Trash2 size={14}/>
-                          </button>
+                    {mpApiMsg && (
+                      <div
+                        className={`rounded-lg border px-3 py-2 text-xs ${
+                          mpApiMsg.tipo === "ok"
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                            : "border-rose-200 bg-rose-50 text-rose-700"
+                        }`}
+                      >
+                        <div className="flex items-start gap-2">
+                          {mpApiMsg.tipo === "ok" ? (
+                            <CheckCircle size={14} className="mt-0.5 shrink-0" />
+                          ) : (
+                            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                          )}
+                          {mpApiMsg.texto}
                         </div>
                       </div>
-                    ))}
+                    )}
+
+                    {mpSetupMsg && (
+                      <div
+                        className={`rounded-lg border px-3 py-2 text-xs ${
+                          mpSetupMsg.tipo === "ok"
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                            : "border-rose-200 bg-rose-50 text-rose-700"
+                        }`}
+                      >
+                        <div className="flex items-start gap-2">
+                          {mpSetupMsg.tipo === "ok" ? (
+                            <CheckCircle size={14} className="mt-0.5 shrink-0" />
+                          ) : (
+                            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                          )}
+                          {mpSetupMsg.texto}
+                        </div>
+                      </div>
+                    )}
+
+                    {datos.mp_pos_qr_image_url && (
+                      <div className="rounded-xl border border-emerald-200 bg-white p-4 text-center">
+                        <p className="mb-2 text-sm font-bold text-emerald-800">QR de Mostrador (API)</p>
+                        <img
+                          src={datos.mp_pos_qr_image_url}
+                          alt="QR Mostrador"
+                          className="mx-auto h-44 w-44 object-contain"
+                        />
+                        <button
+                          type="button"
+                          onClick={imprimirQRMostrador}
+                          className="mx-auto mt-3 inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+                        >
+                          <Printer size={14} /> Imprimir QR API
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
-            </div>
+              </div>
+            </section>
+            */}
+
+            <section className={GLASS_CARD}>
+              <h3 className="mb-2 flex items-center gap-2 text-base font-bold text-slate-800">
+                <BookOpen size={18} className="text-emerald-600" /> Guía de Inicio
+              </h3>
+              <p className="mb-4 text-sm text-slate-600">
+                Volvé a mostrar el tutorial de bienvenida para repasar funciones clave.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  localStorage.removeItem("sacware_tutorial_visto");
+                  window.location.reload();
+                }}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-slate-300/80 bg-white/80 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                <BookOpen size={16} /> Ver tutorial
+              </button>
+            </section>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-5 py-3 font-bold text-white transition hover:bg-slate-800 disabled:opacity-60"
+            >
+              {loading ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />} {loading ? "Guardando..." : "Guardar Cambios"}
+            </button>
+          </form>
+
+          <div className="space-y-6">
+            {/*
+            {licenseState ? (
+              <section className={GLASS_CARD}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-[0.2em] text-emerald-700">Licencia SaaS</p>
+                    <h3 className="mt-2 text-lg font-bold text-slate-800">
+                      Estado: {licenseState.activa ? "Activa" : "Inactiva"}
+                    </h3>
+                  </div>
+                  <span className="rounded-full border border-emerald-300 bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+                    {licenseState.diasRestantes > 0 ? `${licenseState.diasRestantes} días` : "Vencida"}
+                  </span>
+                </div>
+
+                <div className="mt-4 space-y-2 rounded-xl border border-white/70 bg-white/70 p-4 text-sm text-slate-700">
+                  <p>
+                    <span className="font-semibold text-slate-900">Vence el:</span> {fechaVencimientoFormateada}
+                  </p>
+                  <p>
+                    <span className="font-semibold text-slate-900">Días restantes:</span>{" "}
+                    {Math.max(0, Number(licenseState.diasRestantes || 0))}
+                  </p>
+                </div>
+
+                <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => requestRenewalFlow && requestRenewalFlow()}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 px-4 py-2.5 font-semibold text-white transition hover:brightness-110"
+                  >
+                    <Key size={16} /> Ingresar nueva clave
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => refreshLicenseStatus && refreshLicenseStatus()}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-white px-4 py-2.5 font-semibold text-emerald-700 transition hover:bg-emerald-50"
+                  >
+                    <RefreshCw size={16} /> Actualizar estado
+                  </button>
+                </div>
+              </section>
+            ) : null}
+            */}
+
+            {/*
+            <section className={GLASS_CARD}>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.2em] text-emerald-700">Cloud Backups</p>
+                  <h3 className="mt-2 text-lg font-bold text-slate-800">Copias de Seguridad en la Nube</h3>
+                </div>
+                <span
+                  className={`rounded-full border px-3 py-1 text-xs font-semibold ${
+                    isOnline
+                      ? "border-emerald-200 bg-emerald-100 text-emerald-700"
+                      : "border-amber-200 bg-amber-100 text-amber-700"
+                  }`}
+                >
+                  {isOnline ? "Conectado" : "Sin conexión"}
+                </span>
+              </div>
+
+              <div className="mt-4 rounded-xl border border-white/70 bg-white/70 p-4 text-sm text-slate-700">
+                Última copia: <strong>{formatearUltimoBackup(lastCloudBackupAt)}</strong>
+              </div>
+
+              {cloudBackupPending ? (
+                <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-100/80 px-3 py-1.5 text-xs font-semibold text-amber-700">
+                  <Cloud size={14} /> Copia en espera de conexión...
+                </div>
+              ) : null}
+
+              {cloudBackupMsg ? (
+                <div
+                  className={`mt-3 rounded-xl border px-4 py-3 text-sm ${
+                    cloudBackupMsg.tipo === "ok"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                      : cloudBackupMsg.tipo === "warn"
+                      ? "border-amber-200 bg-amber-50 text-amber-700"
+                      : "border-rose-200 bg-rose-50 text-rose-700"
+                  }`}
+                >
+                  {cloudBackupMsg.texto}
+                </div>
+              ) : null}
+
+              <button
+                type="button"
+                onClick={respaldarAhoraCloud}
+                disabled={cloudBackupLoading}
+                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 px-4 py-3 font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {cloudBackupLoading ? <Loader2 size={16} className="animate-spin" /> : <CloudUpload size={16} />}
+                {cloudBackupLoading ? "Subiendo..." : "Respaldar ahora"}
+              </button>
+            </section>
+            */}
+
+            {updateAvailable && (
+              <section className={GLASS_CARD}>
+                <h3 className="mb-2 flex items-center gap-2 font-bold text-slate-800">
+                  <RefreshCw size={20} className="animate-spin text-emerald-600" style={{ animationDuration: "3s" }} />
+                  Actualización Disponible
+                </h3>
+                <p className="mb-1 text-sm text-slate-700">
+                  Versión <strong>v{updateAvailable.version}</strong> lista para instalar.
+                </p>
+                <p className="mb-4 text-xs text-slate-500">
+                  La app se reiniciará automáticamente para aplicar la actualización.
+                </p>
+                <button
+                  type="button"
+                  onClick={instalarActualizacion}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 font-semibold text-white transition hover:bg-slate-800"
+                >
+                  <Download size={16} /> Actualizar Sistema
+                </button>
+              </section>
             )}
-
+          </div>
         </div>
-
       </div>
     </div>
   );
 }
 
 export default Configuracion;
+

@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { Building2, Search, Calendar, DollarSign, TrendingUp, TrendingDown, AlertTriangle, CheckCircle, Save, History, ChevronDown, ChevronUp, Download } from "lucide-react";
 import { apiFetch } from "../lib/api";
+import { useNotify } from "../context/NotificationContext";
 
 function Conciliacion() {
+  const { toast, confirmDialog } = useNotify();
   // Fechas por defecto: última semana
   const hoy = new Date().toISOString().split('T')[0];
   const haceUnaSemana = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -40,7 +42,7 @@ function Conciliacion() {
       setDatos(data);
     } catch (err) {
       console.error(err);
-      alert("Error al consultar ventas digitales.");
+      toast("Error al consultar ventas digitales.", "err");
     } finally {
       setCargando(false);
     }
@@ -51,7 +53,7 @@ function Conciliacion() {
     const totalBanco = parseFloat(montoBanco) || 0;
     const diferencia = totalBanco - datos.total_sistema;
 
-    if (!confirm(`¿Guardar conciliación?\nSistema: $${datos.total_sistema.toLocaleString()}\nBanco: $${totalBanco.toLocaleString()}\nDiferencia: $${diferencia.toLocaleString()}`)) return;
+    if (!(await confirmDialog(`¿Guardar conciliación?\nSistema: $${datos.total_sistema.toLocaleString()}\nBanco: $${totalBanco.toLocaleString()}\nDiferencia: $${diferencia.toLocaleString()}`))) return;
 
     setGuardando(true);
     try {
@@ -69,15 +71,15 @@ function Conciliacion() {
       });
       const data = await res.json();
       if (data.success) {
-        alert("Conciliación guardada correctamente");
+        toast("Conciliación guardada correctamente", "ok");
         setMontoBanco("");
         setObservacion("");
         cargarHistorial();
       } else {
-        alert("Error: " + data.error);
+        toast("Error: " + data.error, "err");
       }
     } catch (e) {
-      alert("Error de conexión");
+      toast("Error de conexión", "err");
     } finally {
       setGuardando(false);
     }

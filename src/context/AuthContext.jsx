@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
-import { API_BASE } from "../lib/api";
+import { apiFetch } from "../lib/api";
 
 const AuthContext = createContext();
 
@@ -11,6 +11,14 @@ export const AuthProvider = ({ children }) => {
   const [usuario, setUsuario] = useState(null);
   const [rol, setRol] = useState(null);
   const [cargando, setCargando] = useState(true);
+
+  const buildIpcUnavailableMessage = () => {
+    const runningInLocalhost = typeof window !== "undefined" && window.location?.host?.includes("localhost:5173");
+    if (runningInLocalhost) {
+      return "La app está abierta en navegador (localhost). Abrila desde la ventana de Electron con 'npm run dev'.";
+    }
+    return "No se pudo conectar con el backend local (IPC). Reiniciá la aplicación.";
+  };
 
   useEffect(() => {
     const usuarioGuardado = localStorage.getItem("usuario_kiosco");
@@ -35,7 +43,11 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (nombreUsuario, password) => {
     try {
-      const res = await fetch(`${API_BASE}/api/login`, {
+      if (!window.api?.request) {
+        return { success: false, message: buildIpcUnavailableMessage() };
+      }
+
+      const res = await apiFetch("/api/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ usuario: nombreUsuario, password }),
@@ -57,8 +69,8 @@ export const AuthProvider = ({ children }) => {
         return { success: false, message: data.error || "Credenciales incorrectas" };
       }
     } catch (error) {
-      console.error("Error de conexión al servidor:", error);
-      return { success: false, message: "No se pudo conectar al servidor. Verifique que esté en ejecución." };
+      console.error("Error de conexión IPC:", error);
+      return { success: false, message: buildIpcUnavailableMessage() };
     }
   };
 
