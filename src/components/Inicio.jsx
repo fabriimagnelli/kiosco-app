@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { DollarSign, ShoppingCart, TrendingDown, AlertTriangle, TrendingUp, Award, PieChart as PieIcon, Download, RefreshCw, X, ShieldCheck, KeyRound } from "lucide-react";
 import { apiFetch } from "../lib/api";
 import { useLicenseState } from "../context/LicenseContext";
+import { useNotify } from "../context/NotificationContext";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Legend } from "recharts";
 
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
@@ -46,6 +47,7 @@ const normalizeDashboardPayload = (payload) => {
 
 function Inicio() {
   const { licenseState, requestRenewalFlow } = useLicenseState() || {};
+  const { toast } = useNotify();
   const [dashboard, setDashboard] = useState(null);
   const [ventasSemana, setVentasSemana] = useState([]);
   const [productosTop, setProductosTop] = useState([]);
@@ -108,14 +110,14 @@ function Inicio() {
         const res = await apiFetch("/api/system/update", { method: "POST" });
         const data = await res.json();
         if (data.success) {
-            alert(`Actualizado a ${data.new_version}. Recargando...`);
+            toast(`Actualizado a ${data.new_version}. Recargando...`, "ok");
             window.location.reload();
         } else {
-            alert("Error: " + (data.error || "Intente manualmente."));
+            toast("Error: " + (data.error || "Intente manualmente."), "err");
             setUpdating(false);
         }
     } catch (error) {
-        alert("Error de conexión.");
+        toast("Error de conexión.", "err");
         setUpdating(false);
     }
   };
@@ -174,6 +176,7 @@ function Inicio() {
 
       {/* TARJETAS KPI */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/*
         {licenseState ? (
           <div className="md:col-span-2 lg:col-span-4 overflow-hidden rounded-3xl border border-cyan-200/60 bg-[linear-gradient(135deg,rgba(236,254,255,0.92),rgba(255,255,255,0.96),rgba(240,253,250,0.92))] p-5 shadow-[0_20px_60px_rgba(8,145,178,0.12)] backdrop-blur">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -197,6 +200,7 @@ function Inicio() {
             </div>
           </div>
         ) : null}
+        */}
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4 hover:shadow-md transition-shadow">
           <div className="bg-blue-100 p-3 rounded-xl text-blue-600"><DollarSign size={28} /></div>
           <div><p className="text-slate-400 text-[11px] font-bold uppercase tracking-wider">Ventas Hoy</p><p className="text-2xl font-extrabold text-slate-800 tracking-tight">$ {dashboard.ventas_hoy?.toLocaleString()}</p></div>

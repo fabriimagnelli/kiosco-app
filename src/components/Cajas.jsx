@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { Monitor, Plus, Trash2, Edit2, Check, X, Power, PowerOff, AlertTriangle } from "lucide-react";
 import { apiFetch } from "../lib/api";
+import { useNotify } from "../context/NotificationContext";
 
 function Cajas() {
+  const { toast, confirmDialog } = useNotify();
   const [cajas, setCajas] = useState([]);
   const [nuevaCaja, setNuevaCaja] = useState("");
   const [editando, setEditando] = useState(null);
@@ -37,10 +39,10 @@ function Cajas() {
         setNuevaCaja("");
         cargarCajas();
       } else {
-        alert("Error: " + data.error);
+        toast("Error: " + data.error, "err");
       }
     } catch (e) {
-      alert("Error de conexión");
+      toast("Error de conexión", "err");
     }
   };
 
@@ -55,7 +57,7 @@ function Cajas() {
       setEditando(null);
       cargarCajas();
     } catch (e) {
-      alert("Error de conexión");
+      toast("Error de conexión", "err");
     }
   };
 
@@ -67,20 +69,20 @@ function Cajas() {
       });
       cargarCajas();
     } catch (e) {
-      alert("Error de conexión");
+      toast("Error de conexión", "err");
     }
   };
 
   const eliminarCaja = async (id, nombre) => {
-    if (id === 1) return alert("No se puede eliminar la caja principal.");
-    if (!confirm(`¿Eliminar la caja "${nombre}"?\nLas ventas asociadas no se eliminan.`)) return;
+    if (id === 1) return toast("No se puede eliminar la caja principal.", "warn");
+    if (!(await confirmDialog(`¿Eliminar la caja "${nombre}"?\nLas ventas asociadas no se eliminan.`))) return;
     try {
       const res = await apiFetch(`/api/cajas/${id}`, { method: "DELETE" });
       const data = await res.json();
       if (data.success) cargarCajas();
-      else alert("Error: " + data.error);
+      else toast("Error: " + data.error, "err");
     } catch (e) {
-      alert("Error de conexión");
+      toast("Error de conexión", "err");
     }
   };
 

@@ -2,8 +2,10 @@ import React, { useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { apiFetch } from "../lib/api";
+import { useNotify } from "../context/NotificationContext";
 
 function Balance() {
+  const { toast } = useNotify();
   // Fechas por defecto: Primer día del mes hasta hoy
   const hoy = new Date().toISOString().split('T')[0];
   const primerDia = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
@@ -28,7 +30,7 @@ function Balance() {
       })
       .catch(err => {
         console.error(err);
-        alert("Error al calcular el balance. Asegúrate de haber actualizado el archivo server/index.js");
+        toast("Error al calcular el balance. Asegúrate de haber actualizado el archivo server/index.js", "err");
       })
       .finally(() => setCargando(false));
   };

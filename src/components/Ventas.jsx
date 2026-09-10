@@ -3,18 +3,22 @@ import { Search, ShoppingCart, Trash2, CreditCard, User, RefreshCw, Plus, Printe
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiFetch } from "../lib/api";
 import { beepScan, successSound, errorSound } from "../lib/sounds";
+import { useNotify } from "../context/NotificationContext";
 import jsPDF from "jspdf";
 import { QRCodeSVG } from "qrcode.react";
 
 function Ventas() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { confirmDialog } = useNotify();
 
   // Estados
   const [busqueda, setBusqueda] = useState("");
   const [productos, setProductos] = useState([]);
   const [carrito, setCarrito] = useState([]);
   const [metodo, setMetodo] = useState("Efectivo");
+  const [pagaCon, setPagaCon] = useState("");
+  const [ticketsEnEspera, setTicketsEnEspera] = useState([]);
   
   // Estados para Carga Manual
   const [manualNombre, setManualNombre] = useState("");
@@ -105,6 +109,46 @@ function Ventas() {
     };
   }, [location.state]);
 
+  const sugerirBilletes = (monto) => {
+    if (monto <= 0) return [];
+    const billetes = [1000, 2000, 5000, 10000, 20000];
+    const sugerencias = new Set();
+    billetes.forEach(b => {
+      if (b > monto) sugerencias.add(b);
+      const multiplo = Math.ceil(monto / b) * b;
+      if (multiplo > monto && multiplo <= monto + 20000) sugerencias.add(multiplo);
+    });
+    return Array.from(sugerencias).sort((a, b) => a - b).slice(0, 4);
+  };
+
+  const pausarTicket = () => {
+    if (carrito.length === 0) return;
+    setTicketsEnEspera(prev => [...prev, {
+      id: Date.now(),
+      carrito: [...carrito],
+      clienteSelec,
+      total,
+      hora: new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }),
+    }]);
+    setCarrito([]);
+    setClienteSelec("");
+    setPagoAnticipado("");
+    setDescuento("");
+    setNotas("");
+    setMetodo("Efectivo");
+    setPagoMixto(false);
+    setMixtoMonto1("");
+    setPagaCon("");
+  };
+
+  const recuperarTicket = (ticketId) => {
+    const ticket = ticketsEnEspera.find(t => t.id === ticketId);
+    if (!ticket) return;
+    setCarrito(ticket.carrito);
+    setClienteSelec(ticket.clienteSelec || "");
+    setTicketsEnEspera(prev => prev.filter(t => t.id !== ticketId));
+  };
+
   const cargarConfigNegocio = async () => {
     try {
       const res = await apiFetch("/api/config");
@@ -171,6 +215,7 @@ function Ventas() {
     cobrarBtnRef.current?.click();
   };
 
+  /* Función mock deshabilitada: reemplazada por confirmarVenta
   const abrirModalCobro = () => {
     if (carrito.length === 0) {
       mostrarToastRapido("El carrito está vacío", "warn");
@@ -188,12 +233,13 @@ function Ventas() {
     setModalPagaCon("");
     setTimeout(() => busquedaRef.current?.focus(), 60);
   };
+  */
 
   const agregarAlCarrito = (prod) => {
     // Validar stock para TODOS los productos (no solo promos)
     if (prod.tipo !== 'Manual' && prod.stock !== '-') {
       if (!prod.stock || prod.stock <= 0) {
-        return alert(`No hay stock disponible de "${prod.nombre}".`);
+        return mostrarToastRapido(`No hay stock disponible de "${prod.nombre}".`, "warn");
       }
     }
 
@@ -204,7 +250,7 @@ function Ventas() {
           p.nombre === comp.nombre && p.tipo === comp.tipo
         );
         if (!productoComponente || productoComponente.stock < comp.cantidad) {
-          return alert(`No hay suficiente stock de "${comp.nombre}" para esta promo.\nRequerido: ${comp.cantidad} | Disponible: ${productoComponente?.stock || 0}`);
+          return mostrarToastRapido(`No hay suficiente stock de "${comp.nombre}" para esta promo. Requerido: ${comp.cantidad} | Disponible: ${productoComponente?.stock || 0}`, "warn");
         }
       }
     }
@@ -221,7 +267,7 @@ function Ventas() {
       if (prod.tipo !== 'Manual' && prod.stock !== '-') {
         const stock = prod.stock || 0;
         if (existe.cantidad >= stock) {
-          return alert(`No hay más stock disponible de "${prod.nombre}". Disponible: ${stock}`);
+          return mostrarToastRapido(`No hay más stock disponible de "${prod.nombre}". Disponible: ${stock}`, "warn");
         }
       }
       setCarrito(carrito.map(item => item.nombre === prod.nombre ? { ...item, cantidad: item.cantidad + 1 } : item));
@@ -478,11 +524,11 @@ function Ventas() {
   };
 
   const confirmarVenta = async () => {
-    if (carrito.length === 0) return alert("El carrito está vacío");
+    if (carrito.length === 0) return mostrarToastRapido("El carrito está vacío", "warn");
 
     // VALIDACIÓN IMPORTANTE: Si es fiado, DEBE haber cliente
     if (metodo === "Fiado" && !clienteSelec) {
-        return alert("Para fiar, debes seleccionar un CLIENTE obligatoriamente.");
+        return mostrarToastRapido("Para fiar, debes seleccionar un CLIENTE obligatoriamente.", "warn");
     }
 
     // Calcular montos para pago mixto
@@ -492,10 +538,10 @@ function Ventas() {
     // Validar pago mixto
     if (pagoMixto) {
       if (montoMixto1 <= 0 || montoMixto1 >= total) {
-        return alert(`El monto del primer método debe ser entre $1 y $${(total - 1).toFixed(0)}`);
+        return mostrarToastRapido(`El monto del primer método debe ser entre $1 y $${(total - 1).toFixed(0)}`, "warn");
       }
       if (mixtoMetodo1 === mixtoMetodo2) {
-        return alert("Los dos métodos de pago deben ser diferentes.");
+        return mostrarToastRapido("Los dos métodos de pago deben ser diferentes.", "warn");
       }
     }
 
@@ -532,7 +578,7 @@ function Ventas() {
     };
 
     if (ticketEditando) {
-        if(!confirm(`ESTÁS EDITANDO EL TICKET #${String(parseInt(ticketEditando, 10) || ticketEditando).padStart(4, '0')}\n\n¿Continuar?`)) return;
+        if(!(await confirmDialog(`ESTÁS EDITANDO EL TICKET #${String(parseInt(ticketEditando, 10) || ticketEditando).padStart(4, '0')}\n\n¿Continuar?`))) return;
     }
 
     const res = await apiFetch("/api/ventas", {
@@ -622,9 +668,10 @@ function Ventas() {
       setMixtoMonto1("");
       setMixtoMetodo1("Efectivo");
       setMixtoMetodo2("Mercado Pago");
+      setPagaCon("");
       navigate("/ventas", { state: {} });
     } else {
-      alert("Error: " + data.error);
+      mostrarToastRapido("Error: " + data.error, "err");
     }
   };
 
@@ -784,6 +831,7 @@ function Ventas() {
   const vuelto = Math.max(0, modalPagaConNum - total);
   const esPagoEfectivo = modalMetodoPago === "Efectivo";
 
+  /* Función mock deshabilitada: no persistía la venta en la base de datos
   const confirmarCobroModal = async () => {
     if (guardandoCobro || carrito.length === 0) return;
 
@@ -825,6 +873,7 @@ function Ventas() {
       setGuardandoCobro(false);
     }
   };
+  */
 
   useEffect(() => {
     if (!modalCobroAbierto) return;
@@ -920,8 +969,35 @@ function Ventas() {
       <div className="w-full lg:w-96 bg-white/80 backdrop-blur-xl rounded-2xl shadow-sm flex flex-col border border-black/[0.04] max-h-[calc(100vh-2rem)]">
         <div className={`px-4 py-2.5 text-white flex justify-between items-center rounded-t-2xl ${ticketEditando ? 'bg-orange-500' : 'bg-[#1c1c1e]'}`}>
           <h2 className="font-medium text-sm flex items-center gap-2 tracking-tight"><ShoppingCart size={15}/> Carrito</h2>
-          <span className="bg-white/15 px-2 py-0.5 rounded-full text-xs font-medium">{carrito.length} items</span>
+          <div className="flex items-center gap-2">
+            {carrito.length > 0 && !ticketEditando && (
+              <button
+                type="button"
+                onClick={pausarTicket}
+                className="bg-white/15 hover:bg-white/25 transition-colors px-2 py-0.5 rounded-full text-xs font-medium"
+              >
+                Pausar
+              </button>
+            )}
+            <span className="bg-white/15 px-2 py-0.5 rounded-full text-xs font-medium">{carrito.length} items</span>
+          </div>
         </div>
+
+        {ticketsEnEspera.length > 0 && (
+          <div className="flex gap-1.5 overflow-x-auto px-3 py-2 border-b border-black/[0.04] bg-amber-50">
+            {ticketsEnEspera.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => recuperarTicket(t.id)}
+                className="shrink-0 flex flex-col items-start px-2.5 py-1.5 rounded-lg border border-amber-300 bg-white text-left hover:bg-amber-100 transition-colors"
+              >
+                <span className="text-[10px] font-bold text-amber-700">{t.hora}</span>
+                <span className="text-xs font-semibold text-slate-700">$ {t.total.toFixed(0)}</span>
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
           {carrito.length === 0 ? (
@@ -1134,6 +1210,48 @@ function Ventas() {
                 )}
             </div>
 
+            {/* CALCULADORA DE VUELTO RÁPIDA */}
+            {metodo === 'Efectivo' && !pagoMixto && total > 0 && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-2 space-y-1.5 animate-in fade-in slide-in-from-top-1">
+                <label className="text-[11px] font-bold text-emerald-700 uppercase tracking-wide">Calculadora de Vuelto</label>
+                <div className="flex gap-1.5">
+                  <input
+                    type="number"
+                    placeholder="Paga con $"
+                    min="0"
+                    className="flex-1 p-1.5 border border-emerald-200 rounded-lg text-xs bg-white font-bold"
+                    value={pagaCon}
+                    onChange={e => setPagaCon(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setPagaCon(String(total))}
+                    className="px-2 py-1.5 rounded-lg font-bold text-xs border border-emerald-300 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-colors"
+                  >
+                    Exacto
+                  </button>
+                </div>
+                <div className="flex gap-1.5 flex-wrap">
+                  {sugerirBilletes(total).map((billete) => (
+                    <button
+                      key={billete}
+                      type="button"
+                      onClick={() => setPagaCon(String(billete))}
+                      className="px-2 py-1 rounded-lg text-[11px] font-bold border border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-100 transition-colors"
+                    >
+                      $ {billete}
+                    </button>
+                  ))}
+                </div>
+                {parseFloat(pagaCon) > 0 && (
+                  <div className="flex justify-between items-center rounded-lg bg-emerald-100 px-2 py-1.5">
+                    <span className="text-[11px] font-bold text-emerald-700">Vuelto</span>
+                    <span className="text-lg font-black text-emerald-700">$ {Math.max(0, (parseFloat(pagaCon) || 0) - total).toFixed(0)}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* DESCUENTO POR TICKET */}
             <div>
                 <label className="text-[11px] font-medium text-[#86868b] uppercase flex items-center gap-1 mb-0.5 tracking-wide">
@@ -1196,7 +1314,7 @@ function Ventas() {
 
             <button
               ref={cobrarBtnRef}
-                onClick={abrirModalCobro}
+                onClick={confirmarVenta}
                 className={`w-full py-3 rounded-xl font-medium text-white text-sm transition-all active:scale-[0.98] ${ticketEditando ? 'bg-orange-500 hover:bg-orange-600' : 'bg-[#007aff] hover:bg-[#0071e3]'}`}
             >
                 {ticketEditando ? 'COBRAR CORRECCIÓN' : 'COBRAR'}
@@ -1204,7 +1322,7 @@ function Ventas() {
         </div>
       </div>
 
-      {/* MODAL COBRO RÁPIDO */}
+      {/* MODAL COBRO RÁPIDO - deshabilitado, reemplazado por confirmarVenta
       {modalCobroAbierto && (
         <div className="fixed inset-0 z-[85] flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm" onClick={cerrarModalCobro}>
           <div className="w-full max-w-md rounded-2xl border border-white/70 bg-white/70 p-5 shadow-2xl backdrop-blur-xl" onClick={(e) => e.stopPropagation()}>
@@ -1282,6 +1400,7 @@ function Ventas() {
           </div>
         </div>
       )}
+      */}
 
       {/* MODAL DE ÉXITO POST-VENTA */}
       {modalExito && (

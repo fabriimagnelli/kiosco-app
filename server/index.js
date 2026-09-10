@@ -324,6 +324,8 @@ const initDB = async () => {
         await ensureColumn("historial_cierres", "monto_retiro", "REAL DEFAULT 0");
         await ensureColumn("historial_cierres", "observacion", "TEXT");
         await ensureColumn("historial_cierres", "tipo", "TEXT DEFAULT 'General'");
+        await ensureColumn("historial_cierres", "total_contado", "REAL DEFAULT NULL");
+        await ensureColumn("historial_cierres", "diferencia_caja", "REAL DEFAULT NULL");
         await ensureColumn("ventas", "cierre_id", "INTEGER DEFAULT NULL");
         await ensureColumn("gastos", "cierre_id", "INTEGER DEFAULT NULL");
         await ensureColumn("retiros", "cierre_id", "INTEGER DEFAULT NULL");
@@ -1363,13 +1365,13 @@ app.get("/api/cierre/cigarrillos", async (req, res) => {
 });
 
 app.post("/api/cierres_unificado", async (req, res) => {
-    const { tipo, total_efectivo_real, monto_retiro, observacion, total_ventas, total_gastos, nuevo_inicio_manual } = req.body;
+    const { tipo, total_efectivo_real, monto_retiro, observacion, total_ventas, total_gastos, nuevo_inicio_manual, total_contado, diferencia_caja } = req.body;
     try {
         // FIX: Asegurar permisos ANTES de iniciar la transacción del cierre
         asegurarPermisosDB(true);
         await dbRun("BEGIN TRANSACTION");
-        await dbRun("INSERT INTO historial_cierres (tipo, total_ventas, total_gastos, total_efectivo_real, monto_retiro, observacion, fecha) VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))",
-            [tipo || 'General', total_ventas || 0, total_gastos || 0, total_efectivo_real, monto_retiro, observacion]);
+        await dbRun("INSERT INTO historial_cierres (tipo, total_ventas, total_gastos, total_efectivo_real, monto_retiro, observacion, total_contado, diferencia_caja, fecha) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))",
+            [tipo || 'General', total_ventas || 0, total_gastos || 0, total_efectivo_real, monto_retiro, observacion, total_contado ?? null, diferencia_caja ?? null]);
         const cierreRow = await dbGet("SELECT last_insert_rowid() as id");
         const cierreId = cierreRow.id;
 
@@ -2034,7 +2036,14 @@ app.get("/api/buscar_codigo/:codigo", async (req, res) => {
         if (cig) return res.json(cig);
         // 3. Buscar en promos.codigo_barras
         let promo = await dbGet("SELECT *, 'promo' as tipo_item FROM promos WHERE codigo_barras=?", [codigo]);
-        if (promo) return res.json(promo);
+        if (promo) {
+            try { 
+                promo.componentes = promo.componentes ? JSON.parse(promo.componentes) : []; 
+            } catch(e) { 
+                promo.componentes = []; 
+            }
+            return res.json(promo);
+        }
         // 4. Buscar en codigos_barras (secundarios)
         const cb = await dbGet("SELECT producto_id, tipo_producto FROM codigos_barras WHERE codigo=?", [codigo]);
         if (cb) {
@@ -2597,6 +2606,7 @@ app.post("/api/backup/restore", async (req, res) => {
 });
 
 // Backup automático al iniciar el servidor
+/* Desactivado temporalmente para evitar bloqueos de SQLite al iniciar
 (() => {
     try {
         if (fs.existsSync(dbPath)) {
@@ -2611,6 +2621,7 @@ app.post("/api/backup/restore", async (req, res) => {
         }
     } catch (e) { console.error("[BACKUP] Error:", e.message); }
 })();
+*/
 
 // --- SINCRONIZACIÓN EN LA NUBE ---
 // Exportar base de datos como archivo para sync

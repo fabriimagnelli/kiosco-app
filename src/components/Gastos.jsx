@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { DollarSign, Calendar, Tag, Plus, Trash2, Search, Filter, TrendingDown } from "lucide-react";
 import { apiFetch } from "../lib/api";
+import { useNotify } from "../context/NotificationContext";
 
 function Gastos() {
+  const { toast, confirmDialog } = useNotify();
   const [gastos, setGastos] = useState([]);
   const [proveedores, setProveedores] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -56,8 +58,8 @@ function Gastos() {
 
   const agregarGasto = async (e) => {
     e.preventDefault();
-    if (!descripcion || !monto) return alert("Completa todos los campos");
-    if (categoria === "Proveedores" && !proveedorId) return alert("Selecciona un proveedor");
+    if (!descripcion || !monto) return toast("Completa todos los campos", "warn");
+    if (categoria === "Proveedores" && !proveedorId) return toast("Selecciona un proveedor", "warn");
 
     try {
       // Si es pago a proveedor, registrar SOLO en movimientos_proveedores
@@ -80,9 +82,9 @@ function Gastos() {
           setCategoria("General");
           setProveedorId("");
           cargarGastos();
-          alert("Pago registrado correctamente");
+          toast("Pago registrado correctamente", "ok");
         } else {
-          alert("Error al registrar el pago");
+          toast("Error al registrar el pago", "err");
         }
       } else {
         // Para otros gastos, registrar normalmente en gastos
@@ -104,19 +106,19 @@ function Gastos() {
           setMonto("");
           setCategoria("General");
           cargarGastos();
-          alert("Gasto registrado correctamente");
+          toast("Gasto registrado correctamente", "ok");
         } else {
-          alert("Error al guardar");
+          toast("Error al guardar", "err");
         }
       }
     } catch (error) {
       console.error(error);
-      alert("Error al guardar");
+      toast("Error al guardar", "err");
     }
   };
 
   const eliminarGasto = async (id) => {
-    if (!confirm("¿Eliminar este gasto?")) return;
+    if (!(await confirmDialog("¿Eliminar este gasto?"))) return;
     try {
       await apiFetch(`/api/gastos/${id}`, { method: "DELETE" });
       cargarGastos();

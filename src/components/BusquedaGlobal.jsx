@@ -21,12 +21,12 @@ const secciones = [
   { nombre: "Retiros", ruta: "/retiros", icono: TrendingUp, categoria: "Navegación" },
   { nombre: "Promos y Combos", ruta: "/promos", icono: ShoppingBag, categoria: "Navegación" },
   { nombre: "Cigarrillos", ruta: "/cigarrillos", icono: Cigarette, categoria: "Navegación" },
-  { nombre: "Calculadora de Precios", ruta: "/calculadora", icono: Calculator, categoria: "Navegación" },
+  /* { nombre: "Calculadora de Precios", ruta: "/calculadora", icono: Calculator, categoria: "Navegación" }, */
   { nombre: "Clientes / Deudores", ruta: "/clientes", icono: Users, categoria: "Navegación" },
   { nombre: "Proveedores", ruta: "/proveedores", icono: Truck, categoria: "Navegación" },
-  { nombre: "Balance", ruta: "/balance", icono: Scale, categoria: "Navegación" },
-  { nombre: "Conciliación Bancaria", ruta: "/conciliacion", icono: Building2, categoria: "Navegación" },
-  { nombre: "Gestión de Cajas", ruta: "/cajas", icono: Monitor, categoria: "Navegación" },
+  /* { nombre: "Balance", ruta: "/balance", icono: Scale, categoria: "Navegación" }, */
+  /* { nombre: "Conciliación Bancaria", ruta: "/conciliacion", icono: Building2, categoria: "Navegación" }, */
+  /* { nombre: "Gestión de Cajas", ruta: "/cajas", icono: Monitor, categoria: "Navegación" }, */
 ];
 
 function BusquedaGlobal({ isOpen, onClose }) {

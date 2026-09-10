@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Package, Plus, Trash2, Edit, Search, Barcode, DollarSign, Settings, Check, X, Upload, FileSpreadsheet, Download, Image, History, Tag, Printer, Camera, AlertTriangle, ChevronDown, ChevronUp, Weight } from "lucide-react";
 import { apiFetch, exportProductosCsv, getUploadUrl } from "../lib/api";
+import { useNotify } from "../context/NotificationContext";
 
 const UNIDADES_MEDIDA = [
   { value: 'unidad', label: 'Unidad (u.)' },
@@ -17,6 +18,7 @@ const UNIDADES_MEDIDA = [
 const UNIDAD_ABREV = { unidad: 'u.', kg: 'kg', gramo: 'g', litro: 'l', ml: 'ml', metro: 'm', pack: 'pack', docena: 'doc', caja: 'caja' };
 
 function Productos() {
+  const { toast, confirmDialog } = useNotify();
   const [productos, setProductos] = useState([]);
   const [busqueda, setBusqueda] = useState("");
   const [loading, setLoading] = useState(true);
@@ -95,20 +97,20 @@ function Productos() {
   };
 
   const eliminarCategoria = async (nombreCat) => {
-    if (nombreCat === 'General') return alert("No se puede eliminar la categoría General.");
-    if (!confirm(`¿Eliminar la categoría "${nombreCat}"? Los productos pasarán a "General".`)) return;
+    if (nombreCat === 'General') return toast("No se puede eliminar la categoría General.", "warn");
+    if (!(await confirmDialog(`¿Eliminar la categoría "${nombreCat}"? Los productos pasarán a "General".`))) return;
     try {
       const res = await apiFetch(`/api/categorias/${nombreCat}`, { method: "DELETE" });
       const data = await res.json();
       if (data.success) { cargarCategorias(); cargarProductos(); if (categoria === nombreCat) setCategoria("General"); }
-      else { alert(data.error); }
+      else { toast(data.error, "err"); }
     } catch (error) { console.error(error); }
   };
 
   const guardarProducto = async (e) => {
     e.preventDefault();
-    if (!nombre || !nombre.trim()) { alert("El nombre del producto es obligatorio"); return; }
-    if (!precio || isNaN(parseFloat(precio))) { alert("El precio es obligatorio y debe ser un número"); return; }
+    if (!nombre || !nombre.trim()) { toast("El nombre del producto es obligatorio", "warn"); return; }
+    if (!precio || isNaN(parseFloat(precio))) { toast("El precio es obligatorio y debe ser un número", "warn"); return; }
 
     const prodData = {
       nombre: nombre.trim(), precio: parseFloat(precio), costo: parseFloat(costo) || 0,
@@ -138,12 +140,12 @@ function Productos() {
         resetForm();
         cargarProductos();
         cargarCategorias();
-        alert(modoEdicion ? "Producto actualizado correctamente" : "Producto agregado correctamente");
+        toast(modoEdicion ? "Producto actualizado correctamente" : "Producto agregado correctamente", "ok");
       } else {
-        alert(`Error al guardar el producto:\n${data.error || "Error desconocido"}`);
+        toast(`Error al guardar el producto: ${data.error || "Error desconocido"}`, "err");
       }
     } catch (error) {
-      alert(`Error de conexión:\n${error.message}`);
+      toast(`Error de conexión: ${error.message}`, "err");
     }
   };
 
@@ -174,7 +176,7 @@ function Productos() {
   const cancelarEdicion = () => resetForm();
 
   const eliminarProducto = async (id) => {
-    if (!confirm("¿Eliminar este producto?")) return;
+    if (!(await confirmDialog("¿Eliminar este producto?"))) return;
     try { await apiFetch(`/api/productos/${id}`, { method: "DELETE" }); cargarProductos(); }
     catch (error) { console.error(error); }
   };
@@ -183,7 +185,7 @@ function Productos() {
   const handleImagenChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) { alert("La imagen es muy grande (máx 5MB)"); return; }
+    if (file.size > 5 * 1024 * 1024) { toast("La imagen es muy grande (máx 5MB)", "warn"); return; }
     setImagenFile(file);
     setImagenPreview(URL.createObjectURL(file));
   };
@@ -199,18 +201,18 @@ function Productos() {
   // --- Códigos de barras múltiples ---
   const agregarCodigoExtra = async () => {
     if (!nuevoCodigo.trim()) return;
-    if (!modoEdicion || !idEdicion) { alert("Guardá el producto primero para agregar códigos extra"); return; }
+    if (!modoEdicion || !idEdicion) { toast("Guardá el producto primero para agregar códigos extra", "warn"); return; }
     try {
       const res = await apiFetch(`/api/productos/${idEdicion}/codigos`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ codigo: nuevoCodigo.trim(), descripcion: nuevaCodigoDesc.trim() })
       });
       const data = await res.json();
-      if (data.error) { alert(data.error); return; }
+      if (data.error) { toast(data.error, "err"); return; }
       const res2 = await apiFetch(`/api/productos/${idEdicion}/codigos`);
       setCodigosExtra(await res2.json());
       setNuevoCodigo(""); setNuevaCodigoDesc("");
-    } catch (e) { alert("Error al agregar código"); }
+    } catch (e) { toast("Error al agregar código", "err"); }
   };
 
   const eliminarCodigoExtra = async (cbId) => {
@@ -242,7 +244,7 @@ function Productos() {
     reader.onload = (ev) => {
       const text = ev.target.result;
       const lines = text.split("\n").filter(l => l.trim());
-      if (lines.length < 2) return alert("El CSV debe tener al menos un encabezado y una fila.");
+      if (lines.length < 2) return toast("El CSV debe tener al menos un encabezado y una fila.", "warn");
       const sep = lines[0].includes(";") ? ";" : ",";
       const headers = lines[0].split(sep).map(h => h.trim().toLowerCase().replace(/"/g, ""));
       const rows = [];
@@ -277,18 +279,18 @@ function Productos() {
       });
       const data = await res.json();
       if (data.success) {
-        alert(`Importación exitosa:\n• ${data.insertados || 0} nuevos\n• ${data.actualizados || 0} actualizados\n• ${data.errores || 0} errores`);
+        toast(`Importación exitosa: ${data.insertados || 0} nuevos, ${data.actualizados || 0} actualizados, ${data.errores || 0} errores`, "ok");
         cargarProductos(); cargarCategorias();
         setMostrarCSV(false); setCsvPreview([]);
-      } else { alert("Error: " + data.error); }
-    } catch (e) { alert("Error de conexión"); }
+      } else { toast("Error: " + data.error, "err"); }
+    } catch (e) { toast("Error de conexión", "err"); }
     finally { setCsvImporting(false); }
   };
 
   const exportarCSV = async () => {
     const result = await exportProductosCsv();
     if (!result?.ok && !result?.body?.canceled) {
-      alert(result?.body?.error || "No se pudo exportar el archivo CSV");
+      toast(result?.body?.error || "No se pudo exportar el archivo CSV", "err");
     }
   };
 
@@ -302,7 +304,7 @@ function Productos() {
   };
 
   const imprimirEtiquetas = () => {
-    if (productosEtiqueta.length === 0) { alert("Seleccioná al menos un producto"); return; }
+    if (productosEtiqueta.length === 0) { toast("Seleccioná al menos un producto", "warn"); return; }
     const win = window.open('', '_blank');
     const etiquetasHtml = productosEtiqueta.map(p => `
       <div style="border:2px solid #333;padding:10px 14px;margin:5px;display:inline-block;min-width:220px;font-family:Arial,sans-serif;page-break-inside:avoid;border-radius:6px;">

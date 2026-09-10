@@ -4,6 +4,7 @@ import { HashRouter, Routes, Route, Navigate, useNavigate } from "react-router-d
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import { LicenseProvider, useLicenseState } from "./context/LicenseContext";
+import { NotificationProvider } from "./context/NotificationContext";
 import Sidebar from "./components/Sidebar";
 import Login from "./components/Login";
 import BusquedaGlobal from "./components/BusquedaGlobal";
@@ -73,22 +74,9 @@ const LicenseGate = ({ children }) => {
   };
 
   useEffect(() => {
-    let mounted = true;
-
-    const run = async () => {
-      try {
-        await verificarLicencia(false);
-      } catch (_) {
-        if (mounted) {
-          setLicenseState({ activa: false, diasRestantes: 0, motivo: "internal-error" });
-        }
-      } finally {
-        if (mounted) setChecking(false);
-      }
-    };
-
-    run();
-    return () => { mounted = false; };
+    // Bypass de licencia 
+    setLicenseState({ activa: true, diasRestantes: 9999, motivo: "bypass", fechaVencimiento: null });
+    setChecking(false);
   }, []);
 
   const handleRetry = async () => {
@@ -301,7 +289,7 @@ const Layout = ({ children }) => {
         F6: "/reportes",
         F7: "/gastos",
         F8: "/configuracion",
-        F9: "/calculadora",
+        // F9: "/calculadora",
         F10: "/clientes",
       };
 
@@ -325,6 +313,7 @@ const Layout = ({ children }) => {
         setMobileOpen={setMobileOpen}
       />
       <div className="flex-1 flex flex-col h-full overflow-hidden relative transition-all duration-300">
+        {/*
         <div className="absolute right-4 top-4 z-50">
           <div
             title={isOnline
@@ -341,6 +330,7 @@ const Layout = ({ children }) => {
             <span className="hidden sm:inline">{isOnline ? "Nube activa" : "Sin conexión"}</span>
           </div>
         </div>
+        */}
 
         {licenseState && licenseState.diasRestantes > 0 && licenseState.diasRestantes <= 5 ? (
           <div className="z-40 border-b border-amber-300/60 bg-gradient-to-r from-amber-100/95 via-orange-100/95 to-amber-100/95 px-4 py-2 text-center text-sm font-medium text-amber-900 shadow-sm backdrop-blur">
@@ -503,15 +493,17 @@ class ErrorBoundary extends Component {
 function App() {
   return (
     <ErrorBoundary>
-      <LicenseGate>
-        <ThemeProvider>
-          <AuthProvider>
-            <HashRouter>
-              <RutasApp />
-            </HashRouter>
-          </AuthProvider>
-        </ThemeProvider>
-      </LicenseGate>
+      <NotificationProvider>
+        <LicenseGate>
+          <ThemeProvider>
+            <AuthProvider>
+              <HashRouter>
+                <RutasApp />
+              </HashRouter>
+            </AuthProvider>
+          </ThemeProvider>
+        </LicenseGate>
+      </NotificationProvider>
     </ErrorBoundary>
   );
 }

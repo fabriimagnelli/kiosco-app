@@ -3,8 +3,10 @@ import { TrendingUp, FileText, RefreshCw, Trash2, PlusCircle, MinusCircle, X } f
 import jsPDF from "jspdf";
 import "jspdf-autotable";
 import { apiFetch } from "../lib/api";
+import { useNotify } from "../context/NotificationContext";
 
 function Retiros() {
+  const { toast, confirmDialog } = useNotify();
   const [historial, setHistorial] = useState([]);
   const [totalAcumulado, setTotalAcumulado] = useState(0);
   const [cargando, setCargando] = useState(false);
@@ -32,8 +34,8 @@ function Retiros() {
   };
 
   const eliminarRetiro = async (item) => {
-    const confirmado = window.confirm(
-      `¿Eliminar este retiro?\n\n"${item.descripcion}" — $ ${item.monto.toLocaleString()}\n\nEl monto volverá a estar disponible en caja como si nunca se hubiera retirado.`
+    const confirmado = await confirmDialog(
+      `¿Eliminar este retiro?\n"${item.descripcion}" — $ ${item.monto.toLocaleString()}\n\nEl monto volverá a estar disponible en caja como si nunca se hubiera retirado.`
     );
     if (!confirmado) return;
     setEliminando(item.id);
@@ -43,11 +45,11 @@ function Retiros() {
       if (data.success) {
         await cargarRetiros();
       } else {
-        alert("Error al eliminar: " + (data.error || "Error desconocido"));
+        toast("Error al eliminar: " + (data.error || "Error desconocido"), "err");
       }
     } catch (error) {
       console.error("Error eliminando retiro:", error);
-      alert("Error de conexión al eliminar el retiro.");
+      toast("Error de conexión al eliminar el retiro.", "err");
     } finally {
       setEliminando(null);
     }
@@ -68,11 +70,11 @@ function Retiros() {
   const confirmarAjuste = async () => {
     const monto = parseFloat(montoAjuste);
     if (!montoAjuste || isNaN(monto) || monto <= 0) {
-      alert("Ingresá un monto válido mayor a 0.");
+      toast("Ingresá un monto válido mayor a 0.", "warn");
       return;
     }
     if (!notaAjuste.trim()) {
-      alert("La nota es obligatoria para registrar el ajuste.");
+      toast("La nota es obligatoria para registrar el ajuste.", "warn");
       return;
     }
     setGuardando(true);
@@ -89,11 +91,11 @@ function Retiros() {
         setModalAbierto(false);
         await cargarRetiros();
       } else {
-        alert("Error al guardar: " + (data.error || "Error desconocido"));
+        toast("Error al guardar: " + (data.error || "Error desconocido"), "err");
       }
     } catch (error) {
       console.error("Error guardando ajuste:", error);
-      alert("Error de conexión al guardar el ajuste.");
+      toast("Error de conexión al guardar el ajuste.", "err");
     } finally {
       setGuardando(false);
     }

@@ -13,6 +13,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 import { apiFetch } from "../lib/api";
+import { useNotify } from "../context/NotificationContext";
 
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6", "#f97316"];
 
@@ -717,6 +718,7 @@ function SinMovimiento() {
 // 30. EXPORTAR REPORTES A EXCEL/PDF
 // ═══════════════════════════════════════════════════════════
 function ExportarReportes() {
+  const { toast } = useNotify();
   const hoy = new Date().toISOString().split("T")[0];
   const primerDia = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split("T")[0];
   const [desde, setDesde] = useState(primerDia);
@@ -735,7 +737,7 @@ function ExportarReportes() {
       setDatos({ ventas: resVentas, balance: resBalance, rentabilidad: resRentabilidad });
     } catch (e) {
       console.error(e);
-      alert("Error al cargar los datos");
+      toast("Error al cargar los datos", "err");
     } finally {
       setCargando(false);
     }
@@ -1081,6 +1083,7 @@ function ExportarReportes() {
 // HISTORIAL DE VENTAS / TICKETS
 // ═══════════════════════════════════════════════════════════
 function HistorialVentas() {
+  const { toast } = useNotify();
   const [ventas, setVentas] = useState([]);
   const [loading, setLoading] = useState(false);
   const [busqueda, setBusqueda] = useState("");
@@ -1263,11 +1266,11 @@ function HistorialVentas() {
         cargarHistorial();
       } else {
         const data = await res.json();
-        alert("Error al eliminar: " + (data.error || "Error desconocido"));
+        toast("Error al eliminar: " + (data.error || "Error desconocido"), "err");
       }
     } catch (e) {
       console.error(e);
-      alert("Error al eliminar el ticket");
+      toast("Error al eliminar el ticket", "err");
     }
     setEliminando(false);
   };

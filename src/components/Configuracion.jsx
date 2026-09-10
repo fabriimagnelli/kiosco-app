@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { useLicenseState } from "../context/LicenseContext";
+import { useNotify } from "../context/NotificationContext";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "../lib/api";
 import { QRCodeSVG } from "qrcode.react";
@@ -66,6 +67,7 @@ const INPUT_BASE =
 function Configuracion() {
   const { logout, rol: rolActual } = useAuth();
   const { licenseState, requestRenewalFlow, refreshLicenseStatus } = useLicenseState() || {};
+  const { toast, confirmDialog } = useNotify();
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(false);
@@ -227,7 +229,7 @@ function Configuracion() {
   const crearUsuario = async (e) => {
     e.preventDefault();
     if (!nuevoUser.nombre || !nuevoUser.password) {
-      alert("Nombre y contraseña son obligatorios");
+      toast("Nombre y contraseña son obligatorios", "warn");
       return;
     }
 
@@ -243,17 +245,17 @@ function Configuracion() {
         setNuevoUser({ nombre: "", password: "", rol: "cajero" });
         cargarUsuarios();
       } else {
-        alert("Error: " + data.error);
+        toast("Error: " + data.error, "err");
       }
     } catch (e) {
-      alert("Error de conexión");
+      toast("Error de conexión", "err");
     } finally {
       setUserLoading(false);
     }
   };
 
   const eliminarUsuario = async (id, nombre) => {
-    if (!confirm(`¿Eliminar el usuario "${nombre}"?`)) return;
+    if (!(await confirmDialog(`¿Eliminar el usuario "${nombre}"?`))) return;
     try {
       await apiFetch(`/api/usuarios/${id}`, { method: "DELETE" });
       cargarUsuarios();
@@ -300,13 +302,13 @@ function Configuracion() {
       });
       const data = await res.json();
       if (data.success) {
-        alert("¡Configuración guardada correctamente!");
+        toast("¡Configuración guardada correctamente!", "ok");
       } else {
-        alert("Error al guardar");
+        toast("Error al guardar", "err");
       }
     } catch (error) {
       console.error(error);
-      alert("Error de conexión");
+      toast("Error de conexión", "err");
     } finally {
       setLoading(false);
     }
@@ -391,8 +393,8 @@ function Configuracion() {
     setTimeout(() => printW.print(), 500);
   };
 
-  const manejarCierreSesion = () => {
-    if (confirm("¿Estás seguro que quieres cerrar sesión?")) {
+  const manejarCierreSesion = async () => {
+    if (await confirmDialog("¿Estás seguro que quieres cerrar sesión?")) {
       logout();
       navigate("/login");
     }
@@ -500,6 +502,7 @@ function Configuracion() {
               </div>
             </section>
 
+            {/*
             <section className={GLASS_CARD}>
               <h2 className="mb-4 flex items-center gap-2 text-lg font-bold text-slate-800">
                 <Users size={20} className="text-emerald-600" /> Usuarios y Accesos
@@ -637,7 +640,9 @@ function Configuracion() {
                 </button>
               </div>
             </section>
+            */}
 
+            {/*
             <section className={GLASS_CARD}>
               <h2 className="mb-2 flex items-center gap-2 text-lg font-bold text-slate-800">
                 <QrCode size={20} className="text-emerald-600" /> Métodos de Cobro (QR)
@@ -895,6 +900,7 @@ function Configuracion() {
                 )}
               </div>
             </section>
+            */}
 
             <section className={GLASS_CARD}>
               <h3 className="mb-2 flex items-center gap-2 text-base font-bold text-slate-800">
@@ -925,6 +931,7 @@ function Configuracion() {
           </form>
 
           <div className="space-y-6">
+            {/*
             {licenseState ? (
               <section className={GLASS_CARD}>
                 <div className="flex items-start justify-between gap-3">
@@ -967,7 +974,9 @@ function Configuracion() {
                 </div>
               </section>
             ) : null}
+            */}
 
+            {/*
             <section className={GLASS_CARD}>
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -1019,6 +1028,7 @@ function Configuracion() {
                 {cloudBackupLoading ? "Subiendo..." : "Respaldar ahora"}
               </button>
             </section>
+            */}
 
             {updateAvailable && (
               <section className={GLASS_CARD}>

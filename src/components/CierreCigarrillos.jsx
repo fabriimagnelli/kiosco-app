@@ -1,9 +1,15 @@
 import React, { useState, useEffect } from "react";
-import { Cigarette, Save, AlertTriangle, Calculator, DollarSign, ArrowRight, Coins, Wallet, Edit2, Check, X } from "lucide-react";
+import { Cigarette, Save, AlertTriangle, Calculator, DollarSign, ArrowRight, Coins, Wallet, Edit2, Check, X, ShieldCheck, EyeOff } from "lucide-react";
 import { apiFetch } from "../lib/api";
+import { useNotify } from "../context/NotificationContext";
+import jsPDF from "jspdf";
 
 function CierreCigarrillos() {
+  const { toast, confirmDialog } = useNotify();
   const [resumen, setResumen] = useState(null);
+
+  // Cierre Ciego: se oculta lo esperado por el sistema hasta validar el arqueo
+  const [cierreValidado, setCierreValidado] = useState(false);
   
   // Estado para Billetes (Igual que Cierre General)
   const [billetes, setBilletes] = useState({
@@ -63,8 +69,59 @@ function CierreCigarrillos() {
       setEditandoInicio(false);
   }
 
+  const imprimirTicketZCigarrillos = ({ saldoInicial, ventas, esperado, contado, diferencia, retiro, fondo }) => {
+    const doc = new jsPDF({ unit: "mm", format: [80, 200] });
+    const ancho = 80;
+    const margen = 4;
+    let y = 8;
+
+    const centrado = (texto, tam = 10, negrita = true) => {
+      doc.setFontSize(tam);
+      doc.setFont(undefined, negrita ? "bold" : "normal");
+      doc.text(texto, ancho / 2, y, { align: "center" });
+      y += tam * 0.5 + 2;
+    };
+    const fila = (label, valor, negrita = false) => {
+      doc.setFontSize(9);
+      doc.setFont(undefined, negrita ? "bold" : "normal");
+      doc.text(label, margen, y);
+      doc.text(valor, ancho - margen, y, { align: "right" });
+      y += 5;
+    };
+    const linea = () => { doc.setLineDashPattern([1, 1], 0); doc.line(margen, y, ancho - margen, y); y += 5; };
+
+    centrado("TICKET Z - CIGARRILLOS", 11);
+    centrado(new Date().toLocaleString("es-AR"), 8, false);
+    linea();
+
+    fila("Saldo Inicial:", `$ ${saldoInicial.toLocaleString()}`);
+    fila("Ventas:", `$ ${ventas.toLocaleString()}`);
+    fila("Total Esperado:", `$ ${esperado.toLocaleString()}`);
+    fila("Efectivo Contado:", `$ ${contado.toLocaleString()}`);
+    linea();
+
+    const esFaltante = diferencia < 0;
+    fila(`Diferencia (${esFaltante ? "Faltante" : "Sobrante"}):`, `$ ${Math.abs(diferencia).toLocaleString()}`, true);
+    linea();
+
+    fila("Retiro de Dinero:", `$ ${retiro.toLocaleString()}`);
+    fila("Inicio (Fondo) Mañana:", `$ ${fondo.toLocaleString()}`);
+    y += 8;
+
+    doc.setFontSize(9);
+    doc.setFont(undefined, "normal");
+    doc.text("......................................", ancho / 2, y, { align: "center" }); y += 5;
+    doc.text("Firma", ancho / 2, y, { align: "center" });
+
+    doc.save(`ticket_z_cigarrillos_${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
   // --- CIERRE ---
   const realizarCierre = async () => {
+    if (!cierreValidado) {
+      return toast("Primero validá el arqueo para revelar la diferencia.", "warn");
+    }
+
     const contado = calcularTotalFisico();
     const retiro = parseFloat(montoRetiro) || 0;
     
@@ -72,10 +129,10 @@ function CierreCigarrillos() {
     const queda = inicioManual !== null ? inicioManual : (contado - retiro);
 
     if (queda < 0) {
-        return alert("Error: El saldo para mañana no puede ser negativo.");
+        return toast("Error: El saldo para mañana no puede ser negativo.", "err");
     }
     
-    if (!confirm(`¿Confirmar cierre de cigarrillos?\n\nContado: $${contado}\nRetiro: $${retiro}\nQueda (Inicio Mañana): $${queda}`)) return;
+    if (!(await confirmDialog(`¿Confirmar cierre de cigarrillos?\n\nContado: $${contado}\nRetiro: $${retiro}\nQueda (Inicio Mañana): $${queda}`))) return;
 
     const intentarCierre = async (intento = 1) => {
       try {
@@ -94,16 +151,25 @@ function CierreCigarrillos() {
         
         const data = await res.json();
         if (data.success) {
-          alert("Cierre de Cigarrillos exitoso.");
-          window.location.reload();
+          imprimirTicketZCigarrillos({
+            saldoInicial: resumen.saldo_inicial || 0,
+            ventas: resumen.ventas || 0,
+            esperado: (resumen.saldo_inicial || 0) + (resumen.ventas || 0),
+            contado,
+            diferencia: contado - ((resumen.saldo_inicial || 0) + (resumen.ventas || 0)),
+            retiro,
+            fondo: queda,
+          });
+          toast("Cierre de Cigarrillos exitoso.", "ok");
+          setTimeout(() => window.location.reload(), 1200);
         } else if (data.error && data.error.includes("bloqueada temporalmente") && intento < 3) {
           console.warn(`[CIERRE] Reintentando cierre cigarrillos (intento ${intento + 1}/3)...`);
           await new Promise(r => setTimeout(r, 2000));
           return intentarCierre(intento + 1);
         } else {
-          alert("Error: " + data.error);
+          toast("Error: " + data.error, "err");
         }
-      } catch (error) { console.error(error); alert("Error de conexión"); }
+      } catch (error) { console.error(error); toast("Error de conexión", "err"); }
     };
 
     await intentarCierre();
@@ -143,6 +209,7 @@ function CierreCigarrillos() {
           <h2 className="font-medium text-slate-700 mb-3 flex items-center gap-2">
             <Cigarette size={18} className="text-orange-600"/> Resumen Cigarrillos
           </h2>
+          {cierreValidado ? (
           <div className="space-y-3 text-sm">
              <div className="flex justify-between items-center">
                 <span className="text-slate-500">Saldo Inicial:</span>
@@ -162,9 +229,15 @@ function CierreCigarrillos() {
                 <span>$ {totalEsperado.toLocaleString()}</span>
              </div>
           </div>
+          ) : (
+            <div className="flex items-center gap-2 rounded-lg bg-slate-100/80 p-3 text-sm font-medium text-slate-400">
+              <EyeOff size={16}/> Realice el arqueo de billetes y valide para ver los resultados
+            </div>
+          )}
         </div>
 
         {/* INFO DIFERENCIA */}
+        {cierreValidado ? (
         <div className={`rounded-2xl border p-4 backdrop-blur-xl flex items-center gap-3 font-medium ${diferenciaClase}`}>
           <AlertTriangle size={24}/>
           <div>
@@ -173,6 +246,11 @@ function CierreCigarrillos() {
             <p className="text-[11px] font-semibold uppercase tracking-wide opacity-80">{diferenciaEstadoTexto}</p>
           </div>
         </div>
+        ) : (
+          <div className="flex items-center gap-2 rounded-2xl border border-slate-200/80 bg-slate-100/80 p-4 text-sm font-medium text-slate-400">
+            <EyeOff size={16}/> Realice el arqueo de billetes y valide para ver los resultados
+          </div>
+        )}
       </div>
 
       {/* DERECHA: CONTROL Y ARQUEO */}
@@ -287,12 +365,21 @@ function CierreCigarrillos() {
         />
 
         <div className="flex justify-end">
-          <button 
-            onClick={realizarCierre}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-orange-600 px-6 py-3 text-sm font-medium text-white shadow-sm transition-colors hover:bg-orange-700 active:scale-[0.99]"
-          >
-            <Save size={18}/> CERRAR TURNO CIGARRILLOS
-          </button>
+          {cierreValidado ? (
+            <button 
+              onClick={realizarCierre}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-orange-600 px-6 py-3 text-sm font-medium text-white shadow-sm transition-colors hover:bg-orange-700 active:scale-[0.99]"
+            >
+              <Save size={18}/> CERRAR TURNO CIGARRILLOS
+            </button>
+          ) : (
+            <button
+              onClick={() => setCierreValidado(true)}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 py-3 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700 active:scale-[0.99]"
+            >
+              <ShieldCheck size={18}/> VALIDAR ARQUEO
+            </button>
+          )}
         </div>
       </div>
     </div>

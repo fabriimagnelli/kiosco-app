@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { Search, Plus, Edit, Trash2, X, Cigarette, DollarSign } from "lucide-react";
 import { apiFetch } from "../lib/api";
+import { useNotify } from "../context/NotificationContext";
 
 function Cigarrillos() {
+  const { toast, confirmDialog } = useNotify();
   const [cigarrillos, setCigarrillos] = useState([]);
   const [busqueda, setBusqueda] = useState("");
   const [loading, setLoading] = useState(true);
@@ -41,11 +43,11 @@ function Cigarrillos() {
     
     // Validación mejorada
     if (!nombre || !nombre.trim()) {
-      alert("❌ El nombre del cigarrillo es obligatorio");
+      toast("El nombre del cigarrillo es obligatorio", "warn");
       return;
     }
     if (!precio || isNaN(parseFloat(precio))) {
-      alert("❌ El precio es obligatorio y debe ser un número");
+      toast("El precio es obligatorio y debe ser un número", "warn");
       return;
     }
 
@@ -91,15 +93,15 @@ function Cigarrillos() {
         setIdEdicion(null);
         
         cargarDatos();
-        alert(modoEdicion ? "✅ Cigarrillo actualizado correctamente" : "✅ Cigarrillo agregado correctamente");
+        toast(modoEdicion ? "Cigarrillo actualizado correctamente" : "Cigarrillo agregado correctamente", "ok");
       } else {
         const errorMsg = data.error || "Error desconocido al guardar el cigarrillo";
         console.error("❌ Error en respuesta del servidor:", data);
-        alert(`❌ Error al guardar:\n${errorMsg}`);
+        toast(`Error al guardar: ${errorMsg}`, "err");
       }
     } catch (error) {
       console.error("❌ Error en fetch:", error);
-      alert(`❌ Error de conexión:\n${error.message}\n\nAsegúrate que el servidor esté corriendo`);
+      toast(`Error de conexión: ${error.message}. Asegúrate que el servidor esté corriendo`, "err");
     }
   };
 
@@ -126,7 +128,7 @@ function Cigarrillos() {
   };
 
   const eliminarCigarrillo = async (id) => {
-    if (!confirm("¿Eliminar este cigarrillo?")) return;
+    if (!(await confirmDialog("¿Eliminar este cigarrillo?"))) return;
     try {
       await apiFetch(`/api/cigarrillos/${id}`, { method: "DELETE" });
       cargarDatos();

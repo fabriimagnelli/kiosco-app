@@ -177,10 +177,12 @@ function Sidebar({ isOpen, toggleSidebar, onOpenSearch, mobileOpen, setMobileOpe
                 <span className="whitespace-nowrap">Stock</span>
                 <span className="ml-auto text-[10px] bg-white/[0.06] px-1.5 py-0.5 rounded text-slate-500">F5</span>
               </Link>
+              {/*
               <Link to="/calculadora" className={`${subBtnBase} ${isActive("/calculadora") ? subBtnActive : subBtnInactive}`} title="Calculadora de Precios">
                 <Calculator size={16} className="flex-shrink-0" />
                 <span className="whitespace-nowrap">Calculadora</span>
               </Link>
+              */}
             </div>
           </div>
         </div>
@@ -205,15 +207,19 @@ function Sidebar({ isOpen, toggleSidebar, onOpenSearch, mobileOpen, setMobileOpe
           {isOpen && <span className="ml-auto text-[10px] bg-white/[0.06] px-1.5 py-0.5 rounded text-slate-500">F7</span>}
         </Link>
 
+        {/*
         <Link to="/balance" className={`${btnBase} ${isActive("/balance") ? btnActive : btnInactive}`} title="Balance">
           <Scale size={19} className="flex-shrink-0" />
           <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Balance</span>
         </Link>
+        */}
 
+        {/*
         <Link to="/conciliacion" className={`${btnBase} ${isActive("/conciliacion") ? btnActive : btnInactive}`} title="Conciliación Bancaria">
           <Building2 size={19} className="flex-shrink-0" />
           <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Conciliación</span>
         </Link>
+        */}
 
         <Link to="/reportes" className={`${btnBase} ${isActive("/reportes") ? btnActive : btnInactive}`} title="Reportes (F6)">
           <FileText size={19} className="flex-shrink-0" />
@@ -228,16 +234,19 @@ function Sidebar({ isOpen, toggleSidebar, onOpenSearch, mobileOpen, setMobileOpe
           {isOpen && <span className="ml-auto text-[10px] bg-white/[0.06] px-1.5 py-0.5 rounded text-slate-500">F8</span>}
         </Link>
 
+        {/*
         <Link to="/cajas" className={`${btnBase} ${isActive("/cajas") ? btnActive : btnInactive}`} title="Gestión de Cajas">
           <Monitor size={19} className="flex-shrink-0" />
           <span className={`whitespace-nowrap transition-opacity ${isOpen ? "opacity-100 block" : "opacity-0 hidden"}`}>Cajas</span>
         </Link>
+        */}
 
       </nav>
 
       <div className="p-4 border-t border-white/[0.06] bg-[#1c1c1e]">
 
         {/* Toggles rápidos: Tema + Sonido */}
+        {/*
         <div className={`flex ${isOpen ? "gap-2 mb-3" : "flex-col gap-2 mb-3 items-center"}`}>
           <button
             onClick={toggleTema}
@@ -256,6 +265,7 @@ function Sidebar({ isOpen, toggleSidebar, onOpenSearch, mobileOpen, setMobileOpe
             {isOpen && <span className="text-xs font-normal">{sonidoActivo ? "Sonido" : "Silencio"}</span>}
           </button>
         </div>
+        */}
 
         <div 
           onClick={() => navigate("/configuracion")}
