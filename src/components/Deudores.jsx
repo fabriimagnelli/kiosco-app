@@ -3,6 +3,14 @@ import { User, Plus, Search, Trash2, Edit2, Phone, MapPin, Save, X, Eye, Calenda
 import { apiFetch } from "../lib/api";
 import { useNotify } from "../context/NotificationContext";
 
+// Traduce un saldo con signo a algo entendible por el cajero: nunca se muestran números negativos
+const formatearSaldo = (monto) => {
+  const valor = monto || 0;
+  if (valor > 0) return { texto: `$ ${valor.toFixed(2)}`, etiqueta: "Debe", clase: "text-red-600", claseBadge: "bg-red-100 text-red-600" };
+  if (valor < 0) return { texto: `$ ${Math.abs(valor).toFixed(2)}`, etiqueta: "A favor", clase: "text-green-600", claseBadge: "bg-green-100 text-green-600" };
+  return { texto: "$ 0.00", etiqueta: "Al día", clase: "text-slate-500", claseBadge: "bg-slate-100 text-slate-500" };
+};
+
 function Deudores() {
   const { toast, confirmDialog } = useNotify();
   const [clientes, setClientes] = useState([]);
@@ -31,6 +39,7 @@ function Deudores() {
   const [metodoPago, setMetodoPago] = useState("Efectivo");
   const [descripcionPago, setDescripcionPago] = useState("");
   const [procesandoPago, setProcesandoPago] = useState(false);
+  const [guardarExcedente, setGuardarExcedente] = useState(false); // si el excedente se acredita como saldo a favor
 
   // Puntos
   const [puntosConfig, setPuntosConfig] = useState({ puntos_por_peso: 1, puntos_valor_canje: 100, puntos_activos: false });
@@ -140,7 +149,7 @@ function Deudores() {
 
   const cerrarDetalles = () => {
     setVerHistorial(false); setClienteSel(null); setHistorialFiados([]); setHistorialCompras([]); setHistorialPuntos([]);
-    setMontoPago(""); setMetodoPago("Efectivo"); setDescripcionPago("");
+    setMontoPago(""); setMetodoPago("Efectivo"); setDescripcionPago(""); setGuardarExcedente(false);
     setPuntosACanjear(""); setAjustePuntos(""); setAjusteDesc("");
   };
 
@@ -161,13 +170,19 @@ function Deudores() {
 
   const registrarPago = async (e) => {
     e.preventDefault();
-    if (!montoPago || parseFloat(montoPago) <= 0) return toast("Ingresa un monto válido mayor a 0", "warn");
+    const montoPagoNum = parseFloat(montoPago) || 0;
+    if (!montoPago || montoPagoNum <= 0) return toast("Ingresa un monto válido mayor a 0", "warn");
+
+    // Si el cliente entrega de más y no se guarda como saldo a favor, solo se cancela la deuda (el resto es vuelto en mano)
+    const hayExcedente = montoPagoNum > deudaActualSel;
+    const montoARegistrar = (hayExcedente && !guardarExcedente) ? deudaActualSel : montoPagoNum;
+
     setProcesandoPago(true);
     try {
       const res = await apiFetch("/api/fiados", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cliente_id: clienteSel.id, monto: -parseFloat(montoPago), descripcion: descripcionPago || "Pago de deuda", metodo_pago: metodoPago })
+        body: JSON.stringify({ cliente_id: clienteSel.id, monto: -montoARegistrar, descripcion: descripcionPago || "Pago de deuda", metodo_pago: metodoPago })
       });
       const data = await res.json();
       if (data.id || data.success) {
@@ -175,7 +190,7 @@ function Deudores() {
         const nuevosFiados = await apiFetch(`/api/fiados/${clienteSel.id}`).then(r => r.json());
         setHistorialFiados(nuevosFiados);
         cargarClientes();
-        setMontoPago(""); setDescripcionPago("");
+        setMontoPago(""); setDescripcionPago(""); setGuardarExcedente(false);
       }
     } catch (err) { console.error(err); toast("Error al registrar pago", "err"); }
     finally { setProcesandoPago(false); }
@@ -486,9 +501,12 @@ function Deudores() {
                         <div className="text-[10px] text-green-500">${(c.total_gastado || 0).toFixed(0)}</div>
                       </td>
                       <td className="p-4 text-right">
-                        <span className={`font-bold px-2 py-1 rounded text-sm ${c.total_deuda > 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
-                          $ {(c.total_deuda || 0).toFixed(2)}
+                        <span className={`font-bold px-2 py-1 rounded text-sm ${formatearSaldo(c.total_deuda).claseBadge}`}>
+                          {formatearSaldo(c.total_deuda).texto}
                         </span>
+                        {c.total_deuda < 0 && (
+                          <div className="text-[9px] text-green-500 font-medium mt-0.5">A favor</div>
+                        )}
                       </td>
                       {puntosConfig.puntos_activos && (
                         <td className="p-4 text-center">
@@ -539,8 +557,11 @@ function Deudores() {
                 <div className="flex gap-3 text-right">
                   <div>
                     <p className="text-[10px] uppercase text-slate-400 font-bold">Saldo</p>
-                    <p className={`text-xl font-black ${deudaActualSel > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                      $ {deudaActualSel.toFixed(2)}
+                    <p className={`text-xl font-black ${formatearSaldo(deudaActualSel).clase}`}>
+                      {formatearSaldo(deudaActualSel).texto}
+                    </p>
+                    <p className={`text-[10px] font-bold uppercase tracking-wide ${formatearSaldo(deudaActualSel).clase} opacity-70`}>
+                      {formatearSaldo(deudaActualSel).etiqueta}
                     </p>
                   </div>
                   {puntosConfig.puntos_activos && (
@@ -744,10 +765,16 @@ function Deudores() {
                   <div className="grid grid-cols-3 gap-3">
                     <div>
                       <label className="block text-xs font-bold text-slate-600 mb-1">Monto a Pagar</label>
-                      <div className="relative">
-                        <DollarSign size={14} className="absolute left-2.5 top-2.5 text-slate-400" />
-                        <input type="number" step="0.01" min="0" placeholder="0.00" value={montoPago} onChange={e => setMontoPago(e.target.value)}
-                          className="w-full pl-8 p-2 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none text-sm" disabled={procesandoPago} />
+                      <div className="relative flex gap-1.5">
+                        <div className="relative flex-1">
+                          <DollarSign size={14} className="absolute left-2.5 top-2.5 text-slate-400" />
+                          <input type="number" step="0.01" min="0" placeholder="0.00" value={montoPago} onChange={e => setMontoPago(e.target.value)}
+                            className="w-full pl-8 p-2 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none text-sm" disabled={procesandoPago} />
+                        </div>
+                        <button type="button" onClick={() => setMontoPago(String(deudaActualSel.toFixed(2)))} disabled={procesandoPago}
+                          className="px-2.5 py-2 bg-slate-200 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-300 transition-colors disabled:opacity-50 whitespace-nowrap">
+                          Pagar Total
+                        </button>
                       </div>
                     </div>
                     <div>
@@ -766,16 +793,41 @@ function Deudores() {
                         className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none text-sm" disabled={procesandoPago} />
                     </div>
                   </div>
-                  <div className="flex justify-between items-center gap-3">
-                    <div className="text-sm text-slate-600">
-                      {montoPago && (
-                        <span className="font-bold text-green-600">
-                          Pago: ${parseFloat(montoPago || 0).toFixed(2)} | Nuevo saldo: ${(deudaActualSel - parseFloat(montoPago || 0)).toFixed(2)}
-                        </span>
-                      )}
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                    <div className="text-sm">
+                      {montoPago && parseFloat(montoPago) > 0 && (() => {
+                        const montoPagoNum = parseFloat(montoPago);
+                        const excedente = montoPagoNum - deudaActualSel;
+                        if (montoPagoNum < deudaActualSel) {
+                          return (
+                            <span className="font-bold text-red-600">
+                              Pago: ${montoPagoNum.toFixed(2)} | Resta pagar: ${(deudaActualSel - montoPagoNum).toFixed(2)}
+                            </span>
+                          );
+                        }
+                        if (montoPagoNum === deudaActualSel) {
+                          return (
+                            <span className="font-bold text-green-600">
+                              Deuda saldada por completo (${(0).toFixed(2)})
+                            </span>
+                          );
+                        }
+                        return (
+                          <div className="space-y-1">
+                            <span className="font-bold text-blue-600 block">
+                              Excedente: ${excedente.toFixed(2)} {guardarExcedente ? "→ se acredita como saldo a favor" : "→ se entrega como vuelto"}
+                            </span>
+                            <label className="flex items-center gap-1.5 text-xs font-medium text-slate-600 cursor-pointer">
+                              <input type="checkbox" checked={guardarExcedente} onChange={e => setGuardarExcedente(e.target.checked)}
+                                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                              Guardar excedente como saldo a favor del cliente
+                            </label>
+                          </div>
+                        );
+                      })()}
                     </div>
                     <button type="submit" disabled={procesandoPago || !montoPago}
-                      className="px-5 py-2 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center gap-2 text-sm">
+                      className="px-5 py-2 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center gap-2 text-sm shrink-0">
                       <DollarSign size={16} /> Registrar Pago
                     </button>
                   </div>

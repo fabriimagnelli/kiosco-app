@@ -2094,11 +2094,23 @@ app.post("/api/ventas", async (req, res) => {
         else if (metodo_pago === 'Fiado') { if (metodoAnticipo === 'Efectivo') pEfvo = pagoAnticipado; else pDig = pagoAnticipado; }
         else pDig = total;
 
+        // Prorratea el pago total del ticket entre sus ítems: evita que SUM(pago_efectivo) por fila
+        // multiplique el monto pagado por la cantidad de productos del ticket.
+        const prorratearPago = (montoItem) => {
+            const proporcion = subtotal > 0 ? montoItem / subtotal : (1 / productos.length);
+            return { itemPagoEfvo: pEfvo * proporcion, itemPagoDig: pDig * proporcion };
+        };
+
         for (const item of productos) {
             // Si es una promo, descontar stock de sus componentes
-            if (item.tipo === 'Promo' && item.componentes && Array.isArray(item.componentes) && item.componentes.length > 0) {
+            // El payload normalmente ya trae un array, pero se soporta el string JSON crudo por las dudas
+            const componentesItem = Array.isArray(item.componentes)
+                ? item.componentes
+                : (typeof item.componentes === 'string' && item.componentes.trim() ? (() => { try { return JSON.parse(item.componentes); } catch { return []; } })() : []);
+
+            if (item.tipo === 'Promo' && componentesItem.length > 0) {
                 // Validar stock de cada componente
-                for (const comp of item.componentes) {
+                for (const comp of componentesItem) {
                     const stockActual = await dbGet(
                         `SELECT stock FROM ${comp.tipo === 'Cigarrillo' ? 'cigarrillos' : 'productos'} WHERE nombre = ?`,
                         [comp.nombre]
@@ -2116,8 +2128,10 @@ app.post("/api/ventas", async (req, res) => {
                 // Registrar la promo como venta (sin descontar de tabla promo ya que no tiene stock)
                 let cat = 'Promo';
                 const descItem = parseFloat(item.descuento_item) || 0;
+                const itemSubtotalPromo = (item.precio * item.cantidad) - descItem;
+                const { itemPagoEfvo: promoPagoEfvo, itemPagoDig: promoPagoDig } = prorratearPago(itemSubtotalPromo);
                 await dbRun(`INSERT INTO ventas (ticket_id, producto, cantidad, precio_total, precio_unitario, cliente_id, metodo_pago, categoria, fecha, pago_efectivo, pago_digital, editado, notas, descuento, descuento_item) VALUES (?,?,?,?,?,?,?,?, datetime('now', 'localtime'), ?, ?, ?, ?, ?, ?)`,
-                    [ticket_id, item.nombre, item.cantidad, (item.precio * item.cantidad) - descItem, item.precio, cliente_id, metodo_pago, cat, pEfvo, pDig, ticket_a_corregir ? 1 : 0, notas, descuento, descItem]);
+                    [ticket_id, item.nombre, item.cantidad, itemSubtotalPromo, item.precio, cliente_id, metodo_pago, cat, promoPagoEfvo, promoPagoDig, ticket_a_corregir ? 1 : 0, notas, descuento, descItem]);
             } else {
                 // Productos y cigarrillos normales - VALIDAR STOCK ANTES DE DESCONTAR
                 let tabla = (item.tipo === 'Cigarrillo' || (item.categoria && item.categoria.toLowerCase().includes('cigarrillo'))) ? 'cigarrillos' : (item.tipo === 'Producto' ? 'productos' : null);
@@ -2137,8 +2151,10 @@ app.post("/api/ventas", async (req, res) => {
 
                 let cat = item.tipo || 'General'; if (tabla === 'cigarrillos' || item.tipo === 'Cigarrillo') cat = 'Cigarrillo';
                 const descItem = parseFloat(item.descuento_item) || 0;
+                const itemSubtotal = (item.precio * item.cantidad) - descItem;
+                const { itemPagoEfvo, itemPagoDig } = prorratearPago(itemSubtotal);
                 await dbRun(`INSERT INTO ventas (ticket_id, producto, cantidad, precio_total, precio_unitario, cliente_id, metodo_pago, categoria, fecha, pago_efectivo, pago_digital, editado, notas, descuento, descuento_item) VALUES (?,?,?,?,?,?,?,?, datetime('now', 'localtime'), ?, ?, ?, ?, ?, ?)`,
-                    [ticket_id, item.nombre, item.cantidad, (item.precio * item.cantidad) - descItem, item.precio, cliente_id, metodo_pago, cat, pEfvo, pDig, ticket_a_corregir ? 1 : 0, notas, descuento, descItem]);
+                    [ticket_id, item.nombre, item.cantidad, itemSubtotal, item.precio, cliente_id, metodo_pago, cat, itemPagoEfvo, itemPagoDig, ticket_a_corregir ? 1 : 0, notas, descuento, descItem]);
             }
         }
         if (metodo_pago === 'Fiado') {

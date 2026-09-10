@@ -6,6 +6,7 @@ import { beepScan, successSound, errorSound } from "../lib/sounds";
 import { useNotify } from "../context/NotificationContext";
 import jsPDF from "jspdf";
 import { QRCodeSVG } from "qrcode.react";
+import ProductosGrid from "./ProductosGrid";
 
 function Ventas() {
   const location = useLocation();
@@ -27,8 +28,6 @@ function Ventas() {
   // Clientes y Fiados
   const [clientes, setClientes] = useState([]);
   const [clienteSelec, setClienteSelec] = useState("");
-  const [pagoAnticipado, setPagoAnticipado] = useState("");
-  const [metodoAnticipo, setMetodoAnticipo] = useState("Efectivo");
 
   // Pago Mixto (split payment)
   const [pagoMixto, setPagoMixto] = useState(false);
@@ -132,7 +131,6 @@ function Ventas() {
     }]);
     setCarrito([]);
     setClienteSelec("");
-    setPagoAnticipado("");
     setDescuento("");
     setNotas("");
     setMetodo("Efectivo");
@@ -173,9 +171,26 @@ function Ventas() {
 
       const productos = prods.map(x => ({...x, tipo: 'Producto'}));
       const cigarrillos = cigs.map(x => ({...x, tipo: 'Cigarrillo', precio_qr: x.precio_qr || x.precio}));
-      const promosList = promos.map(x => ({...x, tipo: 'Promo'}));
+      const catalogoBase = [...productos, ...cigarrillos];
 
-      setProductos([...productos, ...cigarrillos, ...promosList]);
+      // El stock de una promo es virtual: depende de cuántos combos completos entran según sus componentes
+      const stockDeComponente = (comp) => {
+        const encontrado = catalogoBase.find(p =>
+          (comp.id != null && p.id === comp.id && p.tipo === comp.tipo) ||
+          (p.nombre === comp.nombre && p.tipo === comp.tipo)
+        );
+        return encontrado ? (encontrado.stock || 0) : 0;
+      };
+
+      const promosList = promos.map(x => {
+        const componentes = Array.isArray(x.componentes) ? x.componentes : [];
+        const stockVirtual = componentes.length
+          ? Math.min(...componentes.map(c => Math.floor(stockDeComponente(c) / (c.cantidad || 1))))
+          : 0;
+        return { ...x, tipo: 'Promo', componentes, stock: stockVirtual };
+      });
+
+      setProductos([...catalogoBase, ...promosList]);
       setClientes(clients);
     } catch(err) {
       console.error("Error cargando datos:", err);
@@ -235,23 +250,44 @@ function Ventas() {
   };
   */
 
+  // Los componentes vienen del catálogo ya parseados, pero se soporta el string JSON crudo de SQLite por las dudas
+  const parsearComponentes = (componentes) => {
+    if (Array.isArray(componentes)) return componentes;
+    if (typeof componentes === 'string' && componentes.trim()) {
+      try { return JSON.parse(componentes); } catch { return []; }
+    }
+    return [];
+  };
+
+  const obtenerStockComponente = (comp) => {
+    const encontrado = productos.find(p =>
+      (comp.id != null && p.id === comp.id && p.tipo === comp.tipo) ||
+      (p.nombre === comp.nombre && p.tipo === comp.tipo)
+    );
+    return encontrado ? (encontrado.stock || 0) : 0;
+  };
+
+  // stockDisponiblePromo = min(stock físico de cada componente / cantidad requerida por combo)
   const agregarAlCarrito = (prod) => {
-    // Validar stock para TODOS los productos (no solo promos)
-    if (prod.tipo !== 'Manual' && prod.stock !== '-') {
+    const esPromo = prod.tipo === 'Promo';
+    const componentesPromo = esPromo ? parsearComponentes(prod.componentes) : [];
+
+    if (esPromo) {
+      if (componentesPromo.length === 0) {
+        return mostrarToastRapido(`La promo "${prod.nombre}" no tiene componentes configurados.`, "warn");
+      }
+      // Se valida contra la cantidad que ya está en el carrito + la unidad que se quiere sumar
+      const yaEnCarrito = carrito.find(item => item.nombre === prod.nombre && item.tipo === 'Promo')?.cantidad || 0;
+      for (const comp of componentesPromo) {
+        const disponible = obtenerStockComponente(comp);
+        const necesario = (comp.cantidad || 1) * (yaEnCarrito + 1);
+        if (disponible < necesario) {
+          return mostrarToastRapido(`No hay stock suficiente de "${comp.nombre}" para la promo "${prod.nombre}". Requerido: ${necesario} | Disponible: ${disponible}`, "warn");
+        }
+      }
+    } else if (prod.tipo !== 'Manual' && prod.stock !== '-') {
       if (!prod.stock || prod.stock <= 0) {
         return mostrarToastRapido(`No hay stock disponible de "${prod.nombre}".`, "warn");
-      }
-    }
-
-    // Validar stock disponible para promos
-    if (prod.tipo === 'Promo' && prod.componentes && Array.isArray(prod.componentes) && prod.componentes.length > 0) {
-      for (const comp of prod.componentes) {
-        const productoComponente = productos.find(p =>
-          p.nombre === comp.nombre && p.tipo === comp.tipo
-        );
-        if (!productoComponente || productoComponente.stock < comp.cantidad) {
-          return mostrarToastRapido(`No hay suficiente stock de "${comp.nombre}" para esta promo. Requerido: ${comp.cantidad} | Disponible: ${productoComponente?.stock || 0}`, "warn");
-        }
       }
     }
 
@@ -264,7 +300,7 @@ function Ventas() {
 
     const existe = carrito.find(item => item.nombre === prod.nombre);
     if (existe) {
-      if (prod.tipo !== 'Manual' && prod.stock !== '-') {
+      if (!esPromo && prod.tipo !== 'Manual' && prod.stock !== '-') {
         const stock = prod.stock || 0;
         if (existe.cantidad >= stock) {
           return mostrarToastRapido(`No hay más stock disponible de "${prod.nombre}". Disponible: ${stock}`, "warn");
@@ -272,7 +308,16 @@ function Ventas() {
       }
       setCarrito(carrito.map(item => item.nombre === prod.nombre ? { ...item, cantidad: item.cantidad + 1 } : item));
     } else {
-      setCarrito([...carrito, { ...prod, precio: precioFinal, precio_original: prod.precio, precio_qr: prod.precio_qr || prod.precio, cantidad: 1, descuento_item: 0, descuento_item_tipo: '$' }]);
+      setCarrito([...carrito, {
+        ...prod,
+        componentes: esPromo ? componentesPromo : prod.componentes,
+        precio: precioFinal,
+        precio_original: prod.precio,
+        precio_qr: prod.precio_qr || prod.precio,
+        cantidad: 1,
+        descuento_item: 0,
+        descuento_item_tipo: '$'
+      }]);
     }
   };
 
@@ -565,8 +610,6 @@ function Ventas() {
       })),
       metodo_pago: metodoPagoFinal,
       cliente_id: clienteSelec || null,
-      pago_anticipado: pagoAnticipado || 0,
-      metodo_anticipo: metodoAnticipo,
       ticket_a_corregir: ticketEditando,
       descuento: descuentoNum,
       notas: notas,
@@ -660,7 +703,6 @@ function Ventas() {
       setCarrito([]);
       setTicketEditando(null);
       setClienteSelec("");
-      setPagoAnticipado("");
       setDescuento("");
       setNotas("");
       setMetodo("Efectivo");
@@ -857,7 +899,6 @@ function Ventas() {
       setModalCobroAbierto(false);
       setCarrito([]);
       setClienteSelec("");
-      setPagoAnticipado("");
       setDescuento("");
       setNotas("");
       setMetodo("Efectivo");
@@ -933,36 +974,12 @@ function Ventas() {
             </button>
         </form>
         
-        <div className="flex-1 overflow-y-auto grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2.5 pb-2 content-start">
-          {productosFiltrados.slice(0, busqueda ? 100 : 50).map((prod, i) => (
-             <button 
-               key={i} 
-               onClick={() => agregarAlCarrito(prod)}
-               className="bg-white/80 backdrop-blur-xl p-3.5 rounded-xl border border-black/[0.04] shadow-sm hover:shadow-md hover:scale-[1.02] transition-all flex flex-col justify-between text-left group h-[110px]"
-               title={prod.nombre}
-             >
-               {/* Fila superior: Nombre + Stock */}
-               <div className="flex items-start justify-between gap-2 min-w-0 w-full">
-                 <p className="font-medium text-[#1d1d1f] leading-snug group-hover:text-[#007aff] line-clamp-2 min-w-0 text-[13px]">{prod.nombre}</p>
-                 <span className="text-[11px] text-[#86868b] whitespace-nowrap shrink-0">{prod.stock}</span>
-               </div>
-               {/* Fila inferior: Precio + Badge */}
-               <div className="flex items-end justify-between w-full mt-auto">
-                 {prod.tipo === 'Cigarrillo' && prod.precio_qr && prod.precio_qr !== prod.precio ? (
-                   <div>
-                     <p className={`text-base font-semibold leading-tight ${['Mercado Pago', 'Débito', 'Transferencia'].includes(metodo) ? 'text-[#86868b] text-xs line-through' : 'text-[#1d1d1f]'}`}>$ {prod.precio} <span className="text-[10px] font-normal text-[#86868b]">Efvo</span></p>
-                     <p className={`text-base font-semibold leading-tight ${['Mercado Pago', 'Débito', 'Transferencia'].includes(metodo) ? 'text-[#007aff]' : 'text-[#86868b] text-xs line-through'}`}>$ {prod.precio_qr} <span className="text-[10px] font-normal text-[#86868b]">Digital</span></p>
-                   </div>
-                 ) : (
-                   <p className="text-lg font-semibold text-[#1d1d1f]">$ {prod.precio}</p>
-                 )}
-                 <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full shrink-0 ${prod.tipo === 'Cigarrillo' ? 'bg-orange-50 text-orange-500' : prod.tipo === 'Promo' ? 'bg-purple-50 text-purple-500' : 'bg-blue-50 text-[#007aff]'}`}>
-                   {prod.tipo}
-                 </span>
-               </div>
-             </button>
-          ))}
-        </div>
+        <ProductosGrid
+          productos={productosFiltrados}
+          metodo={metodo}
+          onAgregar={agregarAlCarrito}
+          busqueda={busqueda}
+        />
       </div>
 
       {/* DERECHA: CARRITO */}
@@ -1067,35 +1084,6 @@ function Ventas() {
                     <option value="">-- Consumidor Final --</option>
                     {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                 </select>
-                
-                {/* ENTREGA / PAGO ANTICIPADO (Solo si hay cliente seleccionado) */}
-                {clienteSelec && (
-                   <div className="mt-1 flex gap-2 animate-in fade-in slide-in-from-top-1">
-                      <div className="flex-1">
-                          <label className="text-[10px] font-bold text-slate-400">Entrega</label>
-                          <input 
-                            type="number" 
-                            placeholder="$ 0.00" 
-                            className="w-full p-1.5 border rounded-lg text-xs"
-                            value={pagoAnticipado}
-                            onChange={e => setPagoAnticipado(e.target.value)}
-                          />
-                      </div>
-                      <div>
-                          <label className="text-[10px] font-bold text-slate-400">Método Entrega</label>
-                          <select 
-                            className="p-1.5 border rounded-lg text-xs bg-white w-full"
-                            value={metodoAnticipo}
-                            onChange={e => setMetodoAnticipo(e.target.value)}
-                          >
-                            <option value="Efectivo">Efectivo</option>
-                            <option value="Transferencia">Mercado Pago</option>
-                            <option value="Transferencia">Transferencia</option>
-                            <option value="Transferencia">Targetas</option>
-                          </select>
-                      </div>
-                   </div>
-                )}
             </div>
 
             {/* MÉTODO DE PAGO */}

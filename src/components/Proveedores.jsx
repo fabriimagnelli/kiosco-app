@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import {
   Truck, Plus, Search, Trash2, Edit2, Phone, MapPin, Calendar, Tag, Save, X,
   Eye, ClipboardList, DollarSign, ArrowUpRight, ArrowDownRight, Package,
-  Clock, CheckCircle, AlertTriangle, RefreshCw, Bell, ShoppingCart, CreditCard
+  Clock, CheckCircle, AlertTriangle, RefreshCw, Bell, ShoppingCart, CreditCard, FileText
 } from "lucide-react";
 import { apiFetch } from "../lib/api";
 import { useNotify } from "../context/NotificationContext";
@@ -122,13 +122,30 @@ function TabProveedores() {
 
   const registrarDeuda = async (e) => {
     e.preventDefault();
-    if (!montoDeuda || parseFloat(montoDeuda) <= 0) return toast("Ingresa un monto válido", "warn");
+    const monto = parseFloat(montoDeuda);
+    if (!montoDeuda || isNaN(monto) || monto <= 0) return toast("Ingresa un monto válido mayor a 0", "warn");
+
+    // Un pago solo tiene sentido si hay deuda real pendiente con el proveedor
+    if (tipoMovimiento === "pago") {
+      const saldoActual = calcularSaldo(historialSeleccionado);
+      if (saldoActual <= 0) {
+        return toast(
+          saldoActual < 0
+            ? "El proveedor ya tiene saldo a favor, no corresponde registrar un pago."
+            : "No hay deuda pendiente con este proveedor.",
+          "warn"
+        );
+      }
+    }
+
     setProcesandoDeuda(true);
     try {
-      const monto = tipoMovimiento === "pago" ? -parseFloat(montoDeuda) : parseFloat(montoDeuda);
+      // La compra siempre queda a cuenta corriente: el método de pago solo aplica cuando sale dinero de caja
+      const montoFinal = tipoMovimiento === "pago" ? -monto : monto;
+      const metodoFinal = tipoMovimiento === "pago" ? metodoDudaPago : "Cuenta Corriente";
       const desc = tipoMovimiento === "pago" ? ("Pago al " + (descripcionDeuda || "proveedor")) : (descripcionDeuda || "Compra");
       const res = await apiFetch("/api/movimientos_proveedores", {
-        method: "POST", body: JSON.stringify({ proveedor_id: provSeleccionado.id, monto, descripcion: desc, metodo_pago: metodoDudaPago })
+        method: "POST", body: JSON.stringify({ proveedor_id: provSeleccionado.id, monto: montoFinal, descripcion: desc, metodo_pago: metodoFinal })
       });
       const data = await res.json();
       if (data.success || data.id) {
@@ -301,7 +318,8 @@ function TabProveedores() {
       {verHistorial && provSeleccionado && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
-            <div className="p-6 border-b border-slate-100 flex justify-between items-start bg-slate-50 rounded-t-2xl">
+            {/* CABECERA — el cierre siempre queda fijo arriba a la derecha */}
+            <div className="relative p-6 border-b border-slate-100 flex justify-between items-start bg-slate-50 rounded-t-2xl shrink-0">
               <div>
                 <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Truck className="text-indigo-600" /> {provSeleccionado.nombre}</h2>
                 <p className="text-slate-500 text-sm mt-1 flex gap-4">
@@ -309,15 +327,76 @@ function TabProveedores() {
                   {provSeleccionado.rubro && <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-full text-xs font-bold">{provSeleccionado.rubro}</span>}
                 </p>
               </div>
-              <div className="text-right">
+              <div className="text-right pr-8">
                 <p className="text-xs uppercase text-slate-400 font-bold">Saldo Pendiente</p>
                 <p className={`text-2xl font-black ${calcularSaldo(historialSeleccionado) > 0 ? "text-red-600" : calcularSaldo(historialSeleccionado) < 0 ? "text-emerald-600" : "text-slate-400"}`}>
                   {fmtMoney(Math.abs(calcularSaldo(historialSeleccionado)))}
                 </p>
                 <p className="text-xs text-slate-400">{calcularSaldo(historialSeleccionado) > 0 ? "Le debo" : calcularSaldo(historialSeleccionado) < 0 ? "A mi favor" : "Sin saldo"}</p>
               </div>
+              <button onClick={cerrarDetalles} className="absolute top-4 right-4 p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-lg transition-colors" title="Cerrar">
+                <X size={18} />
+              </button>
             </div>
-            <div className="p-0 overflow-y-auto flex-1">
+
+            {/* CUERPO SCROLLEABLE: acción de nuevo movimiento + formulario colapsable + tabla */}
+            <div className="overflow-y-auto flex-1">
+              <div className="p-4 border-b border-slate-100 bg-white flex justify-end">
+                <button onClick={() => setMostrarFormDeuda(!mostrarFormDeuda)} className="px-4 py-2 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 flex items-center gap-2 text-sm">
+                  <Plus size={16} className={`transition-transform ${mostrarFormDeuda ? "rotate-45" : ""}`} /> {mostrarFormDeuda ? "Cerrar formulario" : "Registrar Movimiento"}
+                </button>
+              </div>
+
+              {mostrarFormDeuda && (
+                <div className="p-6 border-b border-slate-100 bg-indigo-50">
+                  <form onSubmit={registrarDeuda} className="space-y-3">
+                    {/* Tabs: cada flujo pide solo los campos que le corresponden */}
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => setTipoMovimiento("compra")} disabled={procesandoDeuda}
+                        className={`flex-1 py-2 rounded-lg text-sm font-bold border flex items-center justify-center gap-1.5 transition-colors ${tipoMovimiento === "compra" ? "bg-red-600 text-white border-red-600" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"}`}>
+                        <FileText size={14} /> Cargar Factura / Remito
+                      </button>
+                      <button type="button" onClick={() => setTipoMovimiento("pago")} disabled={procesandoDeuda}
+                        className={`flex-1 py-2 rounded-lg text-sm font-bold border flex items-center justify-center gap-1.5 transition-colors ${tipoMovimiento === "pago" ? "bg-emerald-600 text-white border-emerald-600" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"}`}>
+                        <CreditCard size={14} /> Registrar Pago
+                      </button>
+                    </div>
+
+                    <div className={`grid grid-cols-1 ${tipoMovimiento === "pago" ? "sm:grid-cols-2" : ""} gap-3`}>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-1">Monto *</label>
+                        <input type="number" step="0.01" min="0.01" placeholder="Monto" className="w-full p-2 rounded border border-indigo-200 outline-none" value={montoDeuda} onChange={(e) => setMontoDeuda(e.target.value)} disabled={procesandoDeuda} required />
+                      </div>
+                      {tipoMovimiento === "pago" && (
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 mb-1">Método de Pago</label>
+                          <select className="w-full p-2 rounded border border-indigo-200 outline-none bg-white" value={metodoDudaPago} onChange={(e) => setMetodoDudaPago(e.target.value)} disabled={procesandoDeuda}>
+                            <option value="Efectivo">Efectivo</option>
+                            <option value="Transferencia">Transferencia</option>
+                            <option value="Cheque">Cheque</option>
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">{tipoMovimiento === "pago" ? "Detalle (opcional)" : "N° Factura / Concepto"}</label>
+                      <input type="text" placeholder={tipoMovimiento === "pago" ? "Ej: Pago parcial..." : "Ej: Factura A-0001-0234 - Bebidas varias"} className="w-full p-2 rounded border border-indigo-200 outline-none" value={descripcionDeuda} onChange={(e) => setDescripcionDeuda(e.target.value)} disabled={procesandoDeuda} />
+                    </div>
+                    {tipoMovimiento === "compra" && (
+                      <p className="text-[11px] text-slate-500 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5">
+                        Esta factura queda registrada a <strong>Cuenta Corriente</strong>: no descuenta dinero de la caja.
+                      </p>
+                    )}
+                    <div className="flex gap-2">
+                      <button type="submit" disabled={procesandoDeuda} className={`flex-1 py-2 font-bold rounded text-white ${tipoMovimiento === "pago" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"}`}>
+                        {procesandoDeuda ? "Guardando..." : tipoMovimiento === "pago" ? "Guardar Pago" : "Guardar Factura"}
+                      </button>
+                      <button type="button" onClick={() => setMostrarFormDeuda(false)} disabled={procesandoDeuda} className="px-4 py-2 bg-slate-300 text-slate-700 font-bold rounded hover:bg-slate-400">Cancelar</button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
               {historialSeleccionado.length === 0 ? (
                 <div className="p-10 text-center text-slate-400">No hay movimientos registrados.</div>
               ) : (
@@ -329,12 +408,27 @@ function TabProveedores() {
                     {historialSeleccionado.map((mov) => (
                       <tr key={mov.id}>
                         <td className="p-4 text-slate-500">{fmtDate(mov.fecha)}<span className="block text-xs opacity-50">{new Date(mov.fecha).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span></td>
-                        <td className="p-4 font-medium text-slate-700">{mov.descripcion}</td>
-                        <td className="p-4 text-slate-500">{mov.metodo_pago}</td>
+                        <td className="p-4 font-medium text-slate-700">
+                          {mov.descripcion}
+                          {mov.monto > 0 && (
+                            <span className="ml-2 inline-block text-[10px] font-bold uppercase tracking-wide text-red-500 bg-red-50 px-1.5 py-0.5 rounded">A pagar</span>
+                          )}
+                        </td>
+                        <td className="p-4">
+                          {mov.monto > 0 ? (
+                            <span className="inline-flex items-center gap-1 bg-red-50 text-red-700 border border-red-200 px-2 py-0.5 rounded-full text-xs font-bold">
+                              <FileText size={11} /> Cuenta corriente
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full text-xs font-bold">
+                              <CreditCard size={11} /> {mov.metodo_pago}
+                            </span>
+                          )}
+                        </td>
                         <td className="p-4 text-right font-bold">
                           {mov.monto > 0
-                            ? <span className="text-red-600">(Compra) +{fmtMoney(mov.monto)}</span>
-                            : <span className="text-emerald-600">(Pago) -{fmtMoney(Math.abs(mov.monto))}</span>
+                            ? <span className="text-red-600">+{fmtMoney(mov.monto)}</span>
+                            : <span className="text-emerald-600">-{fmtMoney(Math.abs(mov.monto))}</span>
                           }
                         </td>
                       </tr>
@@ -343,51 +437,11 @@ function TabProveedores() {
                 </table>
               )}
             </div>
-            <div className="p-4 border-t border-slate-100 bg-slate-50 rounded-b-2xl flex justify-between items-center gap-2">
-              <button onClick={() => setMostrarFormDeuda(!mostrarFormDeuda)} className="px-6 py-2 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 flex items-center gap-2">
-                <Plus size={18} /> Registrar Movimiento
-              </button>
+
+            {/* PIE fijo: siempre visible, sin duplicarse con el formulario */}
+            <div className="p-4 border-t border-slate-100 bg-slate-50 rounded-b-2xl flex justify-end shrink-0">
               <button onClick={cerrarDetalles} className="px-6 py-2 bg-slate-800 text-white font-bold rounded-lg hover:bg-slate-900">Cerrar</button>
             </div>
-            {mostrarFormDeuda && (
-              <div className="p-6 border-t border-slate-100 bg-indigo-50">
-                <form onSubmit={registrarDeuda} className="space-y-3">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1">Tipo</label>
-                    <select className="w-full p-2 rounded border border-indigo-200 outline-none bg-white" value={tipoMovimiento} onChange={(e) => setTipoMovimiento(e.target.value)} disabled={procesandoDeuda}>
-                      <option value="compra">Compra (Aumenta deuda)</option>
-                      <option value="pago">Pago (Reduce deuda)</option>
-                    </select>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Monto *</label>
-                      <input type="number" step="0.01" placeholder="Monto" className="w-full p-2 rounded border border-indigo-200 outline-none" value={montoDeuda} onChange={(e) => setMontoDeuda(e.target.value)} disabled={procesandoDeuda} required />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Método de Pago</label>
-                      <select className="w-full p-2 rounded border border-indigo-200 outline-none bg-white" value={metodoDudaPago} onChange={(e) => setMetodoDudaPago(e.target.value)} disabled={procesandoDeuda}>
-                        <option value="Efectivo">Efectivo</option>
-                        <option value="Transferencia">Transferencia</option>
-                        <option value="Cheque">Cheque</option>
-                        <option value="Retiros">Retiros</option>
-                        <option value="Cuenta Corriente">Cuenta Corriente</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1">Descripción</label>
-                    <input type="text" placeholder={tipoMovimiento === "pago" ? "Ej: Pago parcial..." : "Ej: Bebidas varias..."} className="w-full p-2 rounded border border-indigo-200 outline-none" value={descripcionDeuda} onChange={(e) => setDescripcionDeuda(e.target.value)} disabled={procesandoDeuda} />
-                  </div>
-                  <div className="flex gap-2">
-                    <button type="submit" disabled={procesandoDeuda} className={`flex-1 py-2 font-bold rounded text-white ${tipoMovimiento === "pago" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-indigo-600 hover:bg-indigo-700"}`}>
-                      {procesandoDeuda ? "Guardando..." : tipoMovimiento === "pago" ? "Guardar Pago" : "Guardar Compra"}
-                    </button>
-                    <button type="button" onClick={() => setMostrarFormDeuda(false)} disabled={procesandoDeuda} className="px-4 py-2 bg-slate-300 text-slate-700 font-bold rounded hover:bg-slate-400">Cancelar</button>
-                  </div>
-                </form>
-              </div>
-            )}
           </div>
         </div>
       )}
