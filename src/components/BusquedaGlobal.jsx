@@ -20,7 +20,7 @@ const secciones = [
   { nombre: "Configuración", ruta: "/configuracion", icono: Settings, atajo: "F8", categoria: "Navegación" },
   { nombre: "Retiros", ruta: "/retiros", icono: TrendingUp, categoria: "Navegación" },
   { nombre: "Promos y Combos", ruta: "/promos", icono: ShoppingBag, categoria: "Navegación" },
-  { nombre: "Cigarrillos", ruta: "/cigarrillos", icono: Cigarette, categoria: "Navegación" },
+  /* { nombre: "Cigarrillos", ruta: "/cigarrillos", icono: Cigarette, categoria: "Navegación" }, */
   /* { nombre: "Calculadora de Precios", ruta: "/calculadora", icono: Calculator, categoria: "Navegación" }, */
   { nombre: "Clientes / Deudores", ruta: "/clientes", icono: Users, categoria: "Navegación" },
   { nombre: "Proveedores", ruta: "/proveedores", icono: Truck, categoria: "Navegación" },

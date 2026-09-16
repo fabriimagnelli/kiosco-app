@@ -5,7 +5,7 @@ import { useTheme } from "../context/ThemeContext";
 import { isSoundEnabled, toggleSound } from "../lib/sounds";
 import { 
   Home, ShoppingCart, Package, Users, Truck, DollarSign, LogOut, Archive, PieChart,
-  FileText, Scale, Cigarette, ShoppingBag, TrendingUp, Settings,
+  FileText, Scale, ShoppingBag, TrendingUp, Settings,
   ChevronLeft, ChevronRight, ChevronDown, LockOpen, Monitor, Building2, Calculator,
   Search, Moon, Sun, Volume2, VolumeX, Menu, X
 } from "lucide-react";
@@ -164,10 +164,12 @@ function Sidebar({ isOpen, toggleSidebar, onOpenSearch, mobileOpen, setMobileOpe
                 <span className="whitespace-nowrap">Productos</span>
                 <span className="ml-auto text-[10px] bg-white/[0.06] px-1.5 py-0.5 rounded text-slate-500">F4</span>
               </Link>
+              {/*
               <Link to="/cigarrillos" className={`${subBtnBase} ${isActive("/cigarrillos") ? subBtnActive : subBtnInactive}`} title="Cigarrillos">
                 <Cigarette size={16} className="flex-shrink-0" />
                 <span className="whitespace-nowrap">Cigarrillos</span>
               </Link>
+              */}
               <Link to="/promos" className={`${subBtnBase} ${isActive("/promos") ? subBtnActive : subBtnInactive}`} title="Promos y Combos">
                 <ShoppingBag size={16} className="flex-shrink-0" />
                 <span className="whitespace-nowrap">Promos</span>

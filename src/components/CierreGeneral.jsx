@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Calculator, Save, AlertTriangle, Wallet, ArrowRight, Edit2, Check, X, DollarSign } from "lucide-react";
+import { Calculator, Save, AlertTriangle, Wallet, ArrowRight, Edit2, Check, X, DollarSign, ArrowLeft } from "lucide-react";
 import { apiFetch } from "../lib/api";
 import { useNotify } from "../context/NotificationContext";
 import jsPDF from "jspdf";
@@ -181,7 +181,7 @@ function CierreGeneral() {
             <Calculator size={18} className="text-blue-600"/> Resumen General
           </h2>
           <div className="space-y-2 text-sm">
-            <div className="flex justify-between"><span>Inicial:</span> <span className="font-medium">$ {resumen.saldo_inicial?.toLocaleString()}</span></div>
+            <div className="flex justify-between"><span>Inicio de caja:</span> <span className="font-medium">$ {resumen.saldo_inicial?.toLocaleString()}</span></div>
             <div className="flex justify-between text-green-600">
                 <span className="flex items-center gap-1"><ArrowRight size={12}/> Ventas Efectivo:</span> 
                 <span className="font-medium">+ $ {resumen.ventas?.toLocaleString()}</span>
@@ -191,14 +191,14 @@ function CierreGeneral() {
                 <span className="font-medium">+ $ {resumen.cobros?.toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-red-500">
-                <span>Gastos:</span> <span className="font-medium">- $ {resumen.gastos?.toLocaleString()}</span>
+                <span className="flex items-center gap-1"><ArrowLeft size={12}/> Gastos:</span> <span className="font-medium">- $ {resumen.gastos?.toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-red-500">
-                <span>Proveedores:</span> <span className="font-medium">- $ {resumen.proveedores?.toLocaleString()}</span>
+                <span className="flex items-center gap-1"><ArrowLeft size={12}/> Proveedores:</span> <span className="font-medium">- $ {resumen.proveedores?.toLocaleString()}</span>
             </div>
             <hr className="my-2 border-slate-200/80"/>
             <div className="flex justify-between text-lg font-medium text-slate-800">
-              <span>DEBERÍA HABER:</span> <span>$ {esperado.toLocaleString()}</span>
+              <span>Total:</span> <span>$ {esperado.toLocaleString()}</span>
             </div>
           </div>
         </div>

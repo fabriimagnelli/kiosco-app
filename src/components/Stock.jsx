@@ -9,7 +9,7 @@ function Stock() {
   const [cigarrillos, setCigarrillos] = useState([]);
   const [itemsUnificados, setItemsUnificados] = useState([]);
   const [busqueda, setBusqueda] = useState("");
-  const [filtro, setFiltro] = useState("todos"); // 'todos', 'bajo', 'general', 'cigarrillos'
+  const [filtro, setFiltro] = useState("todos"); // 'todos', 'bajo', 'general'
 
   // Modal Lista de Compra
   const [mostrarListaCompra, setMostrarListaCompra] = useState(false);
@@ -57,7 +57,6 @@ function Stock() {
 
     if (filtro === "bajo") return item.stock <= (item.stock_minimo ?? 5);
     if (filtro === "general") return item.tipo === "General";
-    if (filtro === "cigarrillos") return item.tipo === "Cigarrillo";
     return true;
   });
 
@@ -115,7 +114,7 @@ function Stock() {
         </div>
 
         <div className="flex bg-slate-100 p-1 rounded-lg flex-wrap">
-            {["todos", "bajo", "general", "cigarrillos"].map(f => (
+            {["todos", "bajo", "general"].map(f => (
                 <button 
                     key={f}
                     onClick={() => setFiltro(f)}

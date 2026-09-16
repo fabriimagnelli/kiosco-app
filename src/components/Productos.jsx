@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Package, Plus, Trash2, Edit, Search, Barcode, DollarSign, Settings, Check, X, Upload, FileSpreadsheet, Download, Image, History, Tag, Printer, Camera, AlertTriangle, ChevronDown, ChevronUp, Weight } from "lucide-react";
+import { Package, Plus, Trash2, Edit, Search, Barcode, DollarSign, Settings, Check, X, Upload, FileSpreadsheet, Download, Image, History, Tag, Printer, Camera, AlertTriangle, ChevronDown, ChevronUp, ChevronRight, Weight, TrendingUp, Loader2 } from "lucide-react";
 import { apiFetch, exportProductosCsv, getUploadUrl } from "../lib/api";
 import { useNotify } from "../context/NotificationContext";
 
@@ -65,6 +65,18 @@ function Productos() {
   // Etiquetas
   const [productosEtiqueta, setProductosEtiqueta] = useState([]);
   const [mostrarEtiquetas, setMostrarEtiquetas] = useState(false);
+
+  // Selección masiva (acumulativa entre búsquedas)
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const selectAllRef = useRef(null);
+
+  // Ajuste masivo de precios
+  const [mostrarAjuste, setMostrarAjuste] = useState(false);
+  const [ajusteOperacion, setAjusteOperacion] = useState("aumento");
+  const [ajusteTipo, setAjusteTipo] = useState("porcentaje");
+  const [ajusteValor, setAjusteValor] = useState("");
+  const [ajusteRedondear, setAjusteRedondear] = useState(true);
+  const [ajustando, setAjustando] = useState(false);
 
   useEffect(() => {
     cargarProductos();
@@ -235,6 +247,79 @@ function Productos() {
     p.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
     (p.codigo_barras && p.codigo_barras.includes(busqueda))
   );
+
+  // --- Selección masiva ---
+  const productosSeleccionados = productos.filter((p) => selectedIds.has(p.id));
+  const todosVisiblesSeleccionados = productosFiltrados.length > 0 && productosFiltrados.every((p) => selectedIds.has(p.id));
+  const algunosVisiblesSeleccionados = productosFiltrados.some((p) => selectedIds.has(p.id));
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = algunosVisiblesSeleccionados && !todosVisiblesSeleccionados;
+    }
+  });
+
+  const toggleSeleccion = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSeleccionVisibles = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (todosVisiblesSeleccionados) {
+        productosFiltrados.forEach((p) => next.delete(p.id));
+      } else {
+        productosFiltrados.forEach((p) => next.add(p.id));
+      }
+      return next;
+    });
+  };
+
+  const calcularNuevoPrecio = (p) => {
+    const v = parseFloat(ajusteValor);
+    if (isNaN(v) || v <= 0) return null;
+    let nuevo;
+    if (ajusteTipo === "porcentaje") {
+      nuevo = ajusteOperacion === "aumento" ? p.precio * (1 + v / 100) : p.precio * (1 - v / 100);
+    } else {
+      nuevo = ajusteOperacion === "aumento" ? p.precio + v : Math.max(0, p.precio - v);
+    }
+    nuevo = Math.max(0, nuevo);
+    return ajusteRedondear ? Math.round(nuevo) : Math.round(nuevo * 100) / 100;
+  };
+
+  const confirmarAjuste = async () => {
+    const v = parseFloat(ajusteValor);
+    if (isNaN(v) || v <= 0) { toast("Ingresá un valor válido mayor a 0", "warn"); return; }
+    if (productosSeleccionados.length === 0) { toast("No hay productos seleccionados", "warn"); return; }
+    setAjustando(true);
+    try {
+      const res = await apiFetch("/api/productos/ajuste_masivo", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: [...selectedIds], operacion: ajusteOperacion, tipo: ajusteTipo, valor: v, redondear: ajusteRedondear })
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast(`Precios actualizados: ${data.actualizados} producto${data.actualizados === 1 ? '' : 's'}`, "ok");
+        setSelectedIds(new Set());
+        setMostrarAjuste(false);
+        setAjusteValor("");
+        cargarProductos();
+      } else {
+        toast("Error: " + (data.error || "Error desconocido"), "err");
+      }
+    } catch (e) {
+      console.error("Error en ajuste masivo:", e);
+      toast("Error de conexión al ajustar precios.", "err");
+    } finally {
+      setAjustando(false);
+    }
+  };
 
   // --- CSV ---
   const handleCSVFile = (e) => {
@@ -565,6 +650,9 @@ function Productos() {
               <table className="w-full text-left border-collapse min-w-[700px]">
                 <thead className="bg-slate-50 text-slate-600 font-semibold text-xs uppercase tracking-wider sticky top-0 z-10">
                   <tr>
+                    <th className="p-3 border-b border-slate-200 bg-slate-50 w-10">
+                      <input ref={selectAllRef} type="checkbox" checked={todosVisiblesSeleccionados} onChange={toggleSeleccionVisibles} className="w-4 h-4 accent-purple-600 cursor-pointer" title="Seleccionar todos los visibles" />
+                    </th>
                     {mostrarEtiquetas && <th className="p-3 border-b border-slate-200 bg-slate-50 w-10"></th>}
                     <th className="p-4 border-b border-slate-200 bg-slate-50">Producto</th>
                     <th className="p-4 border-b border-slate-200 bg-slate-50 text-center">Stock</th>
@@ -574,13 +662,16 @@ function Productos() {
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-sm">
                   {loading ? (
-                    <tr><td colSpan={mostrarEtiquetas ? 5 : 4} className="p-8 text-center text-slate-400">Cargando...</td></tr>
+                    <tr><td colSpan={mostrarEtiquetas ? 6 : 5} className="p-8 text-center text-slate-400">Cargando...</td></tr>
                   ) : productosFiltrados.length === 0 ? (
-                    <tr><td colSpan={mostrarEtiquetas ? 5 : 4} className="p-8 text-center text-slate-400">No se encontraron productos.</td></tr>
+                    <tr><td colSpan={mostrarEtiquetas ? 6 : 5} className="p-8 text-center text-slate-400">No se encontraron productos.</td></tr>
                   ) : (
                     productosFiltrados.map((prod) => (
                       <React.Fragment key={prod.id}>
-                        <tr className={`hover:bg-slate-50 transition-colors ${productosEtiqueta.find(p => p.id === prod.id) ? 'bg-orange-50' : ''}`}>
+                        <tr className={`hover:bg-slate-50 transition-colors ${productosEtiqueta.find(p => p.id === prod.id) ? 'bg-orange-50' : selectedIds.has(prod.id) ? 'bg-blue-50/50' : ''}`}>
+                          <td className="p-3 text-center">
+                            <input type="checkbox" checked={selectedIds.has(prod.id)} onChange={() => toggleSeleccion(prod.id)} className="w-4 h-4 accent-purple-600 cursor-pointer" />
+                          </td>
                           {mostrarEtiquetas && (
                             <td className="p-3 text-center">
                               <input type="checkbox" checked={!!productosEtiqueta.find(p => p.id === prod.id)} onChange={() => toggleEtiqueta(prod)} className="w-4 h-4 accent-orange-600 cursor-pointer" />
@@ -642,7 +733,7 @@ function Productos() {
                         {/* HISTORIAL DE PRECIOS EXPANDIBLE */}
                         {mostrarHistorial === prod.id && (
                           <tr>
-                            <td colSpan={mostrarEtiquetas ? 5 : 4} className="p-0">
+                            <td colSpan={mostrarEtiquetas ? 6 : 5} className="p-0">
                               <div className="bg-blue-50 border-y border-blue-200 p-4 animate-in fade-in slide-in-from-top duration-200">
                                 <h4 className="text-xs font-bold text-blue-800 mb-2 flex items-center gap-1"><History size={14} /> Historial de Precios — {prod.nombre}</h4>
                                 {historialPrecios.length === 0 ? (
@@ -736,6 +827,94 @@ function Productos() {
               <button onClick={() => { setMostrarCSV(false); setCsvPreview([]); }} className="flex-1 py-3 rounded-xl font-bold text-slate-500 hover:bg-slate-200">Cancelar</button>
               <button onClick={importarCSV} disabled={csvImporting} className="flex-[2] bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-bold shadow-lg flex justify-center items-center gap-2 disabled:opacity-60">
                 <Upload size={18} /> {csvImporting ? "Importando..." : `Importar ${csvPreview.length} Productos`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BARRA FLOTANTE SELECCIÓN */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-slate-900 text-white rounded-2xl shadow-xl px-6 py-3 flex items-center gap-4 animate-in fade-in slide-in-from-bottom duration-200">
+          <span className="text-sm font-semibold whitespace-nowrap">{selectedIds.size} producto{selectedIds.size !== 1 ? 's' : ''} seleccionado{selectedIds.size !== 1 ? 's' : ''}</span>
+          <button onClick={() => setMostrarAjuste(true)} className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2 rounded-xl text-sm transition-colors flex items-center gap-1.5">
+            <TrendingUp size={16} /> Ajustar Precios
+          </button>
+          <button onClick={() => setSelectedIds(new Set())} className="text-slate-400 hover:text-white text-sm transition-colors">Limpiar selección</button>
+        </div>
+      )}
+
+      {/* MODAL AJUSTE MASIVO */}
+      {mostrarAjuste && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 flex flex-col gap-4 max-h-[85vh] overflow-y-auto custom-scrollbar">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
+                <span className="bg-purple-100 text-purple-700 p-2 rounded-lg"><TrendingUp size={20} /></span>
+                Ajuste Masivo de Precios
+              </h3>
+              <button onClick={() => setMostrarAjuste(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-full hover:bg-slate-100 transition-colors"><X size={20} /></button>
+            </div>
+            <div className="bg-purple-50 border border-purple-100 px-3 py-2 rounded-lg text-purple-800 text-xs font-bold">
+              {productosSeleccionados.length} producto{productosSeleccionados.length !== 1 ? 's' : ''} seleccionado{productosSeleccionados.length !== 1 ? 's' : ''}: se actualizará el precio de venta.
+            </div>
+            <div className="space-y-4">
+              {/* Operación */}
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1">Operación</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => setAjusteOperacion("aumento")} className={`py-2 rounded-xl font-bold text-sm border-2 transition-all ${ajusteOperacion === "aumento" ? "bg-green-600 text-white border-green-600" : "border-slate-200 text-slate-500 hover:bg-slate-50"}`}>+ Aumento</button>
+                  <button onClick={() => setAjusteOperacion("rebaja")} className={`py-2 rounded-xl font-bold text-sm border-2 transition-all ${ajusteOperacion === "rebaja" ? "bg-red-500 text-white border-red-500" : "border-slate-200 text-slate-500 hover:bg-slate-50"}`}>- Rebaja</button>
+                </div>
+              </div>
+              {/* Tipo */}
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1">Tipo de cálculo</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => setAjusteTipo("porcentaje")} className={`py-2 rounded-xl font-bold text-sm border-2 transition-all ${ajusteTipo === "porcentaje" ? "bg-purple-600 text-white border-purple-600" : "border-slate-200 text-slate-500 hover:bg-slate-50"}`}>% Porcentaje</button>
+                  <button onClick={() => setAjusteTipo("fijo")} className={`py-2 rounded-xl font-bold text-sm border-2 transition-all ${ajusteTipo === "fijo" ? "bg-purple-600 text-white border-purple-600" : "border-slate-200 text-slate-500 hover:bg-slate-50"}`}>$ Monto Fijo</button>
+                </div>
+              </div>
+              {/* Valor */}
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1">{ajusteTipo === "porcentaje" ? "Porcentaje (%)" : "Monto ($)"}</label>
+                <input type="number" min="0" step="0.01" className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none font-bold" placeholder={ajusteTipo === "porcentaje" ? "Ej: 10" : "Ej: 500"} value={ajusteValor} onChange={e => setAjusteValor(e.target.value)} onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), confirmarAjuste())} />
+              </div>
+              {/* Redondeo */}
+              <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-600 select-none">
+                <input type="checkbox" checked={ajusteRedondear} onChange={e => setAjusteRedondear(e.target.checked)} className="w-4 h-4 accent-purple-600" />
+                Redondear precios resultantes al entero más cercano
+              </label>
+              {/* Vista previa */}
+              {productosSeleccionados.length > 0 && calcularNuevoPrecio(productosSeleccionados[0]) !== null && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1">Vista previa</label>
+                  <div className="bg-slate-50 rounded-lg border border-slate-200 max-h-36 overflow-y-auto custom-scrollbar divide-y divide-slate-100 text-xs">
+                    {productosSeleccionados.slice(0, 20).map(p => {
+                      const nuevo = calcularNuevoPrecio(p);
+                      return (
+                        <div key={p.id} className="flex items-center justify-between px-3 py-1.5">
+                          <span className="text-slate-600 truncate mr-3">{p.nombre}</span>
+                          <span className="flex items-center gap-2 whitespace-nowrap">
+                            <span className="text-slate-400 line-through">${p.precio.toFixed(2)}</span>
+                            <ChevronRight size={12} className="text-slate-300" />
+                            <span className={`font-bold ${nuevo >= p.precio ? 'text-red-600' : 'text-green-600'}`}>${nuevo.toFixed(2)}</span>
+                          </span>
+                        </div>
+                      );
+                    })}
+                    {productosSeleccionados.length > 20 && (
+                      <div className="px-3 py-1.5 text-slate-400 font-medium">... y {productosSeleccionados.length - 20} más</div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="flex gap-3 pt-1">
+              <button onClick={() => setMostrarAjuste(false)} className="flex-1 py-3 rounded-xl font-bold text-slate-500 hover:bg-slate-200">Cancelar</button>
+              <button onClick={confirmarAjuste} disabled={ajustando} className="flex-[2] bg-purple-600 hover:bg-purple-700 text-white py-3 rounded-xl font-bold shadow-lg flex justify-center items-center gap-2 disabled:opacity-60">
+                {ajustando ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
+                {ajustando ? "Actualizando..." : "Confirmar Actualización"}
               </button>
             </div>
           </div>

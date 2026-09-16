@@ -1,12 +1,26 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Search, ShoppingCart, Trash2, CreditCard, User, RefreshCw, Plus, Printer, Percent, DollarSign, MessageSquare, Tag, CheckCircle, X, QrCode, MessageCircle, Loader2 } from "lucide-react";
+import {
+  Search, ShoppingCart, Trash2, CreditCard, User, RefreshCw, Plus, Printer,
+  Percent, CheckCircle, X, QrCode, MessageCircle, Loader2, Minus, Banknote,
+  Send, Users, ChevronDown,
+} from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiFetch } from "../lib/api";
 import { beepScan, successSound, errorSound } from "../lib/sounds";
 import { useNotify } from "../context/NotificationContext";
-import jsPDF from "jspdf";
 import { QRCodeSVG } from "qrcode.react";
 import ProductosGrid from "./ProductosGrid";
+
+const METODOS = [
+  { id: "Efectivo", label: "Efectivo", icon: Banknote },
+  { id: "Mercado Pago", label: "Mercado Pago / QR", icon: QrCode },
+  { id: "Débito", label: "Débito", icon: CreditCard },
+  { id: "Transferencia", label: "Transferencia", icon: Send },
+  { id: "Fiado", label: "Cuenta Corriente / Fiado", icon: Users },
+];
+const BILLETES = [20000, 10000, 2000, 1000];
+
+const formatMoney = (value) => `$ ${Number(value || 0).toLocaleString("es-AR")}`;
 
 function Ventas() {
   const location = useLocation();
@@ -20,24 +34,18 @@ function Ventas() {
   const [metodo, setMetodo] = useState("Efectivo");
   const [pagaCon, setPagaCon] = useState("");
   const [ticketsEnEspera, setTicketsEnEspera] = useState([]);
-  
+
   // Estados para Carga Manual
   const [manualNombre, setManualNombre] = useState("");
   const [manualPrecio, setManualPrecio] = useState("");
-  
+
   // Clientes y Fiados
   const [clientes, setClientes] = useState([]);
   const [clienteSelec, setClienteSelec] = useState("");
 
-  // Pago Mixto (split payment)
-  const [pagoMixto, setPagoMixto] = useState(false);
-  const [mixtoMetodo1, setMixtoMetodo1] = useState("Efectivo");
-  const [mixtoMonto1, setMixtoMonto1] = useState("");
-  const [mixtoMetodo2, setMixtoMetodo2] = useState("Mercado Pago");
-
   // Estado para Edición
   const [ticketEditando, setTicketEditando] = useState(null);
-  
+
   // Descuento
   const [descuento, setDescuento] = useState("");
   const [descuentoTipo, setDescuentoTipo] = useState("$"); // "$" o "%"
@@ -47,17 +55,16 @@ function Ventas() {
 
   // Ref para foco automático
   const busquedaRef = useRef(null);
-  const cobrarBtnRef = useRef(null);
   const pagaConRef = useRef(null);
+  const checkoutPanelRef = useRef(null);
   const scanBufferRef = useRef("");
   const scanLastTsRef = useRef(0);
   const toastTimerRef = useRef(null);
 
   // Toast rápido para feedback de escaneo
   const [scanToast, setScanToast] = useState(null);
-  const [modalCobroAbierto, setModalCobroAbierto] = useState(false);
-  const [modalMetodoPago, setModalMetodoPago] = useState("Efectivo");
-  const [modalPagaCon, setModalPagaCon] = useState("");
+  const [checkoutAbierto, setCheckoutAbierto] = useState(false);
+  const [checkoutExtras, setCheckoutExtras] = useState(false);
   const [guardandoCobro, setGuardandoCobro] = useState(false);
 
   // Datos del negocio para ticket
@@ -68,11 +75,9 @@ function Ventas() {
 
   // Modal QR MercadoPago
   const [modalQR, setModalQR] = useState(null); // { monto, alias, nombre, qrBase64 }
-  const [qrStandalone, setQrStandalone] = useState(false);
 
   // MP Modelo Asistido — estado del pago y polling
   const [mpEstadoPago, setMpEstadoPago] = useState('idle');
-  // 'idle' | 'asignando' | 'esperando' | 'confirmado' | 'error'
   const [mpExternalRef, setMpExternalRef] = useState(null);
   const [mpPagoError, setMpPagoError] = useState(null);
   const mpPollingRef = useRef(null);
@@ -81,11 +86,11 @@ function Ventas() {
   useEffect(() => {
     cargarDatos();
     cargarConfigNegocio();
-    
+
     if (location.state && location.state.ticketEditar) {
-        const ticketId = location.state.ticketEditar;
-        setTicketEditando(ticketId);
-        cargarVentaParaEditar(ticketId);
+      const ticketId = location.state.ticketEditar;
+      setTicketEditando(ticketId);
+      cargarVentaParaEditar(ticketId);
     }
 
     // Re-enfocar al volver a la pestaña
@@ -108,18 +113,6 @@ function Ventas() {
     };
   }, [location.state]);
 
-  const sugerirBilletes = (monto) => {
-    if (monto <= 0) return [];
-    const billetes = [1000, 2000, 5000, 10000, 20000];
-    const sugerencias = new Set();
-    billetes.forEach(b => {
-      if (b > monto) sugerencias.add(b);
-      const multiplo = Math.ceil(monto / b) * b;
-      if (multiplo > monto && multiplo <= monto + 20000) sugerencias.add(multiplo);
-    });
-    return Array.from(sugerencias).sort((a, b) => a - b).slice(0, 4);
-  };
-
   const pausarTicket = () => {
     if (carrito.length === 0) return;
     setTicketsEnEspera(prev => [...prev, {
@@ -134,8 +127,6 @@ function Ventas() {
     setDescuento("");
     setNotas("");
     setMetodo("Efectivo");
-    setPagoMixto(false);
-    setMixtoMonto1("");
     setPagaCon("");
   };
 
@@ -222,35 +213,34 @@ function Ventas() {
     toastTimerRef.current = setTimeout(() => setScanToast(null), 1800);
   };
 
-  const irACobrarRapido = () => {
+  const cambiarMetodo = (nuevoMetodo) => {
+    setMetodo(nuevoMetodo);
+    // Actualizar precios de cigarrillos según método de pago
+    const esDigital = ['Mercado Pago', 'Débito', 'Transferencia'].includes(nuevoMetodo);
+    setCarrito(prev => prev.map(item => {
+      if (item.tipo === 'Cigarrillo' && item.precio_qr) {
+        return { ...item, precio: esDigital ? item.precio_qr : item.precio_original };
+      }
+      return item;
+    }));
+  };
+
+  const abrirCheckout = () => {
     if (carrito.length === 0) {
       mostrarToastRapido("El carrito está vacío", "warn");
       return;
     }
-    cobrarBtnRef.current?.click();
+    setPagaCon("");
+    setCheckoutAbierto(true);
   };
 
-  /* Función mock deshabilitada: reemplazada por confirmarVenta
-  const abrirModalCobro = () => {
-    if (carrito.length === 0) {
-      mostrarToastRapido("El carrito está vacío", "warn");
-      return;
-    }
-    setModalCobroAbierto(true);
-    setModalMetodoPago("Efectivo");
-    setModalPagaCon("");
-  };
-
-  const cerrarModalCobro = () => {
+  const cerrarCheckout = () => {
     if (guardandoCobro) return;
-    setModalCobroAbierto(false);
-    setModalMetodoPago("Efectivo");
-    setModalPagaCon("");
+    setCheckoutAbierto(false);
     setTimeout(() => busquedaRef.current?.focus(), 60);
   };
-  */
 
-  // Los componentes vienen del catálogo ya parseados, pero se soporta el string JSON crudo de SQLite por las dudas
+  /* Los componentes vienen del catálogo ya parseados, pero se soporta el string JSON crudo de SQLite por las dudas */
   const parsearComponentes = (componentes) => {
     if (Array.isArray(componentes)) return componentes;
     if (typeof componentes === 'string' && componentes.trim()) {
@@ -326,7 +316,7 @@ function Ventas() {
     if (!manualNombre.trim() || !manualPrecio) return;
 
     const nuevoItem = {
-        id: `manual-${Date.now()}`, 
+        id: `manual-${Date.now()}`,
         nombre: manualNombre,
         precio: parseFloat(manualPrecio),
         cantidad: 1,
@@ -347,13 +337,40 @@ function Ventas() {
     setCarrito(nuevo);
   };
 
-  // Funciones para descuento por ítem
-  const actualizarDescuentoItem = (index, valor) => {
-    setCarrito(carrito.map((item, i) => i === index ? { ...item, descuento_item: parseFloat(valor) || 0 } : item));
+  const incrementarItem = (index) => {
+    const item = carrito[index];
+    if (!item) return;
+    const esPromo = item.tipo === 'Promo';
+    const esManual = item.tipo === 'Manual';
+
+    if (!esPromo && !esManual && item.stock !== '-') {
+      const stock = item.stock || 0;
+      if (item.cantidad >= stock) {
+        return mostrarToastRapido(`No hay más stock disponible de "${item.nombre}". Disponible: ${stock}`, "warn");
+      }
+    }
+
+    if (esPromo) {
+      const componentesPromo = parsearComponentes(item.componentes);
+      for (const comp of componentesPromo) {
+        const disponible = obtenerStockComponente(comp);
+        const necesario = (comp.cantidad || 1) * (item.cantidad + 1);
+        if (disponible < necesario) {
+          return mostrarToastRapido(`No hay stock suficiente de "${comp.nombre}" para la promo "${item.nombre}". Requerido: ${necesario} | Disponible: ${disponible}`, "warn");
+        }
+      }
+    }
+
+    beepScan();
+    setCarrito(carrito.map((it, i) => i === index ? { ...it, cantidad: it.cantidad + 1 } : it));
   };
 
-  const toggleDescuentoItemTipo = (index) => {
-    setCarrito(carrito.map((item, i) => i === index ? { ...item, descuento_item_tipo: item.descuento_item_tipo === '$' ? '%' : '$', descuento_item: 0 } : item));
+  const decrementarItem = (index) => {
+    setCarrito(prev => prev.map((it, i) => {
+      if (i !== index) return it;
+      if (it.cantidad - 1 <= 0) return null;
+      return { ...it, cantidad: it.cantidad - 1 };
+    }).filter(Boolean));
   };
 
   const calcularDescuentoItem = (item) => {
@@ -363,156 +380,185 @@ function Ventas() {
     return item.descuento_item;
   };
 
-  const generarTicketPDF = (ticketId, items, metodoPago, totalVenta, descuentoTotal = 0, notasVenta = '') => {
-    try {
-      const anchoMM = 80;
-      const doc = new jsPDF({ unit: "mm", format: [anchoMM, 250] });
-      let y = 8;
-      const margen = 4;
+  const escHtml = (valor) =>
+    String(valor ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+  const imprimirTicketHTML = (ticketId, items, metodoPago, totalVenta, descuentoTotal = 0, notasVenta = '') => {
+    // Validación de datos antes de disparar la impresión
+    if (!ticketId) { mostrarToastRapido("Falta el número de ticket para imprimir.", "warn"); return; }
+    if (!Array.isArray(items) || items.length === 0) { mostrarToastRapido("No hay productos para imprimir.", "warn"); return; }
+    const totalNum = Number(totalVenta);
+    if (isNaN(totalNum) || totalNum < 0) { mostrarToastRapido("El total de la venta no es válido.", "warn"); return; }
+    if (!metodoPago) { mostrarToastRapido("Falta el método de pago para imprimir.", "warn"); return; }
+
+    try {
+      const ticketNum = String(parseInt(ticketId, 10) || ticketId).padStart(4, '0');
       const nombreNegocio = configNegocio.kiosco_nombre || "Mi Kiosco";
       const direccion = configNegocio.kiosco_direccion || "";
       const telefono = configNegocio.kiosco_telefono || "";
+      const fecha = new Date().toLocaleString("es-AR");
 
-      // === ENCABEZADO: Datos del negocio ===
-      doc.setFontSize(14);
-      doc.setFont("helvetica", "bold");
-      doc.text(nombreNegocio.toUpperCase(), anchoMM / 2, y, { align: "center" });
-      y += 5;
-
-      doc.setFontSize(7);
-      doc.setFont("helvetica", "normal");
-      if (direccion) {
-        doc.text(direccion, anchoMM / 2, y, { align: "center" });
-        y += 3.5;
-      }
-      if (telefono) {
-        doc.text(`Tel: ${telefono}`, anchoMM / 2, y, { align: "center" });
-        y += 3.5;
-      }
-      y += 1;
-
-      // Línea separadora
-      doc.setDrawColor(0);
-      doc.setLineWidth(0.3);
-      doc.line(margen, y, anchoMM - margen, y);
-      y += 4;
-
-      // Fecha y ticket
-      doc.setFontSize(8);
-      doc.text(`Fecha: ${new Date().toLocaleString("es-AR")}`, margen, y);
-      y += 3.5;
-      doc.setFont("helvetica", "bold");
-      const ticketNumStr = String(parseInt(ticketId, 10) || ticketId).padStart(4, '0');
-      doc.text(`Ticket #${ticketNumStr}`, margen, y);
-      y += 4;
-
-      doc.line(margen, y, anchoMM - margen, y);
-      y += 4;
-
-      // === DETALLE DE PRODUCTOS ===
-      doc.setFontSize(7);
-      doc.setFont("helvetica", "bold");
-      doc.text("Cant", margen, y);
-      doc.text("Descripción", margen + 8, y);
-      doc.text("P.Unit", anchoMM - margen - 18, y, { align: "right" });
-      doc.text("Subtotal", anchoMM - margen, y, { align: "right" });
-      y += 1;
-      doc.line(margen, y, anchoMM - margen, y);
-      y += 3;
-
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(7);
-
-      let subtotalGeneral = 0;
-      items.forEach((item) => {
+      const filasHtml = items.map((item) => {
         const precioUnit = Number(item.precio) || 0;
         const cant = Number(item.cantidad) || 1;
         const bruto = precioUnit * cant;
         const descItem = calcularDescuentoItem(item);
         const subtotal = bruto - descItem;
-        subtotalGeneral += subtotal;
+        const dtoHtml = descItem > 0
+          ? ` <span style="font-size:9px;">Dto -$${descItem.toFixed(0)}${item.descuento_item_tipo === '%' ? ` (${item.descuento_item}%)` : ''}</span>`
+          : '';
+        return `<tr><td class="l">${cant} x ${escHtml(item.nombre || "Producto")}${dtoHtml}</td><td class="r">$ ${subtotal.toFixed(0)}</td></tr>`;
+      }).join('');
 
-        doc.text(`${cant}`, margen + 2, y, { align: "center" });
-        const nombre = (item.nombre || "Producto").length > 20 ? (item.nombre || "Producto").substring(0, 20) + ".." : (item.nombre || "Producto");
-        doc.text(nombre, margen + 8, y);
-        doc.text(`$${precioUnit.toFixed(0)}`, anchoMM - margen - 18, y, { align: "right" });
-        doc.text(`$${subtotal.toFixed(0)}`, anchoMM - margen, y, { align: "right" });
-        y += 3.5;
+      const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Ticket ${ticketNum}</title>
+<style>
+@page {
+  /* La altura 'auto' hace que el rollo corte justo al terminar el contenido,
+     evitando papel en blanco de más. Ancho 80mm = rollo del kiosco. */
+  size: 80mm auto;
+  margin: 0;
+}
 
-        // Mostrar descuento por ítem si existe
-        if (descItem > 0) {
-          doc.setFontSize(6);
-          doc.setTextColor(100, 100, 100);
-          doc.text(`  Dto: -$${descItem.toFixed(0)}${item.descuento_item_tipo === '%' ? ` (${item.descuento_item}%)` : ''}`, margen + 8, y);
-          doc.setTextColor(0, 0, 0);
-          doc.setFontSize(7);
-          y += 3;
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  /* Ancho imprimible real de un cabezal de 80mm (entre 72mm y 76mm) */
+  width: 76mm;
+  margin: 0;
+  padding: 4mm 2mm 6mm;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 13px; /* Aumentado ligeramente para mejor lectura en 80mm */
+  font-weight: 600;
+  line-height: 1.3;
+  color: #000;
+}
+
+.center { text-align: center; }
+.negrita { font-weight: 700; }
+.titulo { font-size: 16px; font-weight: 700; letter-spacing: 0.5px; }
+
+/* Línea de corte que abarca todo el ancho del papel */
+.corte { 
+  border-top: 1px dashed #000; 
+  margin: 5px 0; 
+  width: 100%;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+td, th {
+  padding: 2px 0;
+  vertical-align: top;
+}
+
+/* En 80mm hay espacio suficiente para que el producto y el precio entren en un solo renglón */
+.col-cant { width: 10%; text-align: left; }
+.col-desc { width: 65%; text-align: left; word-break: break-word; }
+.col-precio { width: 25%; text-align: right; white-space: nowrap; }
+
+/* Para filas generales de totales */
+.l { text-align: left; width: 60%; }
+.r { text-align: right; width: 40%; white-space: nowrap; }
+
+.subtotal { font-size: 13px; }
+.total { font-size: 15px; font-weight: 700; }
+.pie { font-size: 10px; margin-top: 6px; }
+</style>
+</head>
+<body>
+  <div class="center negrita titulo">${escHtml(nombreNegocio.toUpperCase())}</div>
+  ${direccion ? `<div class="center">${escHtml(direccion)}</div>` : ''}
+  ${telefono ? `<div class="center">Tel: ${escHtml(telefono)}</div>` : ''}
+  <div class="corte"></div>
+  <div>Fecha: ${escHtml(fecha)}</div>
+  <div class="negrita">Ticket #${ticketNum}</div>
+  <div class="corte"></div>
+  <table>${filasHtml}</table>
+  <div class="corte"></div>
+  <div class="r">Subtotal: $ ${Number(totalNum + Number(descuentoTotal || 0)).toFixed(0)}</div>
+  ${Number(descuentoTotal || 0) > 0 ? `<div class="r">Descuento: -$ ${Number(descuentoTotal || 0).toFixed(0)}</div>` : ''}
+  <div class="r negrita total">TOTAL: $ ${totalNum.toFixed(0)}</div>
+  <div style="margin-top:4px;">Método de pago: ${escHtml(metodoPago)}</div>
+  ${notasVenta && notasVenta.trim() ? `<div style="margin-top:4px;">Notas: ${escHtml(notasVenta)}</div>` : ''}
+  <div class="corte"></div>
+  <div class="center negrita">¡Gracias por su compra!</div>
+  <div class="center pie">Documento no fiscal</div>
+</body>
+</html>`;
+
+      // 1. Crear un iframe oculto en el body
+      const iframe = document.createElement("iframe");
+      iframe.setAttribute("aria-hidden", "true");
+      iframe.style.position = "fixed";
+      iframe.style.right = "0";
+      iframe.style.bottom = "0";
+      iframe.style.width = "0";
+      iframe.style.height = "0";
+      iframe.style.border = "0";
+      iframe.style.visibility = "hidden";
+      document.body.appendChild(iframe);
+
+      let impreso = false;
+
+      // 4. Remover el iframe del DOM una vez completada la impresión
+      const limpiarIframe = () => {
+        setTimeout(() => {
+          if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+        }, 1500);
+      };
+
+      const ejecutarImpresion = () => {
+        if (impreso) return;
+        impreso = true;
+        try {
+          iframe.contentWindow.focus();
+          iframe.contentWindow.print();
+        } catch (err) {
+          console.error("Error al imprimir ticket:", err);
         }
-      });
+        limpiarIframe();
+      };
 
-      y += 1;
-      doc.line(margen, y, anchoMM - margen, y);
-      y += 4;
+      const docIframe = iframe.contentDocument || iframe.contentWindow.document;
 
-      // === SUBTOTAL ===
-      doc.setFontSize(8);
-      doc.setFont("helvetica", "normal");
-      doc.text("Subtotal:", margen, y);
-      doc.text(`$${subtotalGeneral.toFixed(0)}`, anchoMM - margen, y, { align: "right" });
-      y += 4;
+      let intentos = 0;
+      const listoYImprimir = () => {
+        const cuerpo = docIframe.body;
+        const hayContenido = cuerpo && (cuerpo.innerHTML || "").trim().length > 0;
+        if (hayContenido) {
+          ejecutarImpresion();
+        } else if (intentos < 10) {
+          intentos += 1;
+          setTimeout(listoYImprimir, 150);
+        } else {
+          limpiarIframe();
+        }
+      };
 
-      // DESCUENTO (si hay)
-      if (descuentoTotal > 0) {
-        doc.text("Descuento:", margen, y);
-        doc.text(`-$${descuentoTotal.toFixed(0)}`, anchoMM - margen, y, { align: "right" });
-        y += 4;
-      }
+      // 2. Escribir el ticket con los estilos embebidos
+      // 3. Imprimir recién con contentWindow.onload + retardo de seguridad
+      iframe.onload = () => setTimeout(listoYImprimir, 250);
 
-      // === TOTAL ===
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "bold");
-      doc.text("TOTAL:", margen, y);
-      doc.text(`$${totalVenta.toFixed(0)}`, anchoMM - margen, y, { align: "right" });
-      y += 5;
+      docIframe.open();
+      docIframe.write(html);
+      docIframe.close();
 
-      // Método de pago
-      doc.setFontSize(8);
-      doc.setFont("helvetica", "normal");
-      doc.text(`Método de pago: ${metodoPago}`, margen, y);
-      y += 5;
-
-      // Notas (si hay)
-      if (notasVenta && notasVenta.trim()) {
-        doc.setFontSize(7);
-        doc.text("Notas:", margen, y);
-        y += 3;
-        const lineasNota = doc.splitTextToSize(notasVenta, anchoMM - margen * 2);
-        lineasNota.forEach(linea => {
-          doc.text(linea, margen, y);
-          y += 3;
-        });
-        y += 2;
-      }
-
-      doc.line(margen, y, anchoMM - margen, y);
-      y += 4;
-
-      // === PIE ===
-      doc.setFontSize(8);
-      doc.setFont("helvetica", "bold");
-      doc.text("¡Gracias por su compra!", anchoMM / 2, y, { align: "center" });
-      y += 4;
-      doc.setFontSize(6);
-      doc.setFont("helvetica", "normal");
-      doc.text("Documento no fiscal", anchoMM / 2, y, { align: "center" });
-
-      // Ajustar altura del documento al contenido
-      doc.internal.pageSize.height = y + 8;
-
-      doc.save(`ticket_${ticketId}.pdf`);
+      // Fallback en caso de que onload ya se haya disparado antes de asignarlo
+      setTimeout(listoYImprimir, 500);
     } catch (e) {
-      console.error("Error generando PDF:", e);
+      console.error("Error generando ticket:", e);
     }
   };
 
@@ -569,38 +615,19 @@ function Ventas() {
   };
 
   const confirmarVenta = async () => {
-    if (carrito.length === 0) return mostrarToastRapido("El carrito está vacío", "warn");
+    if (carrito.length === 0) {
+      mostrarToastRapido("El carrito está vacío", "warn");
+      return false;
+    }
 
     // VALIDACIÓN IMPORTANTE: Si es fiado, DEBE haber cliente
     if (metodo === "Fiado" && !clienteSelec) {
-        return mostrarToastRapido("Para fiar, debes seleccionar un CLIENTE obligatoriamente.", "warn");
+        mostrarToastRapido("Para fiar, debes seleccionar un CLIENTE obligatoriamente.", "warn");
+        return false;
     }
 
-    // Calcular montos para pago mixto
-    const montoMixto1 = parseFloat(mixtoMonto1) || 0;
-    const montoMixto2 = total - montoMixto1;
-
-    // Validar pago mixto
-    if (pagoMixto) {
-      if (montoMixto1 <= 0 || montoMixto1 >= total) {
-        return mostrarToastRapido(`El monto del primer método debe ser entre $1 y $${(total - 1).toFixed(0)}`, "warn");
-      }
-      if (mixtoMetodo1 === mixtoMetodo2) {
-        return mostrarToastRapido("Los dos métodos de pago deben ser diferentes.", "warn");
-      }
-    }
-
-    // Determinar método de pago y montos
-    const metodoPagoFinal = pagoMixto ? 'Mixto' : metodo;
-    const esEfectivo = (m) => m === 'Efectivo';
-    let pagoEfectivoMixto = 0;
-    let pagoDigitalMixto = 0;
-
-    if (pagoMixto) {
-      if (esEfectivo(mixtoMetodo1)) pagoEfectivoMixto += montoMixto1;
-      else pagoDigitalMixto += montoMixto1;
-      if (esEfectivo(mixtoMetodo2)) pagoEfectivoMixto += montoMixto2;
-      else pagoDigitalMixto += montoMixto2;
+    if (ticketEditando) {
+        if(!(await confirmDialog(`ESTÁS EDITANDO EL TICKET #${String(parseInt(ticketEditando, 10) || ticketEditando).padStart(4, '0')}\n\n¿Continuar?`))) return false;
     }
 
     let body = {
@@ -608,117 +635,140 @@ function Ventas() {
         ...item,
         descuento_item: calcularDescuentoItem(item)
       })),
-      metodo_pago: metodoPagoFinal,
+      metodo_pago: metodo,
       cliente_id: clienteSelec || null,
       ticket_a_corregir: ticketEditando,
       descuento: descuentoNum,
       notas: notas,
-      ...(pagoMixto ? {
-        pago_efectivo: pagoEfectivoMixto,
-        pago_digital: pagoDigitalMixto,
-        mixto_detalle: `${mixtoMetodo1}: $${montoMixto1.toFixed(0)} + ${mixtoMetodo2}: $${montoMixto2.toFixed(0)}`
-      } : {})
     };
 
-    if (ticketEditando) {
-        if(!(await confirmDialog(`ESTÁS EDITANDO EL TICKET #${String(parseInt(ticketEditando, 10) || ticketEditando).padStart(4, '0')}\n\n¿Continuar?`))) return;
-    }
-
-    const res = await apiFetch("/api/ventas", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-
-    const data = await res.json();
-    if (data.success) {
-      const ticketNum = data.ticket_id || ticketEditando || "?";
-      
-      successSound();
-      
-      // Guardar datos para el modal (antes de limpiar carrito)
-      const clienteNombre = clientes.find(c => String(c.id) === String(clienteSelec))?.nombre || '';
-      const clienteTelefono = clientes.find(c => String(c.id) === String(clienteSelec))?.telefono || '';
-      
-      setModalExito({
-        ticketId: ticketNum,
-        items: [...carrito],
-        metodo: pagoMixto ? `${mixtoMetodo1} ($${montoMixto1.toFixed(0)}) + ${mixtoMetodo2} ($${montoMixto2.toFixed(0)})` : metodo,
-        total: total,
-        descuento: descuentoNum,
-        notas: notas,
-        esEdicion: !!ticketEditando,
-        clienteNombre,
-        clienteTelefono
+    try {
+      const res = await apiFetch("/api/ventas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
       });
+      const data = await res.json();
+      if (data.success) {
+        const ticketNum = data.ticket_id || ticketEditando || "?";
 
-      // Mostrar QR si es método digital
-      const esDigital = ['Mercado Pago', 'Transferencia'].includes(metodo);
-      const montoQR = pagoMixto
-        ? (['Mercado Pago', 'Transferencia'].includes(mixtoMetodo1) ? montoMixto1 : (['Mercado Pago', 'Transferencia'].includes(mixtoMetodo2) ? montoMixto2 : 0))
-        : total;
+        successSound();
 
-      const mpApiActiva = configNegocio.mp_api_configurada === 'true';
+        // Guardar datos para el modal (antes de limpiar carrito)
+        const clienteNombre = clientes.find(c => String(c.id) === String(clienteSelec))?.nombre || '';
+        const clienteTelefono = clientes.find(c => String(c.id) === String(clienteSelec))?.telefono || '';
 
-      if (esDigital && metodo === 'Mercado Pago' && !pagoMixto && mpApiActiva && configNegocio.mp_pos_qr_image_url) {
-        // --- Modelo Asistido: QR dinámico con confirmación automática ---
-        const externalRef = `TKT-${ticketNum}-${Date.now()}`;
-        setModalQR({
-          monto: montoQR,
-          alias: '',
-          nombre: configNegocio.mp_nombre || configNegocio.kiosco_nombre || '',
-          qrBase64: configNegocio.mp_pos_qr_image_url
+        setModalExito({
+          ticketId: ticketNum,
+          items: [...carrito],
+          metodo: metodo,
+          total: total,
+          descuento: descuentoNum,
+          notas: notas,
+          esEdicion: !!ticketEditando,
+          clienteNombre,
+          clienteTelefono
         });
-        setMpExternalRef(externalRef);
-        setMpEstadoPago('asignando');
-        // Asignar orden al POS de MP (no bloquea el UI)
-        apiFetch('/api/mp/assign-order', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ external_ref: externalRef, total: montoQR, ticket_id: ticketNum })
-        }).then(async res => {
-          const assignData = await res.json();
-          if (assignData.success) {
-            setMpEstadoPago('esperando');
-            iniciarPollingMP(externalRef);
-          } else {
+
+        // Mostrar QR si es método digital
+        const esDigital = ['Mercado Pago', 'Transferencia'].includes(metodo);
+        const montoQR = total;
+
+        const mpApiActiva = configNegocio.mp_api_configurada === 'true';
+
+        if (metodo === 'Mercado Pago' && mpApiActiva && configNegocio.mp_pos_qr_image_url) {
+          // --- Modelo Asistido: QR dinámico con confirmación automática ---
+          const externalRef = `TKT-${ticketNum}-${Date.now()}`;
+          setModalQR({
+            monto: montoQR,
+            alias: '',
+            nombre: configNegocio.mp_nombre || configNegocio.kiosco_nombre || '',
+            qrBase64: configNegocio.mp_pos_qr_image_url
+          });
+          setMpExternalRef(externalRef);
+          setMpEstadoPago('asignando');
+          // Asignar orden al POS de MP (no bloquea el UI)
+          apiFetch('/api/mp/assign-order', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ external_ref: externalRef, total: montoQR, ticket_id: ticketNum })
+          }).then(async res => {
+            const assignData = await res.json();
+            if (assignData.success) {
+              setMpEstadoPago('esperando');
+              iniciarPollingMP(externalRef);
+            } else {
+              setMpEstadoPago('error');
+              setMpPagoError('No se pudo asignar la orden a MP: ' + (assignData.error || 'error desconocido'));
+            }
+          }).catch(() => {
             setMpEstadoPago('error');
-            setMpPagoError('No se pudo asignar la orden a MP: ' + (assignData.error || 'error desconocido'));
-          }
-        }).catch(() => {
-          setMpEstadoPago('error');
-          setMpPagoError('Error de conexión. Verificá el pago en MercadoPago manualmente.');
-        });
-      } else if ((esDigital || (pagoMixto && montoQR > 0)) && (configNegocio.mp_alias || configNegocio.mp_qr_base64)) {
-        // --- Modelo estático (fallback) ---
-        setModalQR({
-          monto: montoQR,
-          alias: configNegocio.mp_alias,
-          nombre: configNegocio.mp_nombre || configNegocio.kiosco_nombre || '',
-          qrBase64: configNegocio.mp_qr_base64 || ''
-        });
-      }
+            setMpPagoError('Error de conexión. Verificá el pago en MercadoPago manualmente.');
+          });
+        } else if (esDigital && (configNegocio.mp_alias || configNegocio.mp_qr_base64)) {
+          // --- Modelo estático (fallback) ---
+          setModalQR({
+            monto: montoQR,
+            alias: configNegocio.mp_alias,
+            nombre: configNegocio.mp_nombre || configNegocio.kiosco_nombre || '',
+            qrBase64: configNegocio.mp_qr_base64 || ''
+          });
+        }
 
-      // Limpiar estado
-      setCarrito([]);
-      setTicketEditando(null);
-      setClienteSelec("");
-      setDescuento("");
-      setNotas("");
-      setMetodo("Efectivo");
-      setPagoMixto(false);
-      setMixtoMonto1("");
-      setMixtoMetodo1("Efectivo");
-      setMixtoMetodo2("Mercado Pago");
-      setPagaCon("");
-      navigate("/ventas", { state: {} });
-    } else {
-      mostrarToastRapido("Error: " + data.error, "err");
+        // Limpiar estado
+        setCarrito([]);
+        setTicketEditando(null);
+        setClienteSelec("");
+        setDescuento("");
+        setNotas("");
+        setMetodo("Efectivo");
+        setPagaCon("");
+        navigate("/ventas", { state: {} });
+        return true;
+      } else {
+        mostrarToastRapido("Error: " + data.error, "err");
+        return false;
+      }
+    } catch (err) {
+      console.error("Error al registrar la venta:", err);
+      mostrarToastRapido("Error de conexión. Intente nuevamente.", "err");
+      return false;
     }
   };
 
-  const productosFiltrados = productos.filter(p => 
-    p.nombre.toLowerCase().includes(busqueda.toLowerCase()) || 
+  const confirmarDesdeCheckout = async () => {
+    if (guardandoCobro || carrito.length === 0) return;
+
+    // Validar que el pago con efectivo cubra el total
+    const pagaNum = parseFloat(pagaCon) || 0;
+    if (metodo === "Efectivo" && pagaNum > 0 && pagaNum < total) {
+      mostrarToastRapido("El monto es menor al total", "warn");
+      return;
+    }
+
+    setGuardandoCobro(true);
+    const ok = await confirmarVenta();
+    if (ok) {
+      setCheckoutAbierto(false);
+      setCheckoutExtras(false);
+    }
+    setGuardandoCobro(false);
+  };
+
+  const handleCheckoutKey = (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      cerrarCheckout();
+    } else if (e.key === "Enter") {
+      const tag = e.target?.tagName;
+      if (tag === "TEXTAREA") return;
+      e.preventDefault();
+      confirmarDesdeCheckout();
+    }
+  };
+
+  const productosFiltrados = productos.filter(p =>
+    p.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
     (p.codigo_barras && p.codigo_barras.includes(busqueda))
   );
 
@@ -797,6 +847,9 @@ function Ventas() {
     };
 
     const handleGlobalKeyDown = async (e) => {
+      // Cuando el modal de checkout está abierto, sus propias teclas lo gobiernan
+      if (checkoutAbierto) return;
+
       const target = e.target;
       const editable = isEditableTarget(target);
       const busquedaEl = busquedaRef.current;
@@ -804,13 +857,13 @@ function Ventas() {
 
       if (e.key === "F12") {
         e.preventDefault();
-        irACobrarRapido();
+        abrirCheckout();
         return;
       }
 
       if (e.key === " " && focusedBusqueda && !busqueda.trim()) {
         e.preventDefault();
-        irACobrarRapido();
+        abrirCheckout();
         return;
       }
 
@@ -860,7 +913,7 @@ function Ventas() {
 
     window.addEventListener("keydown", handleGlobalKeyDown);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
-  }, [busqueda, carrito.length, productos]);
+  }, [busqueda, carrito.length, productos, checkoutAbierto, metodo]);
 
   const subtotal = carrito.reduce((acc, item) => {
     const bruto = item.precio * item.cantidad;
@@ -869,63 +922,25 @@ function Ventas() {
   }, 0);
   const descuentoNum = descuentoTipo === '%' ? (subtotal * (parseFloat(descuento) || 0) / 100) : (parseFloat(descuento) || 0);
   const total = Math.max(0, subtotal - descuentoNum);
-  const modalPagaConNum = parseFloat(modalPagaCon) || 0;
-  const vuelto = Math.max(0, modalPagaConNum - total);
-  const esPagoEfectivo = modalMetodoPago === "Efectivo";
-
-  /* Función mock deshabilitada: no persistía la venta en la base de datos
-  const confirmarCobroModal = async () => {
-    if (guardandoCobro || carrito.length === 0) return;
-
-    if (esPagoEfectivo && modalPagaConNum > 0 && modalPagaConNum < total) {
-      mostrarToastRapido("El monto es menor al total", "warn");
-      return;
-    }
-
-    setGuardandoCobro(true);
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      console.log("[POS] Venta simulada", {
-        items: carrito,
-        total,
-        metodo_pago: modalMetodoPago,
-        paga_con: esPagoEfectivo ? modalPagaConNum : null,
-        vuelto: esPagoEfectivo ? vuelto : 0,
-      });
-
-      successSound();
-      mostrarToastRapido("Venta registrada correctamente", "ok");
-
-      setModalCobroAbierto(false);
-      setCarrito([]);
-      setClienteSelec("");
-      setDescuento("");
-      setNotas("");
-      setMetodo("Efectivo");
-      setPagoMixto(false);
-      setMixtoMonto1("");
-      setMixtoMetodo1("Efectivo");
-      setMixtoMetodo2("Mercado Pago");
-      setModalMetodoPago("Efectivo");
-      setModalPagaCon("");
-
-      setTimeout(() => busquedaRef.current?.focus(), 80);
-    } finally {
-      setGuardandoCobro(false);
-    }
-  };
-  */
+  const pagaConNum = parseFloat(pagaCon) || 0;
+  const vuelto = Math.max(0, pagaConNum - total);
 
   useEffect(() => {
-    if (!modalCobroAbierto) return;
-    if (esPagoEfectivo) {
-      setTimeout(() => pagaConRef.current?.focus(), 60);
-    }
-  }, [modalCobroAbierto, esPagoEfectivo]);
+    if (!checkoutAbierto) return;
+    // Mover el foco dentro del modal para que Enter/Escape burbujeen hasta el panel
+    const t = setTimeout(() => {
+      if (metodo === "Efectivo") {
+        pagaConRef.current?.focus();
+      } else {
+        checkoutPanelRef.current?.focus();
+      }
+    }, 60);
+    return () => clearTimeout(t);
+  }, [checkoutAbierto, metodo]);
 
   return (
     <div className="flex flex-col lg:flex-row h-full bg-[#f5f5f7] p-2 md:p-4 gap-3 md:gap-4 overflow-hidden">
-      
+
       {/* IZQUIERDA: BUSCADOR Y PRODUCTOS */}
       <div className="flex-1 flex flex-col gap-3 overflow-hidden">
         {ticketEditando && (
@@ -940,10 +955,10 @@ function Ventas() {
 
         <div className="bg-white/80 backdrop-blur-xl p-3.5 rounded-xl flex items-center gap-2 border border-black/[0.04] shadow-sm">
           <Search className="text-slate-400" size={20} />
-          <input 
+          <input
             ref={busquedaRef}
-            className="w-full outline-none text-base bg-transparent" 
-            placeholder="Escanear código o buscar producto..." 
+            className="w-full outline-none text-base bg-transparent"
+            placeholder="Escanear código o buscar producto..."
             value={busqueda}
             onChange={e => setBusqueda(e.target.value)}
             onKeyDown={handleBusquedaKeyDown}
@@ -956,15 +971,15 @@ function Ventas() {
         {/* CARGA MANUAL */}
         <form onSubmit={agregarManual} className="bg-white/80 backdrop-blur-xl p-3 rounded-xl flex flex-wrap items-center gap-2 border border-black/[0.04] shadow-sm">
             <Plus className="text-slate-400" size={18} />
-            <input 
-                className="flex-1 min-w-[120px] outline-none text-sm bg-transparent" 
-                placeholder="Producto manual..." 
+            <input
+                className="flex-1 min-w-[120px] outline-none text-sm bg-transparent"
+                placeholder="Producto manual..."
                 value={manualNombre}
                 onChange={e => setManualNombre(e.target.value)}
             />
-            <input 
+            <input
                 type="number"
-                className="w-24 md:w-28 outline-none text-sm border-l border-black/[0.06] pl-3 bg-transparent" 
+                className="w-24 md:w-28 outline-none text-sm border-l border-black/[0.06] pl-3 bg-transparent"
                 placeholder="$ Precio"
                 value={manualPrecio}
                 onChange={e => setManualPrecio(e.target.value)}
@@ -973,7 +988,7 @@ function Ventas() {
                 Agregar
             </button>
         </form>
-        
+
         <ProductosGrid
           productos={productosFiltrados}
           metodo={metodo}
@@ -982,7 +997,7 @@ function Ventas() {
         />
       </div>
 
-      {/* DERECHA: CARRITO */}
+      {/* DERECHA: CARRITO (ticket en tiempo real) */}
       <div className="w-full lg:w-96 bg-white/80 backdrop-blur-xl rounded-2xl shadow-sm flex flex-col border border-black/[0.04] max-h-[calc(100vh-2rem)]">
         <div className={`px-4 py-2.5 text-white flex justify-between items-center rounded-t-2xl ${ticketEditando ? 'bg-orange-500' : 'bg-[#1c1c1e]'}`}>
           <h2 className="font-medium text-sm flex items-center gap-2 tracking-tight"><ShoppingCart size={15}/> Carrito</h2>
@@ -1010,7 +1025,7 @@ function Ventas() {
                 className="shrink-0 flex flex-col items-start px-2.5 py-1.5 rounded-lg border border-amber-300 bg-white text-left hover:bg-amber-100 transition-colors"
               >
                 <span className="text-[10px] font-bold text-amber-700">{t.hora}</span>
-                <span className="text-xs font-semibold text-slate-700">$ {t.total.toFixed(0)}</span>
+                <span className="text-xs font-semibold text-slate-700">{formatMoney(t.total)}</span>
               </button>
             ))}
           </div>
@@ -1024,371 +1039,267 @@ function Ventas() {
             </div>
           ) : (
             carrito.map((item, index) => (
-              <div key={index} className="bg-[#f5f5f7] p-2 rounded-lg border border-black/[0.04] space-y-0.5">
-                <div className="flex justify-between items-center">
+              <div key={index} className="bg-[#f5f5f7] p-2.5 rounded-lg border border-black/[0.04]">
+                <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
                     <p className="font-medium text-xs text-[#1d1d1f] truncate">
-                      {item.nombre} 
+                      {item.nombre}
                       {item.tipo === 'Manual' && <span className="text-[10px] bg-black/[0.04] text-[#86868b] px-1 ml-1 rounded">Manual</span>}
                       {item.tipo === 'Cigarrillo' && item.precio_qr && item.precio !== item.precio_original && (
                         <span className="text-[10px] bg-blue-50 text-[#007aff] px-1 ml-1 rounded">QR</span>
                       )}
                     </p>
-                    <p className="text-[11px] text-[#86868b]">$ {item.precio} x {item.cantidad}</p>
+                    <p className="text-[13px] text-[#86868b]">
+                      {formatMoney(item.precio)} <span className="text-[#86868b]/70">x {item.cantidad}</span>
+                    </p>
                   </div>
-                  <div className="flex items-center gap-2">
-                      <p className="font-semibold text-sm text-[#1d1d1f]">$ {(item.precio * item.cantidad - calcularDescuentoItem(item)).toFixed(0)}</p>
-                      <button onClick={() => eliminarDelCarrito(index)} className="text-red-400 hover:text-red-500 transition-colors"><Trash2 size={14}/></button>
-                  </div>
-                </div>
-                {/* Descuento por ítem */}
-                <div className="flex items-center gap-1">
-                  <Tag size={10} className="text-green-500"/>
-                  <input
-                    type="number"
-                    placeholder="Dto"
-                    min="0"
-                    className="w-14 px-1 py-0.5 text-[11px] border rounded bg-white"
-                    value={item.descuento_item || ''}
-                    onChange={e => actualizarDescuentoItem(index, e.target.value)}
-                  />
                   <button
-                    onClick={() => toggleDescuentoItemTipo(index)}
-                    className={`px-1.5 py-0.5 text-[10px] font-bold rounded border transition-colors ${
-                      item.descuento_item_tipo === '%' ? 'bg-green-100 text-green-700 border-green-300' : 'bg-slate-100 text-slate-600 border-slate-300'
-                    }`}
+                    onClick={() => eliminarDelCarrito(index)}
+                    className="text-red-400 hover:text-red-600 transition-colors shrink-0"
+                    title="Eliminar"
                   >
-                    {item.descuento_item_tipo === '%' ? '%' : '$'}
+                    <Trash2 size={14}/>
                   </button>
-                  {calcularDescuentoItem(item) > 0 && (
-                    <span className="text-[10px] text-green-600 font-bold">-${calcularDescuentoItem(item).toFixed(0)}</span>
-                  )}
+                </div>
+
+                <div className="mt-1.5 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 bg-white border border-black/[0.06] rounded-lg p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => decrementarItem(index)}
+                      disabled={item.cantidad <= 1}
+                      className="w-6 h-6 flex items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                      title="Restar"
+                    >
+                      <Minus size={14}/>
+                    </button>
+                    <span className="w-7 text-center text-xs font-bold text-slate-700 tabular-nums">{item.cantidad}</span>
+                    <button
+                      type="button"
+                      onClick={() => incrementarItem(index)}
+                      className="w-6 h-6 flex items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 transition-colors"
+                      title="Sumar"
+                    >
+                      <Plus size={14}/>
+                    </button>
+                  </div>
+                  <p className="font-bold text-sm text-[#1d1d1f] tabular-nums">{formatMoney(item.precio * item.cantidad - calcularDescuentoItem(item))}</p>
                 </div>
               </div>
             ))
           )}
         </div>
 
-        <div className="px-3 py-2 bg-[#f5f5f7]/50 border-t border-black/[0.04] space-y-2">
-            
-            {/* CLIENTE (Opcional o Requerido si es Fiado) */}
-            <div>
-                <label className="text-[11px] font-medium text-[#86868b] uppercase flex items-center gap-1 mb-0.5 tracking-wide">
-                    <User size={11}/> Cliente {metodo === 'Fiado' ? '(Obligatorio)' : '(Opcional)'}
-                </label>
-                <select 
-                    className={`w-full p-1.5 border rounded-lg text-xs bg-white ${metodo === 'Fiado' && !clienteSelec ? 'border-red-500 ring-1 ring-red-500' : ''}`}
-                    value={clienteSelec}
-                    onChange={e => setClienteSelec(e.target.value)}
-                >
-                    <option value="">-- Consumidor Final --</option>
-                    {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                </select>
-            </div>
+        <div className="px-4 py-3.5 bg-white border-t border-black/[0.05] space-y-3 rounded-b-2xl">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wide text-[#86868b]">Total</span>
+            <span className="text-2xl font-bold text-[#1d1d1f] tracking-tight tabular-nums">{formatMoney(total)}</span>
+          </div>
 
-            {/* MÉTODO DE PAGO */}
-            <div>
-                <label className="text-[11px] font-medium text-[#86868b] uppercase flex items-center gap-1 mb-0.5 tracking-wide">
-                    <CreditCard size={11}/> Método de Pago
-                </label>
-                <select 
-                    className={`w-full p-1.5 border rounded-lg text-xs font-bold text-slate-700 bg-white ${pagoMixto ? 'opacity-50 pointer-events-none' : ''}`}
-                    value={metodo}
-                    onChange={e => {
-                      const nuevoMetodo = e.target.value;
-                      setMetodo(nuevoMetodo);
-                      // Actualizar precios de cigarrillos según método de pago
-                      const esDigital = ['Mercado Pago', 'Débito', 'Transferencia'].includes(nuevoMetodo);
-                      setCarrito(prev => prev.map(item => {
-                        if (item.tipo === 'Cigarrillo' && item.precio_qr) {
-                          return { ...item, precio: esDigital ? item.precio_qr : item.precio_original };
-                        }
-                        return item;
-                      }));
-                    }}
-                    disabled={pagoMixto}
-                >
-                    <option value="Efectivo">Efectivo</option>
-                    <option value="Mercado Pago">Mercado Pago</option>
-                    <option value="Débito">Tarjetas</option>
-                    <option value="Transferencia">Transferencia</option>
-                    <option value="Fiado" className="font-bold text-red-600">Cuenta Corriente</option>
-                </select>
-
-                {/* TOGGLE PAGO MIXTO */}
-                {metodo !== 'Fiado' && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPagoMixto(!pagoMixto);
-                      setMixtoMonto1("");
-                    }}
-                    className={`mt-1 w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[11px] font-bold border transition-all ${
-                      pagoMixto
-                        ? 'bg-indigo-100 text-indigo-700 border-indigo-300 ring-1 ring-indigo-300'
-                        : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'
-                    }`}
-                  >
-                    <DollarSign size={12} />
-                    {pagoMixto ? 'Pago Mixto Activado ✓' : 'Dividir pago en 2 métodos'}
-                  </button>
-                )}
-
-                {/* PANEL PAGO MIXTO */}
-                {pagoMixto && (
-                  <div className="mt-2 bg-indigo-50 border border-indigo-200 rounded-lg p-2 space-y-2 animate-in fade-in slide-in-from-top-1">
-                    <p className="text-[11px] font-bold text-indigo-600 text-center">Dividir el total de ${total.toFixed(0)}</p>
-                    
-                    {/* Método 1 */}
-                    <div className="space-y-0.5">
-                      <label className="text-[10px] font-bold text-indigo-400">Método 1</label>
-                      <div className="flex gap-1.5">
-                        <select
-                          className="flex-1 p-1.5 border border-indigo-200 rounded-lg text-xs bg-white font-bold"
-                          value={mixtoMetodo1}
-                          onChange={e => setMixtoMetodo1(e.target.value)}
-                        >
-                          <option value="Efectivo">Efectivo</option>
-                          <option value="Mercado Pago">Mercado Pago</option>
-                          <option value="Débito">Tarjetas</option>
-                          <option value="Transferencia">Transferencia</option>
-                        </select>
-                        <input
-                          type="number"
-                          placeholder="$ Monto"
-                          min="0"
-                          className="w-24 p-1.5 border border-indigo-200 rounded-lg text-xs bg-white font-bold text-right"
-                          value={mixtoMonto1}
-                          onChange={e => setMixtoMonto1(e.target.value)}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Método 2 — monto restante auto */}
-                    <div className="space-y-0.5">
-                      <label className="text-[10px] font-bold text-indigo-400">Método 2 (restante)</label>
-                      <div className="flex gap-1.5">
-                        <select
-                          className="flex-1 p-1.5 border border-indigo-200 rounded-lg text-xs bg-white font-bold"
-                          value={mixtoMetodo2}
-                          onChange={e => setMixtoMetodo2(e.target.value)}
-                        >
-                          <option value="Efectivo">Efectivo</option>
-                          <option value="Mercado Pago">Mercado Pago</option>
-                          <option value="Débito">Tarjetas</option>
-                          <option value="Transferencia">Transferencia</option>
-                        </select>
-                        <div className="w-24 p-1.5 border border-indigo-200 rounded-lg text-xs bg-indigo-100 font-bold text-right text-indigo-700">
-                          $ {(total - (parseFloat(mixtoMonto1) || 0)).toFixed(0)}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Indicador visual */}
-                    {parseFloat(mixtoMonto1) > 0 && parseFloat(mixtoMonto1) < total && (
-                      <div className="flex rounded-lg overflow-hidden h-1.5">
-                        <div
-                          className="bg-indigo-500 transition-all"
-                          style={{ width: `${((parseFloat(mixtoMonto1) || 0) / total * 100)}%` }}
-                        />
-                        <div className="bg-indigo-300 flex-1" />
-                      </div>
-                    )}
-                  </div>
-                )}
-            </div>
-
-            {/* CALCULADORA DE VUELTO RÁPIDA */}
-            {metodo === 'Efectivo' && !pagoMixto && total > 0 && (
-              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-2 space-y-1.5 animate-in fade-in slide-in-from-top-1">
-                <label className="text-[11px] font-bold text-emerald-700 uppercase tracking-wide">Calculadora de Vuelto</label>
-                <div className="flex gap-1.5">
-                  <input
-                    type="number"
-                    placeholder="Paga con $"
-                    min="0"
-                    className="flex-1 p-1.5 border border-emerald-200 rounded-lg text-xs bg-white font-bold"
-                    value={pagaCon}
-                    onChange={e => setPagaCon(e.target.value)}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setPagaCon(String(total))}
-                    className="px-2 py-1.5 rounded-lg font-bold text-xs border border-emerald-300 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-colors"
-                  >
-                    Exacto
-                  </button>
-                </div>
-                <div className="flex gap-1.5 flex-wrap">
-                  {sugerirBilletes(total).map((billete) => (
-                    <button
-                      key={billete}
-                      type="button"
-                      onClick={() => setPagaCon(String(billete))}
-                      className="px-2 py-1 rounded-lg text-[11px] font-bold border border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-100 transition-colors"
-                    >
-                      $ {billete}
-                    </button>
-                  ))}
-                </div>
-                {parseFloat(pagaCon) > 0 && (
-                  <div className="flex justify-between items-center rounded-lg bg-emerald-100 px-2 py-1.5">
-                    <span className="text-[11px] font-bold text-emerald-700">Vuelto</span>
-                    <span className="text-lg font-black text-emerald-700">$ {Math.max(0, (parseFloat(pagaCon) || 0) - total).toFixed(0)}</span>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* DESCUENTO POR TICKET */}
-            <div>
-                <label className="text-[11px] font-medium text-[#86868b] uppercase flex items-center gap-1 mb-0.5 tracking-wide">
-                    <Tag size={11}/> Descuento General
-                </label>
-                <div className="flex gap-1.5">
-                    <input
-                        type="number"
-                        placeholder="0"
-                        min="0"
-                        className="flex-1 p-1.5 border rounded-lg text-xs bg-white"
-                        value={descuento}
-                        onChange={e => setDescuento(e.target.value)}
-                    />
-                    <button
-                        onClick={() => { setDescuentoTipo(descuentoTipo === '$' ? '%' : '$'); setDescuento(''); }}
-                        className={`px-2 py-1.5 rounded-lg font-bold text-xs border transition-colors ${
-                            descuentoTipo === '%' ? 'bg-green-100 text-green-700 border-green-300' : 'bg-slate-100 text-slate-700 border-slate-300'
-                        }`}
-                    >
-                        {descuentoTipo === '%' ? '%' : '$'}
-                    </button>
-                </div>
-            </div>
-
-            {/* NOTAS / COMENTARIOS */}
-            <div>
-                <label className="text-[11px] font-medium text-[#86868b] uppercase flex items-center gap-1 mb-0.5 tracking-wide">
-                    <MessageSquare size={11}/> Notas (opcional)
-                </label>
-                <textarea
-                    placeholder="Ej: Sin sal, entregar a las 18hs..."
-                    className="w-full p-1.5 border rounded-lg text-xs bg-white resize-none"
-                    rows={1}
-                    value={notas}
-                    onChange={e => setNotas(e.target.value)}
-                />
-            </div>
-
-            <div className="flex justify-between items-center pt-1">
-                {descuentoNum > 0 && (
-                  <div className="flex flex-col">
-                    <span className="text-[11px] text-[#86868b] line-through">$ {subtotal + descuentoNum}</span>
-                    <span className="text-[11px] text-green-600 font-medium">-$ {descuentoNum.toFixed(0)} desc.{descuentoTipo === '%' ? ` (${descuento}%)` : ''}</span>
-                  </div>
-                )}
-                <span className="text-[#86868b] text-sm font-normal">{descuentoNum <= 0 ? "Total" : ""}</span>
-                <span className="text-2xl font-semibold text-[#1d1d1f] tracking-tight">$ {total.toFixed(0)}</span>
-            </div>
-
-            {(configNegocio.mp_qr_base64 || configNegocio.mp_alias || configNegocio.mp_pos_qr_image_url) && carrito.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setQrStandalone(true)}
-                className="w-full py-2.5 rounded-xl font-bold text-cyan-700 text-sm border-2 border-cyan-200 bg-cyan-50 hover:bg-cyan-100 transition-colors flex items-center justify-center gap-2"
-              >
-                <QrCode size={16} /> VER QR PARA COBRAR
-              </button>
-            )}
-
-            <button
-              ref={cobrarBtnRef}
-                onClick={confirmarVenta}
-                className={`w-full py-3 rounded-xl font-medium text-white text-sm transition-all active:scale-[0.98] ${ticketEditando ? 'bg-orange-500 hover:bg-orange-600' : 'bg-[#007aff] hover:bg-[#0071e3]'}`}
-            >
-                {ticketEditando ? 'COBRAR CORRECCIÓN' : 'COBRAR'}
-            </button>
+          <button
+            onClick={abrirCheckout}
+            disabled={carrito.length === 0}
+            className={`w-full py-3 rounded-xl font-bold text-white text-sm transition-all active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed ${ticketEditando ? 'bg-orange-500 hover:bg-orange-600' : 'bg-[#007aff] hover:bg-[#0071e3]'}`}
+          >
+            {ticketEditando ? 'COBRAR CORRECCIÓN' : 'COBRAR'}
+          </button>
         </div>
       </div>
 
-      {/* MODAL COBRO RÁPIDO - deshabilitado, reemplazado por confirmarVenta
-      {modalCobroAbierto && (
-        <div className="fixed inset-0 z-[85] flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm" onClick={cerrarModalCobro}>
-          <div className="w-full max-w-md rounded-2xl border border-white/70 bg-white/70 p-5 shadow-2xl backdrop-blur-xl" onClick={(e) => e.stopPropagation()}>
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <CreditCard size={18} className="text-emerald-600" /> Cobro
-              </h3>
-              <button
-                type="button"
-                onClick={cerrarModalCobro}
-                className="rounded-lg p-1 text-slate-400 transition hover:bg-white hover:text-slate-700"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="rounded-xl border border-white/80 bg-white/80 p-4 text-center">
-              <p className="text-xs uppercase tracking-wide text-slate-500">Total a Pagar</p>
-              <p className="text-4xl font-black tracking-tight text-slate-900">$ {total.toFixed(0)}</p>
-            </div>
-
-            <div className="mt-4 space-y-3">
-              <div>
-                <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Método de Pago</label>
-                <select
-                  className="w-full rounded-lg border border-slate-200 bg-white p-2 text-sm font-semibold text-slate-700"
-                  value={modalMetodoPago}
-                  onChange={(e) => {
-                    setModalMetodoPago(e.target.value);
-                    if (e.target.value !== "Efectivo") setModalPagaCon("");
-                  }}
+      {/* MODAL DE CHECKOUT: Finalizar Venta */}
+      {checkoutAbierto && (
+        <div
+          className="fixed inset-0 z-[85] flex items-center justify-center bg-slate-950/50 backdrop-blur-sm p-4"
+          onClick={cerrarCheckout}
+          onKeyDown={handleCheckoutKey}
+        >
+          <div
+            ref={checkoutPanelRef}
+            tabIndex={-1}
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden outline-none animate-in fade-in zoom-in"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* ENCABEZADO: Total a cobrar */}
+            <div className="px-6 py-5 border-b border-slate-100">
+              <div className="flex items-center justify-between mb-2.5">
+                <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                  <CheckCircle size={18} className="text-emerald-500" /> Finalizar Venta
+                </h3>
+                <button
+                  type="button"
+                  onClick={cerrarCheckout}
+                  disabled={guardandoCobro}
+                  className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
                 >
-                  <option value="Efectivo">Efectivo</option>
-                  <option value="Mercado Pago">Mercado Pago</option>
-                  <option value="Fiado">Fiado</option>
+                  <X size={18} />
+                </button>
+              </div>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total a cobrar</p>
+              <p className="text-3xl font-extrabold text-slate-900 tracking-tight tabular-nums">{formatMoney(total)}</p>
+            </div>
+
+            {/* CUERPO */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar px-6 py-4 space-y-4">
+              {/* Selector de Cliente */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1">
+                  <User size={12}/> Cliente
+                </label>
+                <select
+                  className={`w-full p-2.5 border rounded-xl text-sm bg-white font-medium outline-none focus:ring-2 focus:ring-blue-100 ${metodo === 'Fiado' && !clienteSelec ? 'border-red-400 ring-2 ring-red-100' : 'border-slate-200'}`}
+                  value={clienteSelec}
+                  onChange={e => setClienteSelec(e.target.value)}
+                >
+                  <option value="">-- Consumidor Final --</option>
+                  {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                 </select>
               </div>
 
-              {esPagoEfectivo && (
-                <div className="space-y-2">
-                  <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Paga con: $</label>
-                  <input
-                    ref={pagaConRef}
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={modalPagaCon}
-                    onChange={(e) => setModalPagaCon(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        confirmarCobroModal();
-                      }
-                    }}
-                    placeholder="Ej: 10000"
-                    className="w-full rounded-lg border border-slate-200 bg-white p-2.5 text-lg font-bold text-slate-800 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
-                  />
-                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-emerald-600">Vuelto</p>
-                    <p className="text-2xl font-black text-emerald-700">$ {vuelto.toFixed(0)}</p>
+              {/* Métodos de Pago */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1">
+                  <CreditCard size={12}/> Método de Pago
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {METODOS.map(m => {
+                    const Icono = m.icon;
+                    const activo = metodo === m.id;
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => cambiarMetodo(m.id)}
+                        className={`flex items-center gap-1.5 px-3 py-2.5 rounded-xl border text-xs font-semibold transition-all ${
+                          activo
+                            ? 'bg-blue-50 border-blue-300 text-blue-700 ring-1 ring-blue-200 shadow-sm'
+                            : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300 hover:bg-slate-50'
+                        }`}
+                      >
+                        <Icono size={15} /> <span className="truncate">{m.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {metodo === 'Fiado' && !clienteSelec && (
+                  <p className="text-[11px] text-red-500 font-semibold">Para fiar, seleccioná un cliente.</p>
+                )}
+              </div>
+
+              {/* Calculadora de Vuelto (solo Efectivo) */}
+              {metodo === 'Efectivo' && total > 0 && (
+                <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-3.5 space-y-2.5 animate-in fade-in slide-in-from-top-1">
+                  <label className="text-[11px] font-bold uppercase tracking-wide text-emerald-700">Paga con...</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {BILLETES.map(b => (
+                      <button
+                        key={b}
+                        type="button"
+                        onClick={() => setPagaCon(String(b))}
+                        className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold border border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-100 transition-colors"
+                      >
+                        {formatMoney(b)}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setPagaCon(String(total))}
+                      className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold border border-emerald-400 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-colors"
+                    >
+                      Exacto
+                    </button>
                   </div>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-emerald-700">$</span>
+                    <input
+                      ref={pagaConRef}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="0"
+                      className="w-full pl-8 pr-3 py-2.5 border border-emerald-200 rounded-xl text-base font-bold bg-white text-emerald-800 outline-none focus:ring-2 focus:ring-emerald-200 tabular-nums"
+                      value={pagaCon}
+                      onChange={e => setPagaCon(e.target.value)}
+                    />
+                  </div>
+                  {pagaConNum > 0 && (
+                    <div className="flex items-center justify-between rounded-lg bg-emerald-100 px-3 py-2">
+                      <span className="text-[11px] font-bold uppercase tracking-wide text-emerald-700">Vuelto</span>
+                      <span className="text-xl font-black text-emerald-700 tabular-nums">{formatMoney(vuelto)}</span>
+                    </div>
+                  )}
                 </div>
               )}
+
+              {/* Opcionales: Descuento y notas (colapsable) */}
+              <div className="border border-slate-200 rounded-xl overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setCheckoutExtras(!checkoutExtras)}
+                  className="w-full flex items-center justify-between px-3.5 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-50 transition-colors"
+                >
+                  <span className="flex items-center gap-2"><Percent size={15} className="text-slate-400" /> Descuento y notas</span>
+                  <ChevronDown size={16} className={`text-slate-400 transition-transform ${checkoutExtras ? 'rotate-180' : ''}`} />
+                </button>
+                {checkoutExtras && (
+                  <div className="px-3.5 pb-3.5 pt-2 border-t border-slate-100 space-y-3 animate-in fade-in">
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Descuento general</label>
+                      <div className="flex gap-1.5">
+                        <input
+                          type="number"
+                          min="0"
+                          placeholder="0"
+                          className="flex-1 p-2.5 border border-slate-200 rounded-xl text-sm font-bold bg-white outline-none focus:ring-2 focus:ring-blue-100"
+                          value={descuento}
+                          onChange={e => setDescuento(e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => { setDescuentoTipo(descuentoTipo === '$' ? '%' : '$'); setDescuento(''); }}
+                          className={`px-3 py-2 rounded-xl font-bold text-xs border transition-colors ${descuentoTipo === '%' ? 'bg-green-100 text-green-700 border-green-300' : 'bg-slate-100 text-slate-700 border-slate-300'}`}
+                        >
+                          {descuentoTipo === '%' ? '%' : '$'}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Notas de la venta</label>
+                      <textarea
+                        rows={2}
+                        placeholder="Ej: Sin sal, entregar a las 18hs..."
+                        className="w-full p-2.5 border border-slate-200 rounded-xl text-sm bg-white resize-none outline-none focus:ring-2 focus:ring-blue-100"
+                        value={notas}
+                        onChange={e => setNotas(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
-            <button
-              type="button"
-              disabled={guardandoCobro}
-              onClick={confirmarCobroModal}
-              className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 py-3 text-sm font-bold text-white transition hover:brightness-110 disabled:opacity-60"
-            >
-              {guardandoCobro ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />}
-              {guardandoCobro ? "Guardando..." : "Confirmar Venta"}
-            </button>
+            {/* ACCIONES */}
+            <div className="px-6 py-4 border-t border-slate-100 grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={cerrarCheckout}
+                disabled={guardandoCobro}
+                className="py-3 rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50 font-bold text-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <X size={16} /> Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmarDesdeCheckout}
+                disabled={guardandoCobro || carrito.length === 0 || (metodo === 'Fiado' && !clienteSelec)}
+                className="py-3 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-sm shadow-lg shadow-emerald-500/30 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
+              >
+                {guardandoCobro ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />}
+                {guardandoCobro ? "Procesando..." : "Confirmar Venta"}
+              </button>
+            </div>
           </div>
         </div>
       )}
-      */}
 
       {/* MODAL DE ÉXITO POST-VENTA */}
       {modalExito && (
@@ -1412,7 +1323,7 @@ function Ventas() {
                 }
               </h3>
               <p className="text-slate-500 text-sm mt-1">
-                Ticket #{String(parseInt(modalExito.ticketId, 10) || modalExito.ticketId).padStart(4, '0')} — Total: ${modalExito.total.toFixed(0)}
+                Ticket #{String(parseInt(modalExito.ticketId, 10) || modalExito.ticketId).padStart(4, '0')} — Total: {formatMoney(modalExito.total)}
               </p>
             </div>
 
@@ -1442,7 +1353,7 @@ function Ventas() {
                 )}
                 <div className="bg-cyan-100 rounded-lg py-2 px-4">
                   <p className="text-xs text-cyan-600">Monto a cobrar</p>
-                  <p className="text-2xl font-black text-cyan-800">${modalQR.monto.toFixed(0)}</p>
+                  <p className="text-2xl font-black text-cyan-800">{formatMoney(modalQR.monto)}</p>
                 </div>
                 {modalQR.nombre && (
                   <p className="text-xs text-cyan-500">{modalQR.nombre}</p>
@@ -1470,36 +1381,43 @@ function Ventas() {
                 )}
               </div>
             )}
-            
+
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => {
-                  generarTicketPDF(modalExito.ticketId, modalExito.items, modalExito.metodo, modalExito.total, modalExito.descuento, modalExito.notas);
+                  imprimirTicketHTML(
+                    modalExito.ticketId,
+                    modalExito.items,
+                    modalExito.metodo,
+                    modalExito.total,
+                    modalExito.descuento,
+                    modalExito.notas
+                  );
                 }}
                 className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold transition-colors text-sm"
               >
                 <Printer size={16} />
                 Imprimir
               </button>
-              
+
               {/* Botón WhatsApp */}
               <button
                 onClick={() => {
                   const ticketNum = String(parseInt(modalExito.ticketId, 10) || modalExito.ticketId).padStart(4, '0');
-                  const items = modalExito.items.map(i => `  ${i.cantidad}x ${i.nombre} $${(i.precio * i.cantidad).toFixed(0)}`).join('\n');
+                  const items = modalExito.items.map(i => `  ${i.cantidad}x ${i.nombre} ${formatMoney(i.precio * i.cantidad)}`).join('\n');
                   const msg = `🧾 *Comprobante de compra*\n` +
                     `📍 ${configNegocio.kiosco_nombre || 'Mi Kiosco'}\n` +
                     `📅 ${new Date().toLocaleString('es-AR')}\n` +
                     `🎫 Ticket #${ticketNum}\n\n` +
                     `${items}\n\n` +
-                    `💰 *TOTAL: $${modalExito.total.toFixed(0)}*\n` +
+                    `💰 *TOTAL: ${formatMoney(modalExito.total)}*\n` +
                     `💳 Método: ${modalExito.metodo}\n` +
                     (modalExito.notas ? `📝 Notas: ${modalExito.notas}\n` : '') +
                     `\n¡Gracias por su compra!`;
-                  
+
                   // Si hay teléfono del cliente, usar ese; sino abrir sin número
                   const tel = modalExito.clienteTelefono || '';
-                  const url = tel 
+                  const url = tel
                     ? `https://wa.me/${tel.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(msg)}`
                     : `https://wa.me/?text=${encodeURIComponent(msg)}`;
                   window.open(url, '_blank');
@@ -1516,51 +1434,6 @@ function Ventas() {
               className="w-full flex items-center justify-center gap-2 bg-slate-200 hover:bg-slate-300 text-slate-700 py-3 rounded-xl font-bold transition-colors"
             >
               <X size={18} />
-              Cerrar
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL QR STANDALONE — Para mostrar el QR al cliente antes o durante el cobro */}
-      {qrStandalone && (
-        <div className="fixed inset-0 bg-black/70 z-[60] flex items-center justify-center p-4" onClick={() => setQrStandalone(false)}>
-          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 text-center space-y-4" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <QrCode size={20} className="text-cyan-500" /> Cobrar con QR
-              </h3>
-              <button onClick={() => setQrStandalone(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100">
-                <X size={20} />
-              </button>
-            </div>
-            <div className="bg-cyan-50 border border-cyan-200 rounded-xl p-4 space-y-3">
-              {(configNegocio.mp_nombre || configNegocio.kiosco_nombre) && (
-                <p className="text-xs font-semibold text-cyan-700">{configNegocio.mp_nombre || configNegocio.kiosco_nombre}</p>
-              )}
-              <div className="bg-white p-3 rounded-xl inline-block mx-auto shadow-sm">
-                {(configNegocio.mp_api_configurada === 'true' && configNegocio.mp_pos_qr_image_url) ? (
-                  <img src={configNegocio.mp_pos_qr_image_url} alt="QR Mostrador" className="w-56 h-56 object-contain" />
-                ) : configNegocio.mp_qr_base64 ? (
-                  <img src={configNegocio.mp_qr_base64} alt="QR Mercado Pago" className="w-56 h-56 object-contain" />
-                ) : (
-                  <QRCodeSVG value={`https://link.mercadopago.com.ar/${configNegocio.mp_alias}`} size={216} level="M" includeMargin={true} />
-                )}
-              </div>
-              {carrito.length > 0 && (
-                <div className="bg-cyan-100 rounded-lg py-2 px-4">
-                  <p className="text-xs text-cyan-600">Monto a cobrar</p>
-                  <p className="text-4xl font-black text-cyan-800">${total.toFixed(0)}</p>
-                </div>
-              )}
-              {configNegocio.mp_alias && (
-                <p className="text-xs text-cyan-500">Alias: <strong>{configNegocio.mp_alias}</strong></p>
-              )}
-            </div>
-            <button
-              onClick={() => setQrStandalone(false)}
-              className="w-full py-2.5 rounded-xl font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors text-sm"
-            >
               Cerrar
             </button>
           </div>

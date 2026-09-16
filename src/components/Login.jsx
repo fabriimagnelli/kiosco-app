@@ -42,11 +42,9 @@ function Login() {
         
         <div className="text-center mb-8">
             <div className="flex justify-center mb-4">
-                {/* Asegúrate de que logo.png esté en la carpeta public */}
-                <img src="/logo.png" alt="SACWare Logo" className="h-20 w-auto object-contain drop-shadow-md" />
+                <img src="./logo.png" alt="SACWare Logo" className="h-20 w-auto object-contain drop-shadow-md" />
             </div>
 
-            <h1 className="text-3xl font-extrabold text-slate-800 tracking-tight">SACWare</h1>
             <p className="text-slate-400 text-sm mt-1.5 font-medium tracking-wide">Bienvenido a tu Sistema de Gestión</p>
         </div>
 

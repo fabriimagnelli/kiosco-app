@@ -1,14 +1,38 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { User, Plus, Search, Trash2, Edit2, Phone, MapPin, Save, X, Eye, Calendar, Star, Gift, AlertTriangle, TrendingUp, ShoppingBag, Clock, Bell, DollarSign, CreditCard, Award, ChevronDown, ChevronUp, History, Shield } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { User, Plus, Search, Trash2, Edit2, Phone, MapPin, Save, X, Eye, Calendar, Star, Gift, AlertTriangle, TrendingUp, Clock, Bell, DollarSign, CreditCard, Award, ChevronDown, ChevronUp, History, Shield, Percent, Loader2, CheckCircle } from "lucide-react";
 import { apiFetch } from "../lib/api";
 import { useNotify } from "../context/NotificationContext";
+
+// Formato de números en es-AR: separador de miles con punto y decimales con coma (ej: 1.000,00)
+const fmtMonto = (n, dec = 2) => (Number(n) || 0).toLocaleString("es-AR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
+const fmtNro = (n) => (Number(n) || 0).toLocaleString("es-AR");
+
+// La BD guarda las fechas en UTC (CURRENT_TIMESTAMP de SQLite). Se interpretan como UTC
+// y se muestran convertidas a la hora local, así la hora coincide con la de la venta.
+const parseFechaDB = (fecha) => {
+  if (!fecha) return null;
+  const texto = String(fecha);
+  const iso = texto.includes("T") ? texto : texto.replace(" ", "T");
+  const d = new Date(/Z$|[+-]\d{2}:\d{2}$/.test(iso) ? iso : iso + "Z");
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+const fmtFecha = (fecha) => { const d = parseFechaDB(fecha); return d ? d.toLocaleDateString("es-AR") : "—"; };
+const fmtHora = (fecha) => { const d = parseFechaDB(fecha); return d ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"; };
 
 // Traduce un saldo con signo a algo entendible por el cajero: nunca se muestran números negativos
 const formatearSaldo = (monto) => {
   const valor = monto || 0;
-  if (valor > 0) return { texto: `$ ${valor.toFixed(2)}`, etiqueta: "Debe", clase: "text-red-600", claseBadge: "bg-red-100 text-red-600" };
-  if (valor < 0) return { texto: `$ ${Math.abs(valor).toFixed(2)}`, etiqueta: "A favor", clase: "text-green-600", claseBadge: "bg-green-100 text-green-600" };
-  return { texto: "$ 0.00", etiqueta: "Al día", clase: "text-slate-500", claseBadge: "bg-slate-100 text-slate-500" };
+  if (valor > 0) return { texto: `$ ${fmtMonto(valor)}`, etiqueta: "Debe", clase: "text-red-600", claseBadge: "bg-red-100 text-red-600" };
+  if (valor < 0) return { texto: `$ ${fmtMonto(Math.abs(valor))}`, etiqueta: "A favor", clase: "text-green-600", claseBadge: "bg-green-100 text-green-600" };
+  return { texto: "$ 0,00", etiqueta: "Al día", clase: "text-slate-500", claseBadge: "bg-slate-100 text-slate-500" };
+};
+
+const MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+const formatearPeriodo = (periodo) => {
+  const [anio, mes] = String(periodo || "").split("-");
+  if (!anio || !mes) return "Nunca";
+  const idx = parseInt(mes, 10) - 1;
+  return `${MESES[idx] || mes} ${anio}`;
 };
 
 function Deudores() {
@@ -30,7 +54,6 @@ function Deudores() {
   const [verHistorial, setVerHistorial] = useState(false);
   const [clienteSel, setClienteSel] = useState(null);
   const [historialFiados, setHistorialFiados] = useState([]);
-  const [historialCompras, setHistorialCompras] = useState([]);
   const [historialPuntos, setHistorialPuntos] = useState([]);
   const [tabActiva, setTabActiva] = useState("fiados");
 
@@ -53,6 +76,17 @@ function Deudores() {
   const [mostrarAlertas, setMostrarAlertas] = useState(false);
   const [diasAlerta, setDiasAlerta] = useState(7);
 
+  // Recargo por mora
+  const [mostrarRecargo, setMostrarRecargo] = useState(false);
+  const [moraPorcentaje, setMoraPorcentaje] = useState("");
+  const [aplicandoRecargo, setAplicandoRecargo] = useState(false);
+
+  // Configuración recargo automático mensual
+  const [moraActiva, setMoraActiva] = useState(false);
+  const [moraDiaMes, setMoraDiaMes] = useState("1");
+  const [moraUltimoPeriodo, setMoraUltimoPeriodo] = useState(null);
+  const [guardandoMoraConfig, setGuardandoMoraConfig] = useState(false);
+
   // Orden
   const [ordenarPor, setOrdenarPor] = useState("nombre");
 
@@ -60,6 +94,8 @@ function Deudores() {
     cargarClientes();
     cargarConfigPuntos();
     cargarAlertasDeuda(7);
+    cargarConfiguracionMora();
+    verificarRecargoAutomatico();
   }, []);
 
   const cargarClientes = () => {
@@ -88,6 +124,105 @@ function Deudores() {
   const cargarAlertasDeuda = (dias) => {
     apiFetch(`/api/clientes/alertas/deudas?dias=${dias}`).then(r => r.json()).then(setAlertasDeuda).catch(() => {});
   };
+
+  function cargarConfiguracionMora() {
+    apiFetch("/api/clientes/configuracion_mora").then(r => r.json()).then(cfg => {
+      if (!cfg || cfg.error) return;
+      setMoraActiva(!!cfg.mora_activa);
+      setMoraPorcentaje(cfg.mora_porcentaje ? String(cfg.mora_porcentaje) : "");
+      setMoraDiaMes(cfg.mora_dia_mes ? String(cfg.mora_dia_mes) : "1");
+      setMoraUltimoPeriodo(cfg.mora_ultimo_periodo || null);
+    }).catch(() => {});
+  }
+
+  async function verificarRecargoAutomatico() {
+    try {
+      const res = await apiFetch("/api/fiados/recargo_mora/automatico", { method: "POST" });
+      const data = await res.json();
+      if (data.success && data.ejecutado) {
+        toast(`Se aplicó el recargo mensual automático por mora a ${data.aplicados || 0} clientes${data.monto_total > 0 ? ` por $ ${fmtMonto(data.monto_total)}` : ""}.`, "ok");
+        cargarClientes();
+        cargarConfiguracionMora();
+      }
+    } catch (err) {
+      console.error("Error verificando recargo automático:", err);
+    }
+  }
+
+  async function guardarConfiguracionMora() {
+    const p = parseFloat(moraPorcentaje);
+    if (!moraPorcentaje || isNaN(p) || p <= 0 || p > 100) {
+      toast("Ingresá un porcentaje válido (mayor a 0 y hasta 100)", "warn");
+      return;
+    }
+    const dia = parseInt(moraDiaMes, 10);
+    if (isNaN(dia) || dia < 1 || dia > 31) {
+      toast("Ingresá un día del mes válido (1 a 31)", "warn");
+      return;
+    }
+    setGuardandoMoraConfig(true);
+    try {
+      const res = await apiFetch("/api/clientes/configuracion_mora", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mora_activa: moraActiva ? 1 : 0,
+          mora_porcentaje: p,
+          mora_dia_mes: dia,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast(moraActiva ? "Configuración de recargo automático guardada" : "Recargo automático desactivado", "ok");
+        setMoraUltimoPeriodo(data.mora_ultimo_periodo || null);
+      } else {
+        toast("Error al guardar: " + (data.error || "Error desconocido"), "err");
+      }
+    } catch (err) {
+      console.error("Error guardando configuración de recargo:", err);
+      toast("Error de conexión al guardar la configuración.", "err");
+    } finally {
+      setGuardandoMoraConfig(false);
+    }
+  }
+
+  async function aplicarRecargoMora() {
+    const p = parseFloat(moraPorcentaje);
+    if (!moraPorcentaje || isNaN(p) || p <= 0 || p > 100) {
+      toast("Ingresá un porcentaje válido (mayor a 0 y hasta 100)", "warn");
+      return;
+    }
+    if (clientesConDeuda.length === 0) {
+      toast("No hay clientes con deuda activa para aplicar el recargo", "warn");
+      return;
+    }
+    const ok = await confirmDialog(
+      `¿Aplicar recargo del ${p}% por mora a todos los clientes con saldo deudor activo?\n\n` +
+      `Clientes afectados: ${fmtNro(clientesConDeuda.length)}\nMonto total a sumar: $ ${fmtMonto(previewMontoTotal)}`
+    );
+    if (!ok) return;
+    setAplicandoRecargo(true);
+    try {
+      const res = await apiFetch("/api/clientes/aplicar_mora_manual", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ porcentaje: p }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast(`Recargo por mora aplicado a ${data.aplicados || 0} cuentas por $ ${fmtMonto(data.monto_total || 0)}`, "ok");
+        setMostrarRecargo(false);
+        cargarClientes();
+      } else {
+        toast("Error al aplicar: " + (data.error || "Error desconocido"), "err");
+      }
+    } catch (err) {
+      console.error("Error aplicando recargo:", err);
+      toast("Error de conexión al aplicar el recargo.", "err");
+    } finally {
+      setAplicandoRecargo(false);
+    }
+  }
 
   const prepararEdicion = (c) => {
     setNombre(c.nombre);
@@ -135,20 +270,18 @@ function Deudores() {
     setClienteSel(cliente);
     setTabActiva("fiados");
     try {
-      const [fiados, compras, puntos] = await Promise.all([
+      const [fiados, puntos] = await Promise.all([
         apiFetch(`/api/fiados/${cliente.id}`).then(r => r.json()),
-        apiFetch(`/api/clientes/${cliente.id}/compras`).then(r => r.json()),
         apiFetch(`/api/clientes/${cliente.id}/puntos`).then(r => r.json()),
       ]);
       setHistorialFiados(fiados);
-      setHistorialCompras(compras);
       setHistorialPuntos(puntos);
       setVerHistorial(true);
     } catch (err) { console.error(err); }
   };
 
   const cerrarDetalles = () => {
-    setVerHistorial(false); setClienteSel(null); setHistorialFiados([]); setHistorialCompras([]); setHistorialPuntos([]);
+    setVerHistorial(false); setClienteSel(null); setHistorialFiados([]); setHistorialPuntos([]);
     setMontoPago(""); setMetodoPago("Efectivo"); setDescripcionPago(""); setGuardarExcedente(false);
     setPuntosACanjear(""); setAjustePuntos(""); setAjusteDesc("");
   };
@@ -208,7 +341,7 @@ function Deudores() {
       });
       const data = await res.json();
       if (data.success) {
-        toast(`Canjeados ${pts} puntos = $${data.descuento.toFixed(2)} de descuento`, "ok");
+        toast(`Canjeados ${pts} puntos = $ ${fmtMonto(data.descuento)} de descuento`, "ok");
         setPuntosACanjear("");
         cargarClientes();
         const histPts = await apiFetch(`/api/clientes/${clienteSel.id}/puntos`).then(r => r.json());
@@ -256,6 +389,14 @@ function Deudores() {
 
   const deudaActualSel = historialFiados.reduce((acc, m) => acc + m.monto, 0);
 
+  // Vista previa del recargo, calculada localmente sobre el listado de clientes
+  const clientesConDeuda = clientes.filter(c => (c.total_deuda || 0) > 0);
+  const pctRecargo = parseFloat(moraPorcentaje);
+  const previewValido = moraPorcentaje !== "" && !isNaN(pctRecargo) && pctRecargo > 0 && pctRecargo <= 100;
+  const previewMontoTotal = previewValido
+    ? clientesConDeuda.reduce((acc, c) => acc + (c.total_deuda || 0) * (pctRecargo / 100), 0)
+    : 0;
+
   return (
     <div className="p-4 md:p-6 space-y-4 md:space-y-6 animate-in fade-in duration-500 h-full overflow-y-auto">
       
@@ -284,6 +425,13 @@ function Deudores() {
             className={`px-4 py-2.5 rounded-lg font-bold flex items-center gap-2 shadow-md transition-all text-sm ${puntosConfig.puntos_activos ? 'bg-amber-600 text-white' : 'bg-amber-100 text-amber-700 hover:bg-amber-200'}`}
           >
             <Star size={16} /> Puntos {puntosConfig.puntos_activos ? 'ON' : 'OFF'}
+          </button>
+          {/* Aplicar recargo por mora */}
+          <button
+            onClick={() => setMostrarRecargo(!mostrarRecargo)}
+            className={`px-4 py-2.5 rounded-lg font-bold flex items-center gap-2 shadow-md transition-all text-sm ${mostrarRecargo ? 'bg-blue-700 text-white' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+          >
+            <Percent size={16} /> Recargo por Mora
           </button>
         </div>
       </div>
@@ -314,9 +462,9 @@ function Deudores() {
                     </div>
                   </div>
                   <div className="text-right">
-                    <span className="font-black text-red-600 text-lg">$ {a.total_deuda?.toFixed(2)}</span>
+                    <span className="font-black text-red-600 text-lg">$ {fmtMonto(a.total_deuda)}</span>
                     {a.limite_credito > 0 && a.total_deuda > a.limite_credito && (
-                      <div className="text-[10px] text-red-500 font-bold">EXCEDE LÍMITE (${a.limite_credito})</div>
+                      <div className="text-[10px] text-red-500 font-bold">EXCEDE LÍMITE (${fmtNro(a.limite_credito)})</div>
                     )}
                   </div>
                 </div>
@@ -361,27 +509,123 @@ function Deudores() {
         </div>
       )}
 
+      {/* MODAL RECARGO POR MORA */}
+      {mostrarRecargo && (
+        <div className="bg-blue-50 border-2 border-blue-300 rounded-xl p-4 animate-in fade-in slide-in-from-top duration-200">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-bold text-blue-800 flex items-center gap-2"><Percent size={18} /> Aplicar Recargo por Mora</h3>
+            <button type="button" onClick={() => setMostrarRecargo(false)} className="p-1.5 rounded-lg text-blue-400 hover:bg-blue-100 hover:text-blue-600 transition-colors" aria-label="Cerrar">
+              <X size={18} />
+            </button>
+          </div>
+
+          {/* Fila 1: porcentaje + aplicar manual */}
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="flex-1 min-w-[200px]">
+              <label className="block text-xs font-bold text-blue-700 mb-1">Porcentaje de recargo (%)</label>
+              <input
+                type="number" step="0.1" min="0.1" max="100" placeholder="Ej: 5 o 10"
+                value={moraPorcentaje} onChange={e => setMoraPorcentaje(e.target.value)}
+                className="w-full p-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-400 outline-none text-sm font-bold" />
+            </div>
+            <button
+              type="button" onClick={aplicarRecargoMora} disabled={aplicandoRecargo || !previewValido || clientesConDeuda.length === 0}
+              className="px-5 py-2.5 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 text-sm transition-all disabled:opacity-50 flex items-center gap-2 active:scale-[0.98]"
+            >
+              {aplicandoRecargo ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />}
+              {aplicandoRecargo ? "Aplicando..." : "Aplicar Recargo (Manual)"}
+            </button>
+          </div>
+
+          {/* Fila 2: automatización mensual + guardar */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end mt-4 border-t border-blue-200 pt-4">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setMoraActiva(a => !a)}
+                aria-pressed={moraActiva}
+                className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${moraActiva ? 'bg-blue-600' : 'bg-slate-300'}`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${moraActiva ? 'translate-x-5' : ''}`} />
+              </button>
+              <div>
+                <p className="text-sm font-bold text-slate-700">Aplicar automáticamente cada mes</p>
+                <p className="text-[11px] text-slate-500">Se ejecuta solo el día indicado, una sola vez por mes.</p>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-blue-700 mb-1">Día del mes (1 a 31)</label>
+              <input
+                type="number" min="1" max="31" value={moraDiaMes}
+                onChange={e => setMoraDiaMes(e.target.value)} disabled={!moraActiva}
+                className="w-full p-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-400 outline-none text-sm font-bold disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed" />
+              <p className="text-[10px] text-blue-600 mt-1">Día en que se aplica el recargo (ej: 10 para cada día 10)</p>
+            </div>
+            <div className="flex justify-end">
+              <button
+                type="button" onClick={guardarConfiguracionMora} disabled={guardandoMoraConfig}
+                className="px-4 py-2 rounded-lg border-2 border-blue-300 text-blue-700 hover:bg-blue-100 font-bold text-sm transition-colors disabled:opacity-50 flex items-center gap-2 active:scale-[0.98]"
+              >
+                {guardandoMoraConfig ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                Guardar Configuración
+              </button>
+            </div>
+          </div>
+
+          {/* Fila 3: estado + vista previa local */}
+          <div className="mt-4 flex flex-wrap items-center gap-4 border-t border-blue-200 pt-4">
+            <div className="flex flex-wrap gap-2 text-xs">
+              <span className="px-3 py-1.5 rounded-full bg-blue-100 text-blue-700 font-bold">
+                Última ejecución automática: {moraUltimoPeriodo ? formatearPeriodo(moraUltimoPeriodo) : 'Nunca'}
+              </span>
+              <span className={`px-3 py-1.5 rounded-full font-bold ${moraActiva ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                {moraActiva ? `Próxima ejecución programada: Día ${moraDiaMes || '…'}` : 'Recargo automático desactivado'}
+              </span>
+            </div>
+            <div className="flex-1 min-w-[220px] rounded-xl bg-white border border-blue-200 p-3">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-blue-700 flex items-center gap-1 mb-2">
+                <Eye size={12} /> Vista Previa
+              </p>
+              {previewValido ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-center">
+                    <p className="text-xs text-blue-600">Clientes afectados</p>
+                    <p className="text-2xl font-black text-blue-800">{fmtNro(clientesConDeuda.length)}</p>
+                  </div>
+                  <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-center">
+                    <p className="text-xs text-blue-600">Monto total a sumar</p>
+                    <p className="text-2xl font-black text-blue-800">$ {fmtMonto(previewMontoTotal)}</p>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-slate-500">Ingresá un porcentaje válido (1 a 100) para ver la proyección.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* RESUMEN RÁPIDO */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="bg-blue-50 rounded-2xl border border-blue-200 p-4">
           <div className="flex items-center gap-2 mb-1"><User size={16} className="text-blue-500" /><p className="text-xs text-blue-600 font-normal">Total Clientes</p></div>
-          <p className="text-2xl font-semibold text-blue-700">{clientes.length}</p>
-          <p className="text-[11px] text-blue-400 mt-1 font-light">{clientes.filter(c => c.total_deuda > 0).length} con deuda</p>
+          <p className="text-2xl font-semibold text-blue-700">{fmtNro(clientes.length)}</p>
+          <p className="text-[11px] text-blue-400 mt-1 font-light">{fmtNro(clientes.filter(c => c.total_deuda > 0).length)} con deuda</p>
         </div>
         <div className="bg-red-50 rounded-2xl border border-red-200 p-4">
           <div className="flex items-center gap-2 mb-1"><AlertTriangle size={16} className="text-red-500" /><p className="text-xs text-red-600 font-normal">Deuda Total</p></div>
-          <p className="text-2xl font-semibold text-red-700">$ {clientes.reduce((a, c) => a + Math.max(0, c.total_deuda || 0), 0).toFixed(2)}</p>
-          <p className="text-[11px] text-red-400 mt-1 font-light">{clientes.filter(c => c.total_deuda > 0).length} clientes</p>
+          <p className="text-2xl font-semibold text-red-700">$ {fmtMonto(clientes.reduce((a, c) => a + Math.max(0, c.total_deuda || 0), 0))}</p>
+          <p className="text-[11px] text-red-400 mt-1 font-light">{fmtNro(clientes.filter(c => c.total_deuda > 0).length)} clientes</p>
         </div>
         <div className="bg-emerald-50 rounded-2xl border border-emerald-200 p-4">
           <div className="flex items-center gap-2 mb-1"><TrendingUp size={16} className="text-emerald-500" /><p className="text-xs text-emerald-600 font-normal">Total Vendido</p></div>
-          <p className="text-2xl font-semibold text-emerald-700">$ {clientes.reduce((a, c) => a + (c.total_gastado || 0), 0).toFixed(2)}</p>
-          <p className="text-[11px] text-emerald-400 mt-1 font-light">{clientes.reduce((a, c) => a + (c.total_compras || 0), 0)} compras</p>
+          <p className="text-2xl font-semibold text-emerald-700">$ {fmtMonto(clientes.reduce((a, c) => a + (c.total_gastado || 0), 0))}</p>
+          <p className="text-[11px] text-emerald-400 mt-1 font-light">{fmtNro(clientes.reduce((a, c) => a + (c.total_compras || 0), 0))} compras</p>
         </div>
         <div className="bg-amber-50 rounded-2xl border border-amber-200 p-4">
           <div className="flex items-center gap-2 mb-1"><Star size={16} className="text-amber-500" /><p className="text-xs text-amber-600 font-normal">Puntos Totales</p></div>
-          <p className="text-2xl font-semibold text-amber-700">{clientes.reduce((a, c) => a + (c.puntos || 0), 0)}</p>
-          <p className="text-[11px] text-amber-400 mt-1 font-light">{clientes.filter(c => (c.puntos || 0) > 0).length} con puntos</p>
+          <p className="text-2xl font-semibold text-amber-700">{fmtNro(clientes.reduce((a, c) => a + (c.puntos || 0), 0))}</p>
+          <p className="text-[11px] text-amber-400 mt-1 font-light">{fmtNro(clientes.filter(c => (c.puntos || 0) > 0).length)} con puntos</p>
         </div>
       </div>
 
@@ -489,7 +733,7 @@ function Deudores() {
                             </div>
                             {c.limite_credito > 0 && (
                               <div className="text-[10px] text-orange-500 font-medium mt-0.5">
-                                <Shield size={10} className="inline" /> Límite: ${c.limite_credito.toFixed(0)}
+                                <Shield size={10} className="inline" /> Límite: ${fmtNro(c.limite_credito)}
                                 {c.total_deuda > c.limite_credito && <span className="text-red-600 font-bold ml-1">EXCEDIDO</span>}
                               </div>
                             )}
@@ -497,8 +741,8 @@ function Deudores() {
                         </div>
                       </td>
                       <td className="p-4 text-center">
-                        <div className="text-slate-700 font-bold">{c.total_compras || 0}</div>
-                        <div className="text-[10px] text-green-500">${(c.total_gastado || 0).toFixed(0)}</div>
+                        <div className="text-slate-700 font-bold">{fmtNro(c.total_compras)}</div>
+                        <div className="text-[10px] text-green-500">${fmtNro(c.total_gastado)}</div>
                       </td>
                       <td className="p-4 text-right">
                         <span className={`font-bold px-2 py-1 rounded text-sm ${formatearSaldo(c.total_deuda).claseBadge}`}>
@@ -511,7 +755,7 @@ function Deudores() {
                       {puntosConfig.puntos_activos && (
                         <td className="p-4 text-center">
                           <span className="font-bold text-amber-600 flex items-center justify-center gap-1">
-                            <Star size={12} className="fill-amber-400 text-amber-400" /> {c.puntos || 0}
+                            <Star size={12} className="fill-amber-400 text-amber-400" /> {fmtNro(c.puntos)}
                           </span>
                         </td>
                       )}
@@ -528,8 +772,8 @@ function Deudores() {
               </table>
             </div>
             <div className="bg-slate-50 px-4 py-2 border-t text-xs text-slate-500 flex justify-between">
-              <span>{clientesFiltrados.length} de {clientes.length} clientes</span>
-              <span className="text-red-500 font-medium">{clientes.filter(c => c.total_deuda > 0).length} con deuda</span>
+              <span>{fmtNro(clientesFiltrados.length)} de {fmtNro(clientes.length)} clientes</span>
+              <span className="text-red-500 font-medium">{fmtNro(clientes.filter(c => c.total_deuda > 0).length)} con deuda</span>
             </div>
           </div>
         </div>
@@ -551,7 +795,7 @@ function Deudores() {
                   <p className="text-slate-500 text-xs mt-1 flex gap-4 ml-12">
                     {clienteSel.telefono && <span><Phone size={10} className="inline" /> {clienteSel.telefono}</span>}
                     {clienteSel.direccion && <span><MapPin size={10} className="inline" /> {clienteSel.direccion}</span>}
-                    {clienteSel.limite_credito > 0 && <span className="text-orange-500"><Shield size={10} className="inline" /> Límite: ${clienteSel.limite_credito}</span>}
+                    {clienteSel.limite_credito > 0 && <span className="text-orange-500"><Shield size={10} className="inline" /> Límite: ${fmtNro(clienteSel.limite_credito)}</span>}
                   </p>
                 </div>
                 <div className="flex gap-3 text-right">
@@ -568,7 +812,7 @@ function Deudores() {
                     <div>
                       <p className="text-[10px] uppercase text-amber-400 font-bold">Puntos</p>
                       <p className="text-xl font-black text-amber-600 flex items-center gap-1">
-                        <Star size={14} className="fill-amber-400 text-amber-400" /> {clienteSel.puntos || 0}
+                        <Star size={14} className="fill-amber-400 text-amber-400" /> {fmtNro(clienteSel.puntos)}
                       </p>
                     </div>
                   )}
@@ -579,7 +823,6 @@ function Deudores() {
               <div className="flex gap-1 mt-4 ml-12">
                 {[
                   { key: "fiados", label: "Fiados", icon: CreditCard },
-                  { key: "compras", label: "Compras", icon: ShoppingBag },
                   ...(puntosConfig.puntos_activos ? [{ key: "puntos", label: "Puntos", icon: Star }] : [])
                 ].map(tab => (
                   <button key={tab.key}
@@ -615,16 +858,16 @@ function Deudores() {
                         {historialFiados.map(mov => (
                           <tr key={mov.id} className="hover:bg-slate-50 group">
                             <td className="p-3 text-slate-500 text-xs">
-                              {new Date(mov.fecha).toLocaleDateString('es-AR')}
-                              <span className="block text-[10px] opacity-50">{new Date(mov.fecha).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                              {fmtFecha(mov.fecha)}
+                              <span className="block text-[10px] opacity-50">{fmtHora(mov.fecha)}</span>
                             </td>
                             <td className="p-3 font-medium text-slate-700">{mov.descripcion}</td>
                             <td className="p-3 text-slate-500 text-xs">{mov.metodo_pago}</td>
                             <td className="p-3 text-right font-bold">
                               {mov.monto > 0 ? (
-                                <span className="text-red-600">+ ${mov.monto.toFixed(2)}</span>
+                                <span className="text-red-600">+ ${fmtMonto(mov.monto)}</span>
                               ) : (
-                                <span className="text-green-600">- ${Math.abs(mov.monto).toFixed(2)}</span>
+                                <span className="text-green-600">- ${fmtMonto(Math.abs(mov.monto))}</span>
                               )}
                             </td>
                             <td className="p-3 text-center">
@@ -644,44 +887,6 @@ function Deudores() {
                 </div>
               )}
 
-              {/* TAB: COMPRAS */}
-              {tabActiva === "compras" && (
-                <div>
-                  {historialCompras.length === 0 ? (
-                    <div className="p-10 text-center text-slate-400">No hay compras registradas para este cliente.</div>
-                  ) : (
-                    <div>
-                      <div className="p-3 bg-green-50 border-b border-green-100 text-xs text-green-700 flex justify-between">
-                        <span><ShoppingBag size={12} className="inline" /> {historialCompras.length} tickets de compra</span>
-                        <span className="font-bold">Total gastado: $ {historialCompras.reduce((a, c) => a + (c.total || 0), 0).toFixed(2)}</span>
-                      </div>
-                      <table className="w-full text-left border-collapse">
-                        <thead className="bg-slate-100 text-slate-500 text-xs uppercase sticky top-0">
-                          <tr>
-                            <th className="p-3">Ticket</th>
-                            <th className="p-3">Fecha</th>
-                            <th className="p-3">Detalle</th>
-                            <th className="p-3 text-center">Pago</th>
-                            <th className="p-3 text-right">Total</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 text-sm">
-                          {historialCompras.map(c => (
-                            <tr key={c.ticket_id} className="hover:bg-slate-50">
-                              <td className="p-3 font-mono text-xs text-blue-600 font-bold">#{c.ticket_id}</td>
-                              <td className="p-3 text-slate-500 text-xs">{new Date(c.fecha).toLocaleDateString('es-AR')}</td>
-                              <td className="p-3 text-slate-700 text-xs max-w-[250px] truncate" title={c.detalle}>{c.detalle}</td>
-                              <td className="p-3 text-center text-xs">{c.metodo_pago}</td>
-                              <td className="p-3 text-right font-bold text-slate-700">$ {c.total?.toFixed(2)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              )}
-
               {/* TAB: PUNTOS */}
               {tabActiva === "puntos" && puntosConfig.puntos_activos && (
                 <div>
@@ -692,7 +897,7 @@ function Deudores() {
                       <div className="bg-white rounded-lg border border-amber-200 p-3">
                         <h4 className="text-xs font-bold text-amber-800 mb-2 flex items-center gap-1"><Gift size={14} /> Canjear Puntos</h4>
                         <div className="flex gap-2">
-                          <input type="number" min="1" placeholder={`Max: ${clienteSel.puntos || 0}`} value={puntosACanjear} onChange={e => setPuntosACanjear(e.target.value)}
+                          <input type="number" min="1" placeholder={`Max: ${fmtNro(clienteSel.puntos)}`} value={puntosACanjear} onChange={e => setPuntosACanjear(e.target.value)}
                             className="flex-1 p-2 text-sm border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-400 outline-none" />
                           <button onClick={canjearPuntos} disabled={!puntosACanjear || parseInt(puntosACanjear) <= 0}
                             className="px-4 py-2 bg-amber-600 text-white rounded-lg font-bold text-xs hover:bg-amber-700 disabled:opacity-50">
@@ -701,7 +906,7 @@ function Deudores() {
                         </div>
                         {puntosACanjear > 0 && (
                           <p className="text-[10px] text-amber-600 mt-1">
-                            = ${(parseInt(puntosACanjear) / (parseFloat(puntosConfig.puntos_valor_canje) || 100)).toFixed(2)} de descuento
+                            = ${fmtMonto(parseInt(puntosACanjear) / (parseFloat(puntosConfig.puntos_valor_canje) || 100))} de descuento
                           </p>
                         )}
                       </div>
@@ -746,7 +951,7 @@ function Deudores() {
                             <td className="p-3 text-slate-700 text-xs">{h.descripcion}</td>
                             <td className="p-3 text-right font-bold">
                               <span className={h.puntos > 0 ? 'text-green-600' : 'text-red-600'}>
-                                {h.puntos > 0 ? '+' : ''}{h.puntos}
+                                {h.puntos > 0 ? '+' : ''}{fmtNro(h.puntos)}
                               </span>
                             </td>
                           </tr>
@@ -801,21 +1006,21 @@ function Deudores() {
                         if (montoPagoNum < deudaActualSel) {
                           return (
                             <span className="font-bold text-red-600">
-                              Pago: ${montoPagoNum.toFixed(2)} | Resta pagar: ${(deudaActualSel - montoPagoNum).toFixed(2)}
+                              Pago: ${fmtMonto(montoPagoNum)} | Resta pagar: ${fmtMonto(deudaActualSel - montoPagoNum)}
                             </span>
                           );
                         }
                         if (montoPagoNum === deudaActualSel) {
                           return (
                             <span className="font-bold text-green-600">
-                              Deuda saldada por completo (${(0).toFixed(2)})
+                              Deuda saldada por completo (${fmtMonto(0)})
                             </span>
                           );
                         }
                         return (
                           <div className="space-y-1">
                             <span className="font-bold text-blue-600 block">
-                              Excedente: ${excedente.toFixed(2)} {guardarExcedente ? "→ se acredita como saldo a favor" : "→ se entrega como vuelto"}
+                              Excedente: ${fmtMonto(excedente)} {guardarExcedente ? "→ se acredita como saldo a favor" : "→ se entrega como vuelto"}
                             </span>
                             <label className="flex items-center gap-1.5 text-xs font-medium text-slate-600 cursor-pointer">
                               <input type="checkbox" checked={guardarExcedente} onChange={e => setGuardarExcedente(e.target.checked)}

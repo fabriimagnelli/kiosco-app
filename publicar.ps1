@@ -16,7 +16,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ProjectDir = "C:\Users\Fabri\OneDrive\Desktop\KioscoApp"
+$ProjectDir = "C:\Proyectos\KioscoApp"
 $BuildDir = "C:\temp\KioscoApp-build"
 
 Write-Host ""

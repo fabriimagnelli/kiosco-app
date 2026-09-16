@@ -1651,6 +1651,158 @@ app.post("/api/fiados", (req, res) => {
 });
 app.delete("/api/fiados/:id", (req, res) => { db.run("DELETE FROM fiados WHERE id=?", req.params.id, function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ success: true }); }); });
 
+const redondear2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+
+const calcularClientesRecargoMora = async (porcentaje) => {
+    const filas = await dbAll(`
+        SELECT c.id, c.nombre, COALESCE(SUM(f.monto), 0) AS total_deuda
+        FROM clientes c
+        JOIN fiados f ON c.id = f.cliente_id
+        GROUP BY c.id
+        HAVING total_deuda > 0
+        ORDER BY c.nombre
+    `);
+    return filas.map((f) => ({
+        id: f.id,
+        nombre: f.nombre,
+        saldo: redondear2(f.total_deuda),
+        recargo: redondear2(f.total_deuda * (porcentaje / 100)),
+    }));
+};
+
+const aplicarRecargoMora = async (porcentaje, enTransaccion = false) => {
+    const clientes = await calcularClientesRecargoMora(porcentaje);
+    if (clientes.length === 0) {
+        return { aplicados: 0, monto_total: 0, detalle: [] };
+    }
+
+    const descripcion = `Actualización / Recargo por mora (${porcentaje}%)`;
+    let monto_total = 0;
+    const aplicados = [];
+
+    if (!enTransaccion) await dbRun("BEGIN TRANSACTION");
+    try {
+        for (const c of clientes) {
+            if (c.recargo <= 0) continue;
+            monto_total += c.recargo;
+            const insert = await dbRun(
+                "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago) VALUES (?,?,?,?,?)",
+                [c.nombre, c.id, c.recargo, descripcion, "Recargo"]
+            );
+            aplicados.push({ cliente_id: c.id, nombre: c.nombre, recargo: c.recargo, fiado_id: insert.lastID });
+        }
+        if (!enTransaccion) await dbRun("COMMIT");
+    } catch (e) {
+        if (!enTransaccion) await dbRun("ROLLBACK");
+        throw e;
+    }
+
+    return { aplicados: aplicados.length, monto_total: redondear2(monto_total), detalle: aplicados };
+};
+
+app.post("/api/clientes/aplicar_mora_manual", async (req, res) => {
+    try {
+        const porcentaje = parseFloat(req.body.porcentaje);
+        if (!porcentaje || isNaN(porcentaje) || porcentaje <= 0 || porcentaje > 100) {
+            return res.status(400).json({ error: "Porcentaje inválido. Debe ser mayor a 0 y como máximo 100." });
+        }
+
+        const resultado = await aplicarRecargoMora(porcentaje);
+        res.json({ success: true, aplicados: resultado.aplicados, monto_total: resultado.monto_total, porcentaje });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ---------- Configuración del recargo por mora (manual y automático) ----------
+
+const K_CONFIG_MORA = ["mora_activa", "mora_porcentaje", "mora_dia_mes", "mora_ultimo_periodo"];
+
+const leerConfiguracionMora = async () => {
+    const filas = await dbAll(`SELECT key, value FROM configuracion WHERE key IN (${K_CONFIG_MORA.map(() => "?").join(",")})`, K_CONFIG_MORA);
+    const map = Object.fromEntries(filas.map((f) => [f.key, f.value]));
+    return {
+        mora_activa: map.mora_activa === "1" || map.mora_activa === "true",
+        mora_porcentaje: parseFloat(map.mora_porcentaje) || 0,
+        mora_dia_mes: parseInt(map.mora_dia_mes, 10) || 1,
+        mora_ultimo_periodo: map.mora_ultimo_periodo || null,
+    };
+};
+
+app.get("/api/clientes/configuracion_mora", async (req, res) => {
+    try {
+        res.json(await leerConfiguracionMora());
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post("/api/clientes/configuracion_mora", async (req, res) => {
+    try {
+        const activa = !!req.body.mora_activa;
+        const porcentaje = parseFloat(req.body.mora_porcentaje);
+        const diaMes = parseInt(req.body.mora_dia_mes, 10);
+
+        if (activa) {
+            if (!porcentaje || isNaN(porcentaje) || porcentaje <= 0 || porcentaje > 100) {
+                return res.status(400).json({ error: "Porcentaje inválido. Debe ser mayor a 0 y como máximo 100." });
+            }
+            if (!diaMes || isNaN(diaMes) || diaMes < 1 || diaMes > 31) {
+                return res.status(400).json({ error: "Día del mes inválido. Debe estar entre 1 y 31." });
+            }
+        }
+
+        await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('mora_activa', ?)", [activa ? "1" : "0"]);
+        await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('mora_porcentaje', ?)", [String(porcentaje || 0)]);
+        await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('mora_dia_mes', ?)", [String(diaMes || 1)]);
+
+        res.json({ success: true, ...(await leerConfiguracionMora()) });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ---------- Rutina de ejecución automática mensual ----------
+
+const periodoActual = () => new Date().toISOString().slice(0, 7);
+const diaActualMes = () => new Date().getDate();
+
+let moraEjecucionEnCurso = false;
+const ejecutarRecargoMoraAutomatico = async () => {
+    if (moraEjecucionEnCurso) return { ejecutado: false, motivo: "en_curso" };
+    moraEjecucionEnCurso = true;
+    try {
+        const cfg = await leerConfiguracionMora();
+        if (!cfg.mora_activa) return { ejecutado: false, motivo: "inactivo" };
+        if (!cfg.mora_porcentaje || cfg.mora_porcentaje <= 0 || cfg.mora_porcentaje > 100) return { ejecutado: false, motivo: "config_invalida" };
+
+        const periodo = periodoActual();
+        if (cfg.mora_ultimo_periodo === periodo) return { ejecutado: false, motivo: "ya_ejecutado" };
+        if (diaActualMes() < cfg.mora_dia_mes) return { ejecutado: false, motivo: "no_hoy" };
+
+        await dbRun("BEGIN TRANSACTION");
+        try {
+            const resultado = await aplicarRecargoMora(cfg.mora_porcentaje, true);
+            await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('mora_ultimo_periodo', ?)", [periodo]);
+            await dbRun("COMMIT");
+            return { ejecutado: true, aplicados: resultado.aplicados, monto_total: resultado.monto_total, periodo };
+        } catch (e) {
+            await dbRun("ROLLBACK");
+            throw e;
+        }
+    } finally {
+        moraEjecucionEnCurso = false;
+    }
+};
+
+app.post("/api/fiados/recargo_mora/automatico", async (req, res) => {
+    try {
+        res.json({ success: true, ...(await ejecutarRecargoMoraAutomatico()) });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.get("/api/proveedores", (req, res) => { db.all("SELECT * FROM proveedores ORDER BY nombre", [], (err, rows) => res.json(rows || [])); });
 app.post("/api/proveedores", (req, res) => { db.run("INSERT INTO proveedores (nombre, telefono, direccion, dia_visita, rubro) VALUES (?,?,?,?,?)", [req.body.nombre, req.body.telefono, req.body.direccion, req.body.dia_visita, req.body.rubro], (err) => err ? res.status(500).json({ error: err.message }) : res.json({ success: true })); });
 app.put("/api/proveedores/:id", (req, res) => {
@@ -1960,6 +2112,63 @@ app.delete("/api/productos/:id", async (req, res) => {
         await dbRun("DELETE FROM productos WHERE id=?", [req.params.id]);
         res.json({ deleted: 1 });
     } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// --- AJUSTE MASIVO DE PRECIOS ---
+app.post("/api/productos/ajuste_masivo", async (req, res) => {
+    try {
+        const { ids, operacion, tipo, valor, redondear } = req.body || {};
+        if (!Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ error: "No se recibieron productos para actualizar." });
+        }
+        if (operacion !== "aumento" && operacion !== "rebaja") {
+            return res.status(400).json({ error: "Operación inválida." });
+        }
+        if (tipo !== "porcentaje" && tipo !== "fijo") {
+            return res.status(400).json({ error: "Tipo de cálculo inválido." });
+        }
+        const v = parseFloat(valor);
+        if (isNaN(v) || v <= 0) {
+            return res.status(400).json({ error: "El valor debe ser un número mayor a 0." });
+        }
+        const idsUnicos = [...new Set(ids.map(n => parseInt(n, 10)).filter(n => !isNaN(n)))];
+        if (idsUnicos.length === 0) {
+            return res.status(400).json({ error: "Los IDs de productos recibidos no son válidos." });
+        }
+
+        await dbRun("BEGIN TRANSACTION");
+        let actualizados = 0;
+        try {
+            for (const id of idsUnicos) {
+                const prod = await dbGet("SELECT nombre, precio, costo FROM productos WHERE id = ?", [id]);
+                if (!prod) continue;
+
+                let nuevo = prod.precio;
+                if (tipo === "porcentaje") {
+                    const factor = operacion === "aumento" ? (1 + v / 100) : (1 - v / 100);
+                    nuevo = prod.precio * factor;
+                } else {
+                    nuevo = operacion === "aumento" ? prod.precio + v : Math.max(0, prod.precio - v);
+                }
+                nuevo = Math.max(0, nuevo);
+                nuevo = redondear ? Math.round(nuevo) : Math.round(nuevo * 100) / 100;
+
+                if (nuevo === prod.precio) continue;
+
+                await dbRun("UPDATE productos SET precio = ? WHERE id = ?", [nuevo, id]);
+                await dbRun("INSERT INTO historial_precios (producto_id, tipo_producto, precio_anterior, precio_nuevo, costo_anterior, costo_nuevo, usuario) VALUES (?,?,?,?,?,?,?)",
+                    [id, 'producto', prod.precio, nuevo, prod.costo, prod.costo, req.body.usuario || 'Ajuste masivo']);
+                actualizados++;
+            }
+            await dbRun("COMMIT");
+        } catch (e) {
+            await dbRun("ROLLBACK");
+            return res.status(500).json({ error: e.message });
+        }
+        res.json({ success: true, actualizados: ids.length });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
 // --- IMAGEN DE PRODUCTO ---
@@ -3203,7 +3412,15 @@ app.get(/.*/, (req, res) => {
 
 if (process.env.DISABLE_HTTP_SERVER !== 'true') {
     initDBPromise
-        .then(() => {
+        .then(async () => {
+            try {
+                const auto = await ejecutarRecargoMoraAutomatico();
+                if (auto.ejecutado) {
+                    console.log(`[RECARGO] Ejecución automática de recargo por mora: ${auto.aplicados} clientes, total $ ${auto.monto_total}`);
+                }
+            } catch (e) {
+                console.error("[RECARGO] Error en la ejecución automática inicial del recargo por mora:", e?.message || e);
+            }
             const server = app.listen(port, () => { console.log(`Servidor corriendo en http://localhost:${port}`); });
 
             server.on('error', (err) => {

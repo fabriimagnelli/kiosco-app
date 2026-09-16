@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Archive, Cigarette, History, Calendar, DollarSign, TrendingUp, TrendingDown, ChevronLeft, ShoppingCart, Receipt, ArrowDown, Camera, X, Search, ChevronDown, ChevronUp } from "lucide-react";
 import CierreGeneral from "./CierreGeneral";
-import CierreCigarrillos from "./CierreCigarrillos";
 import { apiFetch, getUploadUrl } from "../lib/api";
 
 function Cierre() {
@@ -68,18 +67,6 @@ function Cierre() {
           </button>
 
           <button
-            onClick={() => setTabActiva("cigarrillos")}
-            className={`flex items-center gap-2 pb-4 text-sm font-bold border-b-2 transition-all ${
-              tabActiva === "cigarrillos"
-                ? "border-orange-500 text-orange-600"
-                : "border-transparent text-slate-400 hover:text-slate-600 hover:border-slate-300"
-            }`}
-          >
-            <Cigarette size={18} />
-            CIGARRILLOS
-          </button>
-
-          <button
             onClick={() => setTabActiva("historial")}
             className={`flex items-center gap-2 pb-4 text-sm font-bold border-b-2 transition-all ${
               tabActiva === "historial"
@@ -97,8 +84,6 @@ function Cierre() {
       <div className="flex-1 overflow-hidden relative">
         {tabActiva === "general" ? (
           <CierreGeneral />
-        ) : tabActiva === "cigarrillos" ? (
-          <CierreCigarrillos />
         ) : (
           <div className="h-full overflow-y-auto p-6">
             <div className="max-w-5xl mx-auto">
