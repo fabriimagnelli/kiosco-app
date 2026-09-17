@@ -1493,9 +1493,47 @@ app.get("/api/clientes", async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.post("/api/clientes", (req, res) => {
-    db.run("INSERT INTO clientes (nombre, telefono, direccion, email, limite_credito) VALUES (?,?,?,?,?)",
-        [req.body.nombre, req.body.telefono, req.body.direccion, req.body.email, parseFloat(req.body.limite_credito) || 0],
-        function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ id: this.lastID }); });
+    const { nombre, telefono, direccion, email, limite_credito, saldo_inicial } = req.body;
+    const saldoInicial = parseFloat(saldo_inicial) || 0;
+    db.serialize(() => {
+        db.run("BEGIN TRANSACTION", (err) => {
+            if (err) return res.status(500).json({ error: "Error al iniciar transacción: " + err.message });
+            db.run("INSERT INTO clientes (nombre, telefono, direccion, email, limite_credito) VALUES (?,?,?,?,?)",
+                [nombre, telefono, direccion, email, parseFloat(limite_credito) || 0],
+                function (err) {
+                    if (err) {
+                        db.run("ROLLBACK");
+                        return res.status(500).json({ error: err.message });
+                    }
+                    const nuevoId = this.lastID;
+                    if (saldoInicial > 0) {
+                        db.run("INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago) VALUES (?,?,?,?,?)",
+                            [nombre, nuevoId, saldoInicial, "Saldo inicial (Traspaso de libreta)", "Sistema"],
+                            function (err) {
+                                if (err) {
+                                    db.run("ROLLBACK");
+                                    return res.status(500).json({ error: err.message });
+                                }
+                                db.run("COMMIT", (err) => {
+                                    if (err) {
+                                        db.run("ROLLBACK");
+                                        return res.status(500).json({ error: "Error al confirmar: " + err.message });
+                                    }
+                                    res.json({ id: nuevoId, success: true });
+                                });
+                            });
+                    } else {
+                        db.run("COMMIT", (err) => {
+                            if (err) {
+                                db.run("ROLLBACK");
+                                return res.status(500).json({ error: "Error al confirmar: " + err.message });
+                            }
+                            res.json({ id: nuevoId, success: true });
+                        });
+                    }
+                });
+        });
+    });
 });
 app.put("/api/clientes/:id", (req, res) => {
     db.run("UPDATE clientes SET nombre=?, telefono=?, direccion=?, email=?, limite_credito=? WHERE id=?",

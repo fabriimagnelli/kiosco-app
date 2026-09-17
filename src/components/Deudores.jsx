@@ -47,6 +47,7 @@ function Deudores() {
   const [direccion, setDireccion] = useState("");
   const [email, setEmail] = useState("");
   const [limiteCredito, setLimiteCredito] = useState("");
+  const [saldoInicial, setSaldoInicial] = useState("");
   const [modoEdicion, setModoEdicion] = useState(false);
   const [idEdicion, setIdEdicion] = useState(null);
 
@@ -235,14 +236,14 @@ function Deudores() {
   };
 
   const cancelarEdicion = () => {
-    setNombre(""); setTelefono(""); setDireccion(""); setEmail(""); setLimiteCredito("");
+    setNombre(""); setTelefono(""); setDireccion(""); setEmail(""); setLimiteCredito(""); setSaldoInicial("");
     setModoEdicion(false); setIdEdicion(null);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!nombre) return toast("El nombre es obligatorio", "warn");
-    const data = { nombre, telefono, direccion, email, limite_credito: parseFloat(limiteCredito) || 0 };
+    const data = { nombre, telefono, direccion, email, limite_credito: parseFloat(limiteCredito) || 0, saldo_inicial: !modoEdicion ? (parseFloat(saldoInicial) || 0) : 0 };
     try {
       const url = modoEdicion ? `/api/clientes/${idEdicion}` : "/api/clientes";
       const method = modoEdicion ? "PUT" : "POST";
@@ -668,6 +669,16 @@ function Deudores() {
                 </div>
                 <p className="text-[10px] text-slate-400 mt-1">Máximo de fiado permitido. 0 o vacío = ilimitado.</p>
               </div>
+              {!modoEdicion && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1">Saldo Inicial (Traspaso de libreta)</label>
+                  <div className="relative">
+                    <DollarSign size={14} className="absolute left-3 top-2.5 text-blue-400" />
+                    <input type="number" step="0.01" min="0" className="w-full pl-9 p-2 border border-blue-200 text-blue-700 rounded-lg focus:ring-2 focus:ring-blue-400 outline-none" placeholder="Ej: 5000" value={saldoInicial} onChange={e => setSaldoInicial(e.target.value)} />
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1">Deuda que arrastra el cliente al entrar al sistema.</p>
+                </div>
+              )}
               <div className="flex gap-2 pt-2">
                 <button type="submit" className={`flex-1 py-3 font-bold rounded-lg shadow-md transition-transform active:scale-95 flex justify-center items-center gap-2 text-white ${modoEdicion ? 'bg-blue-600 hover:bg-blue-700' : 'bg-slate-800 hover:bg-slate-900'}`}>
                   {modoEdicion ? <Save size={18} /> : <Plus size={18} />}
