@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useDeferredValue } from "react";
 import { ChevronLeft, ChevronRight, PackageSearch } from "lucide-react";
 import { useElementSize } from "../lib/useElementSize";
 import ProductoCard from "./ProductoCard";
@@ -16,6 +16,7 @@ const CONTROLS_HEIGHT = 36; // alto reservado para la barra de paginación
  * filas entran sin recortarse, mostrando el resto en páginas siguientes.
  */
 function ProductosGrid({ productos, metodo, onAgregar, busqueda }) {
+  const deferredProductos = useDeferredValue(productos);
   const [containerRef, { width, height }] = useElementSize();
   const [pagina, setPagina] = useState(0);
 
@@ -28,7 +29,7 @@ function ProductosGrid({ productos, metodo, onAgregar, busqueda }) {
     return { columnas: cols, porPagina: cols * filas };
   }, [width, height]);
 
-  const totalPaginas = Math.max(1, Math.ceil(productos.length / porPagina));
+  const totalPaginas = Math.max(1, Math.ceil(deferredProductos.length / porPagina));
 
   // Al buscar (o cambiar el tamaño de página) siempre se vuelve al inicio
   useEffect(() => {
@@ -42,8 +43,8 @@ function ProductosGrid({ productos, metodo, onAgregar, busqueda }) {
 
   const productosPagina = useMemo(() => {
     const inicio = pagina * porPagina;
-    return productos.slice(inicio, inicio + porPagina);
-  }, [productos, pagina, porPagina]);
+    return deferredProductos.slice(inicio, inicio + porPagina);
+  }, [deferredProductos, pagina, porPagina]);
 
   // PageUp/PageDown para paginar sin chocar con el buscador (que usa el input de texto)
   useEffect(() => {
@@ -64,7 +65,7 @@ function ProductosGrid({ productos, metodo, onAgregar, busqueda }) {
     <div className="flex-1 flex flex-col min-h-0">
       <div
         ref={containerRef}
-        className="flex-1 min-h-0 grid content-start gap-2.5"
+        className={`flex-1 min-h-0 grid content-start gap-2.5 transition-opacity duration-150 ${productos !== deferredProductos ? 'opacity-50' : 'opacity-100'}`}
         style={{ gridTemplateColumns: `repeat(${columnas}, minmax(0, 1fr))` }}
       >
         {productosPagina.length === 0 ? (

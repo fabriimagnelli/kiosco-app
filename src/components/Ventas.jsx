@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useDeferredValue, useMemo } from "react";
 import {
   Search, ShoppingCart, Trash2, CreditCard, User, RefreshCw, Plus, Printer,
   Percent, CheckCircle, X, QrCode, MessageCircle, Loader2, Minus, Banknote,
@@ -767,10 +767,16 @@ td, th {
     }
   };
 
-  const productosFiltrados = productos.filter(p =>
-    p.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
-    (p.codigo_barras && p.codigo_barras.includes(busqueda))
-  );
+  const deferredBusqueda = useDeferredValue(busqueda);
+
+  const productosFiltrados = useMemo(() => {
+    const valorBusqueda = deferredBusqueda.toLowerCase();
+    if (!valorBusqueda) return productos; // Optimización rápida si está vacío
+    return productos.filter(p =>
+      p.nombre.toLowerCase().includes(valorBusqueda) ||
+      (p.codigo_barras && p.codigo_barras.includes(deferredBusqueda))
+    );
+  }, [productos, deferredBusqueda]);
 
   // Buscar por código de barras (incluye secundarios) al presionar Enter
   const buscarPorCodigo = async (codigo) => {
