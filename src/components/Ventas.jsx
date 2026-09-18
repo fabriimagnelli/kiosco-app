@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useDeferredValue, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   Search, ShoppingCart, Trash2, CreditCard, User, RefreshCw, Plus, Printer,
   Percent, CheckCircle, X, QrCode, MessageCircle, Loader2, Minus, Banknote,
@@ -28,7 +28,10 @@ function Ventas() {
   const { confirmDialog } = useNotify();
 
   // Estados
-  const [busqueda, setBusqueda] = useState("");
+  // busquedaTipeada: valor directo del input (responde al instante, sin lag).
+  // busquedaFiltrada: término real de filtrado (se actualiza tras 180ms de inactividad).
+  const [busquedaTipeada, setBusquedaTipeada] = useState("");
+  const [busquedaFiltrada, setBusquedaFiltrada] = useState("");
   const [productos, setProductos] = useState([]);
   const [carrito, setCarrito] = useState([]);
   const [metodo, setMetodo] = useState("Efectivo");
@@ -60,6 +63,7 @@ function Ventas() {
   const scanBufferRef = useRef("");
   const scanLastTsRef = useRef(0);
   const toastTimerRef = useRef(null);
+  const debounceBusquedaRef = useRef(null);
 
   // Toast rápido para feedback de escaneo
   const [scanToast, setScanToast] = useState(null);
@@ -110,8 +114,29 @@ function Ventas() {
       if (mpPollingRef.current) clearInterval(mpPollingRef.current);
       if (mpTimeoutRef.current) clearTimeout(mpTimeoutRef.current);
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      if (debounceBusquedaRef.current) clearTimeout(debounceBusquedaRef.current);
     };
   }, [location.state]);
+
+  // Debounce del buscador: separa el tipeo del filtrado para no bloquear el hilo en PCs lentos
+  const manejarCambioBusqueda = (e) => {
+    const valor = e.target.value;
+    setBusquedaTipeada(valor);
+    if (debounceBusquedaRef.current) clearTimeout(debounceBusquedaRef.current);
+    debounceBusquedaRef.current = setTimeout(() => {
+      setBusquedaFiltrada(valor);
+      debounceBusquedaRef.current = null;
+    }, 180);
+  };
+
+  const limpiarBusqueda = () => {
+    if (debounceBusquedaRef.current) {
+      clearTimeout(debounceBusquedaRef.current);
+      debounceBusquedaRef.current = null;
+    }
+    setBusquedaTipeada("");
+    setBusquedaFiltrada("");
+  };
 
   const pausarTicket = () => {
     if (carrito.length === 0) return;
@@ -258,7 +283,7 @@ function Ventas() {
   };
 
   // stockDisponiblePromo = min(stock físico de cada componente / cantidad requerida por combo)
-  const agregarAlCarrito = (prod) => {
+  const agregarAlCarrito = useCallback((prod) => {
     const esPromo = prod.tipo === 'Promo';
     const componentesPromo = esPromo ? parsearComponentes(prod.componentes) : [];
 
@@ -309,7 +334,7 @@ function Ventas() {
         descuento_item_tipo: '$'
       }]);
     }
-  };
+  }, [carrito, metodo, productos]);
 
   const agregarManual = (e) => {
     e.preventDefault();
@@ -767,16 +792,14 @@ td, th {
     }
   };
 
-  const deferredBusqueda = useDeferredValue(busqueda);
-
   const productosFiltrados = useMemo(() => {
-    const valorBusqueda = deferredBusqueda.toLowerCase();
+    const valorBusqueda = busquedaFiltrada.toLowerCase();
     if (!valorBusqueda) return productos; // Optimización rápida si está vacío
     return productos.filter(p =>
       p.nombre.toLowerCase().includes(valorBusqueda) ||
-      (p.codigo_barras && p.codigo_barras.includes(deferredBusqueda))
+      (p.codigo_barras && p.codigo_barras.includes(busquedaFiltrada))
     );
-  }, [productos, deferredBusqueda]);
+  }, [productos, busquedaFiltrada]);
 
   // Buscar por código de barras (incluye secundarios) al presionar Enter
   const buscarPorCodigo = async (codigo) => {
@@ -787,7 +810,7 @@ td, th {
       if (data && data.id) {
         const tipo = data.tipo_item === 'cigarrillo' ? 'Cigarrillo' : data.tipo_item === 'promo' ? 'Promo' : 'Producto';
         agregarAlCarrito({ ...data, tipo });
-        setBusqueda("");
+        limpiarBusqueda();
         return true;
       }
     } catch(e) { /* silencioso */ }
@@ -802,14 +825,14 @@ td, th {
     const exactoLocal = productos.find(p => p.codigo_barras && String(p.codigo_barras).trim() === valor);
     if (exactoLocal) {
       agregarAlCarrito(exactoLocal);
-      setBusqueda("");
+      limpiarBusqueda();
       return true;
     }
 
     // Prioridad 2: búsqueda en SQLite (incluye códigos secundarios)
     const found = await buscarPorCodigo(valor);
     if (found) {
-      setBusqueda("");
+      limpiarBusqueda();
       return true;
     }
 
@@ -822,6 +845,15 @@ td, th {
       // porque el escáner de código de barras escribe muy rápido y React
       // puede no haber actualizado el estado aún cuando llega el Enter.
       const valorActual = (e.target.value || '').trim();
+
+      // Enter (o barcode): cancelar el debounce pendiente y filtrar al instante
+      if (debounceBusquedaRef.current) {
+        clearTimeout(debounceBusquedaRef.current);
+        debounceBusquedaRef.current = null;
+      }
+      setBusquedaTipeada(e.target.value || '');
+      setBusquedaFiltrada(valorActual);
+
       if (!valorActual) return;
       e.preventDefault();
 
@@ -835,11 +867,11 @@ td, th {
       );
       if (filtrados.length > 0) {
         agregarAlCarrito(filtrados[0]);
-        setBusqueda("");
+        limpiarBusqueda();
         return;
       }
 
-      setBusqueda("");
+      limpiarBusqueda();
       errorSound();
       mostrarToastRapido("Producto no encontrado", "err");
     }
@@ -867,7 +899,7 @@ td, th {
         return;
       }
 
-      if (e.key === " " && focusedBusqueda && !busqueda.trim()) {
+      if (e.key === " " && focusedBusqueda && !busquedaTipeada.trim()) {
         e.preventDefault();
         abrirCheckout();
         return;
@@ -895,8 +927,14 @@ td, th {
 
         if (code.length >= 2) {
           e.preventDefault();
+          // Lectura de escáner: no esperar el debounce, actuar inmediatamente
+          if (debounceBusquedaRef.current) {
+            clearTimeout(debounceBusquedaRef.current);
+            debounceBusquedaRef.current = null;
+          }
+          setBusquedaTipeada("");
+          setBusquedaFiltrada("");
           const found = await buscarYAgregarPorCodigo(code);
-          setBusqueda("");
           if (!found) {
             errorSound();
             mostrarToastRapido("Producto no encontrado", "err");
@@ -919,7 +957,7 @@ td, th {
 
     window.addEventListener("keydown", handleGlobalKeyDown);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
-  }, [busqueda, carrito.length, productos, checkoutAbierto, metodo]);
+  }, [busquedaTipeada, carrito.length, productos, checkoutAbierto, metodo]);
 
   const subtotal = carrito.reduce((acc, item) => {
     const bruto = item.precio * item.cantidad;
@@ -965,8 +1003,8 @@ td, th {
             ref={busquedaRef}
             className="w-full outline-none text-base bg-transparent"
             placeholder="Escanear código o buscar producto..."
-            value={busqueda}
-            onChange={e => setBusqueda(e.target.value)}
+            value={busquedaTipeada}
+            onChange={manejarCambioBusqueda}
             onKeyDown={handleBusquedaKeyDown}
             autoFocus
             inputMode="text"
@@ -999,7 +1037,7 @@ td, th {
           productos={productosFiltrados}
           metodo={metodo}
           onAgregar={agregarAlCarrito}
-          busqueda={busqueda}
+          busqueda={busquedaFiltrada}
         />
       </div>
 

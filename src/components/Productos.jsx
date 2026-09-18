@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from "react";
-import { Package, Plus, Trash2, Edit, Search, Barcode, DollarSign, Settings, Check, X, Upload, FileSpreadsheet, Download, Image, History, Tag, Printer, Camera, AlertTriangle, ChevronDown, ChevronUp, ChevronRight, Weight, TrendingUp, Loader2 } from "lucide-react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
+import { Package, Plus, Trash2, Edit, Search, Barcode, DollarSign, Settings, Check, X, Upload, FileSpreadsheet, Download, Image, History, Tag, Printer, Camera, AlertTriangle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Weight, TrendingUp, Loader2 } from "lucide-react";
 import { apiFetch, exportProductosCsv, getUploadUrl } from "../lib/api";
 import { useNotify } from "../context/NotificationContext";
 
@@ -17,10 +17,15 @@ const UNIDADES_MEDIDA = [
 
 const UNIDAD_ABREV = { unidad: 'u.', kg: 'kg', gramo: 'g', litro: 'l', ml: 'ml', metro: 'm', pack: 'pack', docena: 'doc', caja: 'caja' };
 
+// Fila, por página: renderizar cientos de filas completas a la vez satura la CPU
+const POR_PAGINA = 20;
+
 function Productos() {
   const { toast, confirmDialog } = useNotify();
   const [productos, setProductos] = useState([]);
-  const [busqueda, setBusqueda] = useState("");
+  const [inputBusqueda, setInputBusqueda] = useState("");
+  const [busquedaDebounced, setBusquedaDebounced] = useState("");
+  const [pagina, setPagina] = useState(0);
   const [loading, setLoading] = useState(true);
 
   // Estados Formulario
@@ -69,6 +74,7 @@ function Productos() {
   // Selección masiva (acumulativa entre búsquedas)
   const [selectedIds, setSelectedIds] = useState(new Set());
   const selectAllRef = useRef(null);
+  const debounceBusquedaRef = useRef(null);
 
   // Ajuste masivo de precios
   const [mostrarAjuste, setMostrarAjuste] = useState(false);
@@ -81,7 +87,30 @@ function Productos() {
   useEffect(() => {
     cargarProductos();
     cargarCategorias();
+    return () => {
+      if (debounceBusquedaRef.current) clearTimeout(debounceBusquedaRef.current);
+    };
   }, []);
+
+  // Debounce: el input responde al instante, el filtrado espera 200ms de inactividad
+  const manejarCambioBusqueda = (e) => {
+    const valor = e.target.value;
+    setInputBusqueda(valor);
+    if (debounceBusquedaRef.current) clearTimeout(debounceBusquedaRef.current);
+    debounceBusquedaRef.current = setTimeout(() => {
+      setBusquedaDebounced(valor);
+      debounceBusquedaRef.current = null;
+    }, 200);
+  };
+
+  const limpiarBusqueda = () => {
+    if (debounceBusquedaRef.current) {
+      clearTimeout(debounceBusquedaRef.current);
+      debounceBusquedaRef.current = null;
+    }
+    setInputBusqueda("");
+    setBusquedaDebounced("");
+  };
 
   const cargarProductos = () => {
     apiFetch("/api/productos")
@@ -242,16 +271,38 @@ function Productos() {
     } catch (e) { setHistorialPrecios([]); }
   };
 
-  // --- Filtro ---
-  const productosFiltrados = productos.filter((p) =>
-    p.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
-    (p.codigo_barras && p.codigo_barras.includes(busqueda))
-  );
+  // --- Filtro (con debounce: no recalcula en cada tecla) ---
+  const productosFiltrados = useMemo(() => {
+    const valor = busquedaDebounced.toLowerCase();
+    if (!valor) return productos;
+    return productos.filter((p) =>
+      p.nombre.toLowerCase().includes(valor) ||
+      (p.codigo_barras && p.codigo_barras.includes(valor))
+    );
+  }, [productos, busquedaDebounced]);
+
+  // --- Paginación local: nunca renderizar cientos de filas a la vez ---
+  const totalPaginas = Math.max(1, Math.ceil(productosFiltrados.length / POR_PAGINA));
+
+  useEffect(() => {
+    setPagina(0);
+  }, [busquedaDebounced]);
+
+  useEffect(() => {
+    setPagina((p) => Math.min(p, totalPaginas - 1));
+  }, [totalPaginas]);
+
+  const productosPagina = useMemo(() => {
+    const inicio = pagina * POR_PAGINA;
+    return productosFiltrados.slice(inicio, inicio + POR_PAGINA);
+  }, [productosFiltrados, pagina]);
 
   // --- Selección masiva ---
+  // selectedIds se conserva al cambiar de página o al buscar (se acumula).
   const productosSeleccionados = productos.filter((p) => selectedIds.has(p.id));
-  const todosVisiblesSeleccionados = productosFiltrados.length > 0 && productosFiltrados.every((p) => selectedIds.has(p.id));
-  const algunosVisiblesSeleccionados = productosFiltrados.some((p) => selectedIds.has(p.id));
+  // El encabezado solo considera los productos visibles de la página actual
+  const todosVisiblesSeleccionados = productosPagina.length > 0 && productosPagina.every((p) => selectedIds.has(p.id));
+  const algunosVisiblesSeleccionados = productosPagina.some((p) => selectedIds.has(p.id));
 
   useEffect(() => {
     if (selectAllRef.current) {
@@ -272,9 +323,9 @@ function Productos() {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (todosVisiblesSeleccionados) {
-        productosFiltrados.forEach((p) => next.delete(p.id));
+        productosPagina.forEach((p) => next.delete(p.id));
       } else {
-        productosFiltrados.forEach((p) => next.add(p.id));
+        productosPagina.forEach((p) => next.add(p.id));
       }
       return next;
     });
@@ -640,8 +691,8 @@ function Productos() {
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-4 sticky top-6 z-20">
             <div className="flex items-center gap-3 bg-slate-50 p-2 rounded-lg border border-slate-200">
               <Search className="text-slate-400" size={20} />
-              <input className="bg-transparent outline-none w-full text-slate-700" placeholder="Buscar por nombre o código de barras..." value={busqueda} onChange={e => setBusqueda(e.target.value)} />
-              {busqueda && <button onClick={() => setBusqueda("")} className="text-slate-400 hover:text-slate-600"><X size={16} /></button>}
+              <input className="bg-transparent outline-none w-full text-slate-700" placeholder="Buscar por nombre o código de barras..." value={inputBusqueda} onChange={manejarCambioBusqueda} />
+              {inputBusqueda && <button onClick={limpiarBusqueda} className="text-slate-400 hover:text-slate-600"><X size={16} /></button>}
             </div>
           </div>
 
@@ -666,7 +717,7 @@ function Productos() {
                   ) : productosFiltrados.length === 0 ? (
                     <tr><td colSpan={mostrarEtiquetas ? 6 : 5} className="p-8 text-center text-slate-400">No se encontraron productos.</td></tr>
                   ) : (
-                    productosFiltrados.map((prod) => (
+                    productosPagina.map((prod) => (
                       <React.Fragment key={prod.id}>
                         <tr className={`hover:bg-slate-50 transition-colors ${productosEtiqueta.find(p => p.id === prod.id) ? 'bg-orange-50' : selectedIds.has(prod.id) ? 'bg-blue-50/50' : ''}`}>
                           <td className="p-3 text-center">
@@ -777,6 +828,31 @@ function Productos() {
                 </tbody>
               </table>
             </div>
+            {totalPaginas > 1 && (
+              <div className="flex items-center justify-center gap-3 px-4 py-2 border-t border-slate-200 bg-white">
+                <button
+                  type="button"
+                  onClick={() => setPagina((p) => Math.max(0, p - 1))}
+                  disabled={pagina === 0}
+                  className="p-1.5 rounded-lg bg-slate-100 border border-slate-200 text-slate-600 disabled:opacity-30 hover:bg-slate-200 transition-colors"
+                  title="Anterior"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <span className="text-xs font-medium text-slate-500 tabular-nums">
+                  Página {pagina + 1} de {totalPaginas}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPagina((p) => Math.min(totalPaginas - 1, p + 1))}
+                  disabled={pagina >= totalPaginas - 1}
+                  className="p-1.5 rounded-lg bg-slate-100 border border-slate-200 text-slate-600 disabled:opacity-30 hover:bg-slate-200 transition-colors"
+                  title="Siguiente"
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+            )}
             <div className="bg-slate-50 px-4 py-2 border-t text-xs text-slate-500 flex justify-between">
               <span>{productosFiltrados.length} de {productos.length} productos</span>
               <span className="text-red-500 font-medium">
