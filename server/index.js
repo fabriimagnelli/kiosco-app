@@ -1493,8 +1493,9 @@ app.get("/api/clientes", async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.post("/api/clientes", (req, res) => {
-    const { nombre, telefono, direccion, email, limite_credito, saldo_inicial } = req.body;
-    const saldoInicial = parseFloat(saldo_inicial) || 0;
+    const { nombre, telefono, direccion, email, limite_credito } = req.body;
+    const monto_ajuste = req.body.monto_ajuste || 0;
+    const saldoInicial = parseFloat(monto_ajuste) || 0;
     db.serialize(() => {
         db.run("BEGIN TRANSACTION", (err) => {
             if (err) return res.status(500).json({ error: "Error al iniciar transacción: " + err.message });
@@ -1536,9 +1537,46 @@ app.post("/api/clientes", (req, res) => {
     });
 });
 app.put("/api/clientes/:id", (req, res) => {
-    db.run("UPDATE clientes SET nombre=?, telefono=?, direccion=?, email=?, limite_credito=? WHERE id=?",
-        [req.body.nombre, req.body.telefono, req.body.direccion, req.body.email, parseFloat(req.body.limite_credito) || 0, req.params.id],
-        function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ success: true }); });
+    const monto_ajuste = req.body.monto_ajuste || 0;
+    const montoAjuste = parseFloat(monto_ajuste) || 0;
+    db.serialize(() => {
+        db.run("BEGIN TRANSACTION", (err) => {
+            if (err) return res.status(500).json({ error: "Error al iniciar transacción: " + err.message });
+            db.run("UPDATE clientes SET nombre=?, telefono=?, direccion=?, email=?, limite_credito=? WHERE id=?",
+                [req.body.nombre, req.body.telefono, req.body.direccion, req.body.email, parseFloat(req.body.limite_credito) || 0, req.params.id],
+                function (err) {
+                    if (err) {
+                        db.run("ROLLBACK");
+                        return res.status(500).json({ error: err.message });
+                    }
+                    if (montoAjuste > 0) {
+                        db.run("INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago) VALUES (?,?,?,?,?)",
+                            [req.body.nombre, req.params.id, montoAjuste, "Ajuste manual / Carga de deuda", "Sistema"],
+                            function (err) {
+                                if (err) {
+                                    db.run("ROLLBACK");
+                                    return res.status(500).json({ error: err.message });
+                                }
+                                db.run("COMMIT", (err) => {
+                                    if (err) {
+                                        db.run("ROLLBACK");
+                                        return res.status(500).json({ error: "Error al confirmar: " + err.message });
+                                    }
+                                    res.json({ success: true });
+                                });
+                            });
+                    } else {
+                        db.run("COMMIT", (err) => {
+                            if (err) {
+                                db.run("ROLLBACK");
+                                return res.status(500).json({ error: "Error al confirmar: " + err.message });
+                            }
+                            res.json({ success: true });
+                        });
+                    }
+                });
+        });
+    });
 });
 app.delete("/api/clientes/:id", async (req, res) => {
     try {
