@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { User, Lock, ArrowRight } from "lucide-react";
 import { Navigate } from "react-router-dom";
+import logoDark from "../assets/brand/logo-negro.png";
 
 // --- PANTALLA DE LOGIN ---
 function Login() {
@@ -42,7 +43,7 @@ function Login() {
         
         <div className="text-center mb-8">
             <div className="flex justify-center mb-4">
-                <img src="./logo.png" alt="SACWare Logo" className="h-20 w-auto object-contain drop-shadow-md" />
+                <img src={logoDark} alt="SACWare Logo" className="h-20 w-auto object-contain drop-shadow-sm" />
             </div>
 
             <p className="text-slate-400 text-sm mt-1.5 font-medium tracking-wide">Bienvenido a tu Sistema de Gestión</p>

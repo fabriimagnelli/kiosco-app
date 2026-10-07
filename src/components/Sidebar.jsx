@@ -9,6 +9,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, LockOpen, Monitor, Building2, Calculator,
   Search, Moon, Sun, Volume2, VolumeX, Menu, X
 } from "lucide-react";
+import logoWhite from "../assets/brand/logo-blanco.png";
 
 function Sidebar({ isOpen, toggleSidebar, onOpenSearch, mobileOpen, setMobileOpen }) {
   const { logout, usuario, rol } = useAuth();
@@ -80,7 +81,7 @@ function Sidebar({ isOpen, toggleSidebar, onOpenSearch, mobileOpen, setMobileOpe
       </button>
 
       <div className={`p-4 flex items-center ${isOpen ? "justify-start gap-3" : "justify-center"} border-b border-white/[0.06] h-20 transition-all`}>
-        <img src="/logo.png" alt="Logo" className="w-9 h-9 object-contain" />
+        <img src={logoWhite} alt="SACWare Logo" className="w-9 h-9 object-contain drop-shadow" />
         <div className={`overflow-hidden transition-all duration-300 ${isOpen ? "opacity-100 w-auto" : "opacity-0 w-0 hidden"}`}>
             <h1 className="text-white font-semibold text-base tracking-tight leading-none whitespace-nowrap">
               SAC<span className="text-[#007aff] font-bold">Ware</span>

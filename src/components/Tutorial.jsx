@@ -3,12 +3,13 @@ import {
   ShoppingCart, Package, BarChart3, Users, FileText, Settings, Archive, 
   DollarSign, ArrowRight, X, Keyboard, ChevronRight
 } from "lucide-react";
+import logoWhite from "../assets/brand/logo-blanco.png";
 
 const pasos = [
   {
     titulo: "¡Bienvenido a SACWare!",
     descripcion: "Tu sistema de gestión comercial todo-en-uno. Te guiamos por las funciones principales en solo unos pasos.",
-    icono: <img src="/logo.png" alt="SACWare" className="w-20 h-20 object-contain drop-shadow-lg" />,
+    icono: <img src={logoWhite} alt="SACWare" className="w-20 h-20 object-contain drop-shadow-lg" />,
     color: "from-blue-600 to-indigo-700"
   },
   {

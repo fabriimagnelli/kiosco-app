@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { User, Plus, Search, Trash2, Edit2, Phone, MapPin, Save, X, Eye, Calendar, Star, Gift, AlertTriangle, TrendingUp, Clock, Bell, DollarSign, CreditCard, Award, ChevronDown, ChevronUp, History, Shield, Percent, Loader2, CheckCircle } from "lucide-react";
 import { apiFetch } from "../lib/api";
 import { useNotify } from "../context/NotificationContext";
@@ -50,6 +50,7 @@ function Deudores() {
   const [saldoInicial, setSaldoInicial] = useState("");
   const [modoEdicion, setModoEdicion] = useState(false);
   const [idEdicion, setIdEdicion] = useState(null);
+  const [modalFormAbierto, setModalFormAbierto] = useState(false);
 
   // Modal detalle
   const [verHistorial, setVerHistorial] = useState(false);
@@ -58,12 +59,30 @@ function Deudores() {
   const [historialPuntos, setHistorialPuntos] = useState([]);
   const [tabActiva, setTabActiva] = useState("fiados");
 
-  // Pago
+  // Operación: Pago / Deuda
   const [montoPago, setMontoPago] = useState("");
   const [metodoPago, setMetodoPago] = useState("Efectivo");
   const [descripcionPago, setDescripcionPago] = useState("");
   const [procesandoPago, setProcesandoPago] = useState(false);
   const [guardarExcedente, setGuardarExcedente] = useState(false); // si el excedente se acredita como saldo a favor
+  const [menuOpcionesAbierto, setMenuOpcionesAbierto] = useState(false);
+  const menuOpcionesRef = useRef(null);
+  const montoInputRef = useRef(null);
+
+  // Cerrar menú de opciones al hacer clic fuera
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (menuOpcionesRef.current && !menuOpcionesRef.current.contains(event.target)) {
+        setMenuOpcionesAbierto(false);
+      }
+    };
+    if (menuOpcionesAbierto) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [menuOpcionesAbierto]);
 
   // Puntos
   const [puntosConfig, setPuntosConfig] = useState({ puntos_por_peso: 1, puntos_valor_canje: 100, puntos_activos: false });
@@ -225,6 +244,11 @@ function Deudores() {
     }
   }
 
+  const abrirNuevoCliente = () => {
+    cancelarEdicion();
+    setModalFormAbierto(true);
+  };
+
   const prepararEdicion = (c) => {
     setNombre(c.nombre);
     setTelefono(c.telefono || "");
@@ -234,11 +258,13 @@ function Deudores() {
     setSaldoInicial("");
     setIdEdicion(c.id);
     setModoEdicion(true);
+    setModalFormAbierto(true);
   };
 
   const cancelarEdicion = () => {
     setNombre(""); setTelefono(""); setDireccion(""); setEmail(""); setLimiteCredito(""); setSaldoInicial("");
     setModoEdicion(false); setIdEdicion(null);
+    setModalFormAbierto(false);
   };
 
   const handleSubmit = async (e) => {
@@ -285,6 +311,7 @@ function Deudores() {
   const cerrarDetalles = () => {
     setVerHistorial(false); setClienteSel(null); setHistorialFiados([]); setHistorialPuntos([]);
     setMontoPago(""); setMetodoPago("Efectivo"); setDescripcionPago(""); setGuardarExcedente(false);
+    setMenuOpcionesAbierto(false);
     setPuntosACanjear(""); setAjustePuntos(""); setAjusteDesc("");
   };
 
@@ -304,12 +331,12 @@ function Deudores() {
   };
 
   const registrarPago = async (e) => {
-    e.preventDefault();
+    if (e && e.preventDefault) e.preventDefault();
     const montoPagoNum = parseFloat(montoPago) || 0;
     if (!montoPago || montoPagoNum <= 0) return toast("Ingresa un monto válido mayor a 0", "warn");
 
     // Si el cliente entrega de más y no se guarda como saldo a favor, solo se cancela la deuda (el resto es vuelto en mano)
-    const hayExcedente = montoPagoNum > deudaActualSel;
+    const hayExcedente = deudaActualSel > 0 && montoPagoNum > deudaActualSel;
     const montoARegistrar = (hayExcedente && !guardarExcedente) ? deudaActualSel : montoPagoNum;
 
     setProcesandoPago(true);
@@ -317,18 +344,79 @@ function Deudores() {
       const res = await apiFetch("/api/fiados", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cliente_id: clienteSel.id, monto: -montoARegistrar, descripcion: descripcionPago || "Pago de deuda", metodo_pago: metodoPago })
+        body: JSON.stringify({
+          cliente_id: clienteSel.id,
+          monto: -montoARegistrar,
+          descripcion: descripcionPago.trim() || "Pago de deuda",
+          metodo_pago: metodoPago || "Efectivo"
+        })
       });
       const data = await res.json();
       if (data.id || data.success) {
-        toast("Pago registrado", "ok");
+        toast("Pago registrado con éxito", "ok");
         const nuevosFiados = await apiFetch(`/api/fiados/${clienteSel.id}`).then(r => r.json());
         setHistorialFiados(nuevosFiados);
         cargarClientes();
-        setMontoPago(""); setDescripcionPago(""); setGuardarExcedente(false);
+        setMontoPago(""); setDescripcionPago(""); setGuardarExcedente(false); setMenuOpcionesAbierto(false);
+      } else {
+        toast(data.error || "Error al registrar el pago", "err");
       }
     } catch (err) { console.error(err); toast("Error al registrar pago", "err"); }
     finally { setProcesandoPago(false); }
+  };
+
+  const registrarDeuda = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const montoDeudaNum = parseFloat(montoPago) || 0;
+    if (!montoPago || montoDeudaNum <= 0) return toast("Ingresa un monto válido mayor a 0", "warn");
+
+    // Validar límite de crédito si está configurado
+    if (clienteSel?.limite_credito > 0 && (deudaActualSel + montoDeudaNum) > clienteSel.limite_credito) {
+      const confirmar = await confirmDialog(
+        `El nuevo saldo ($ ${fmtMonto(deudaActualSel + montoDeudaNum)}) superará el límite de crédito del cliente ($ ${fmtNro(clienteSel.limite_credito)}).\n\n¿Deseas registrar la deuda de todos modos?`
+      );
+      if (!confirmar) return;
+    }
+
+    setProcesandoPago(true);
+    try {
+      const res = await apiFetch("/api/fiados", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cliente_id: clienteSel.id,
+          monto: montoDeudaNum,
+          descripcion: descripcionPago.trim() || "Carga de deuda / Fiado",
+          metodo_pago: metodoPago || "Cuenta Corriente"
+        })
+      });
+      const data = await res.json();
+      if (data.id || data.success) {
+        toast("Deuda registrada con éxito", "ok");
+        const nuevosFiados = await apiFetch(`/api/fiados/${clienteSel.id}`).then(r => r.json());
+        setHistorialFiados(nuevosFiados);
+        cargarClientes();
+        setMontoPago(""); setDescripcionPago(""); setGuardarExcedente(false); setMenuOpcionesAbierto(false);
+      } else {
+        toast(data.error || "Error al registrar la deuda", "err");
+      }
+    } catch (err) { console.error(err); toast("Error al registrar deuda", "err"); }
+    finally { setProcesandoPago(false); }
+  };
+
+  const handleSeleccionOperacion = (tipo) => {
+    setMenuOpcionesAbierto(false);
+    const montoNum = parseFloat(montoPago);
+    if (!montoPago || isNaN(montoNum) || montoNum <= 0) {
+      toast(`Ingresa un monto válido mayor a 0 para ${tipo === "pago" ? "el pago" : "la deuda"}`, "warn");
+      if (montoInputRef.current) montoInputRef.current.focus();
+      return;
+    }
+    if (tipo === "pago") {
+      registrarPago();
+    } else {
+      registrarDeuda();
+    }
   };
 
   // --- Puntos ---
@@ -411,6 +499,13 @@ function Deudores() {
           <p className="text-slate-500 mt-1">Gestiona clientes, créditos, puntos y deudas.</p>
         </div>
         <div className="flex gap-2 flex-wrap">
+          {/* Nuevo Cliente */}
+          <button
+            onClick={abrirNuevoCliente}
+            className="px-4 py-2.5 rounded-lg font-bold flex items-center gap-2 shadow-md transition-all text-sm bg-blue-600 hover:bg-blue-700 text-white active:scale-95"
+          >
+            <Plus size={16} /> Nuevo Cliente
+          </button>
           {/* Alerta deudas */}
           <button
             onClick={() => { cargarAlertasDeuda(diasAlerta); setMostrarAlertas(!mostrarAlertas); }}
@@ -631,163 +726,241 @@ function Deudores() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-        {/* ========= FORMULARIO ========= */}
-        <div className="lg:col-span-1">
-          <div className={`p-6 rounded-xl shadow-sm border sticky top-6 max-h-[calc(100vh-5rem)] overflow-y-auto transition-all ${modoEdicion ? 'bg-blue-50 border-blue-200' : 'bg-white border-slate-200'}`}>
-            <h3 className={`font-bold mb-4 flex items-center gap-2 ${modoEdicion ? 'text-blue-700' : 'text-slate-700'}`}>
-              {modoEdicion ? <Edit2 size={20} /> : <Plus size={20} className="text-blue-500" />}
-              {modoEdicion ? 'Editando Cliente' : 'Nuevo Cliente'}
-            </h3>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Nombre Completo *</label>
-                <div className="relative">
-                  <User size={14} className="absolute left-3 top-2.5 text-slate-400" />
-                  <input autoFocus={modoEdicion} className="w-full pl-9 p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Nombre del cliente" value={nombre} onChange={e => setNombre(e.target.value)} />
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Teléfono</label>
-                <div className="relative">
-                  <Phone size={14} className="absolute left-3 top-2.5 text-slate-400" />
-                  <input className="w-full pl-9 p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" placeholder="381..." value={telefono} onChange={e => setTelefono(e.target.value)} />
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Dirección</label>
-                <div className="relative">
-                  <MapPin size={14} className="absolute left-3 top-2.5 text-slate-400" />
-                  <input className="w-full pl-9 p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Domicilio" value={direccion} onChange={e => setDireccion(e.target.value)} />
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Límite de Crédito</label>
-                <div className="relative">
-                  <Shield size={14} className="absolute left-3 top-2.5 text-orange-400" />
-                  <input type="number" step="0.01" min="0" className="w-full pl-9 p-2 border rounded-lg focus:ring-2 focus:ring-orange-400 outline-none" placeholder="0 = sin límite" value={limiteCredito} onChange={e => setLimiteCredito(e.target.value)} />
-                </div>
-                <p className="text-[10px] text-slate-400 mt-1">Máximo de fiado permitido. 0 o vacío = ilimitado.</p>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Cargar Deuda / Traspaso</label>
-                <div className="relative">
-                  <DollarSign size={14} className="absolute left-3 top-2.5 text-blue-400" />
-                  <input type="number" step="0.01" min="0" className="w-full pl-9 p-2 border border-blue-200 text-blue-700 rounded-lg focus:ring-2 focus:ring-blue-400 outline-none" placeholder="Monto a sumar a la deuda..." value={saldoInicial} onChange={e => setSaldoInicial(e.target.value)} />
-                </div>
-                <p className="text-[10px] text-slate-400 mt-1">Monto que se suma a la deuda (al crear o editar el cliente).</p>
-              </div>
-              <div className="flex gap-2 pt-2">
-                <button type="submit" className={`flex-1 py-3 font-bold rounded-lg shadow-md transition-transform active:scale-95 flex justify-center items-center gap-2 text-white ${modoEdicion ? 'bg-blue-600 hover:bg-blue-700' : 'bg-slate-800 hover:bg-slate-900'}`}>
-                  {modoEdicion ? <Save size={18} /> : <Plus size={18} />}
-                  {modoEdicion ? 'GUARDAR CAMBIOS' : 'AGREGAR CLIENTE'}
-                </button>
-                {modoEdicion && (
-                  <button type="button" onClick={cancelarEdicion} className="px-4 py-3 bg-red-100 text-red-600 hover:bg-red-200 rounded-lg font-bold"><X size={20} /></button>
-                )}
-              </div>
-            </form>
+      {/* ========= LISTADO DE CLIENTES A PANTALLA COMPLETA ========= */}
+      <div className="space-y-4">
+        
+        {/* BUSCADOR + ORDENAR + BOTÓN NUEVO CLIENTE */}
+        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          <div className="flex-1 flex items-center gap-2 bg-slate-50 rounded-lg border border-slate-200 px-3 py-2">
+            <Search className="text-slate-400" size={18} />
+            <input className="bg-transparent outline-none w-full text-sm" placeholder="Buscar por nombre o teléfono..." value={busqueda} onChange={e => setBusqueda(e.target.value)} />
+            {busqueda && <button onClick={() => setBusqueda("")} className="text-slate-400 hover:text-slate-600"><X size={14} /></button>}
           </div>
+          <select value={ordenarPor} onChange={e => setOrdenarPor(e.target.value)}
+            className="text-xs border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-600 font-medium focus:ring-2 focus:ring-blue-400 outline-none">
+            <option value="nombre">Ordenar: Nombre</option>
+            <option value="deuda">Ordenar: Mayor Deuda</option>
+            <option value="puntos">Ordenar: Más Puntos</option>
+            <option value="gastado">Ordenar: Más Gastado</option>
+          </select>
+          <button
+            onClick={abrirNuevoCliente}
+            className="px-4 py-2 rounded-lg font-bold flex items-center justify-center gap-2 shadow-sm transition-all text-xs bg-blue-600 hover:bg-blue-700 text-white active:scale-95 whitespace-nowrap"
+          >
+            <Plus size={15} /> Nuevo Cliente
+          </button>
         </div>
 
-        {/* ========= LISTADO ========= */}
-        <div className="lg:col-span-2 space-y-4">
-          
-          {/* BUSCADOR + ORDENAR */}
-          <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-            <div className="flex-1 flex items-center gap-2 bg-slate-50 rounded-lg border border-slate-200 px-3 py-2">
-              <Search className="text-slate-400" size={18} />
-              <input className="bg-transparent outline-none w-full text-sm" placeholder="Buscar por nombre o teléfono..." value={busqueda} onChange={e => setBusqueda(e.target.value)} />
-              {busqueda && <button onClick={() => setBusqueda("")} className="text-slate-400 hover:text-slate-600"><X size={14} /></button>}
-            </div>
-            <select value={ordenarPor} onChange={e => setOrdenarPor(e.target.value)}
-              className="text-xs border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-600 font-medium focus:ring-2 focus:ring-blue-400 outline-none">
-              <option value="nombre">Ordenar: Nombre</option>
-              <option value="deuda">Ordenar: Mayor Deuda</option>
-              <option value="puntos">Ordenar: Más Puntos</option>
-              <option value="gastado">Ordenar: Más Gastado</option>
-            </select>
-          </div>
-
-          {/* TABLA */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="overflow-x-auto overflow-y-auto max-h-[50vh] md:max-h-[600px]">
-              <table className="w-full text-left border-collapse min-w-[600px]">
-                <thead className="bg-slate-50 text-slate-600 font-semibold text-xs uppercase tracking-wider sticky top-0 z-10">
-                  <tr>
-                    <th className="p-4 border-b border-slate-200 bg-slate-50">Cliente</th>
-                    <th className="p-4 border-b border-slate-200 bg-slate-50 text-center">Compras</th>
-                    <th className="p-4 border-b border-slate-200 bg-slate-50 text-right">Deuda</th>
-                    {puntosConfig.puntos_activos && <th className="p-4 border-b border-slate-200 bg-slate-50 text-center">Puntos</th>}
-                    <th className="p-4 border-b border-slate-200 bg-slate-50 text-center">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-sm">
-                  {loading ? (
-                    <tr><td colSpan={puntosConfig.puntos_activos ? 5 : 4} className="p-8 text-center text-slate-400">Cargando...</td></tr>
-                  ) : clientesFiltrados.length === 0 ? (
-                    <tr><td colSpan={puntosConfig.puntos_activos ? 5 : 4} className="p-8 text-center text-slate-400">No se encontraron clientes.</td></tr>
-                  ) : clientesFiltrados.map(c => (
-                    <tr key={c.id} className={`hover:bg-slate-50 transition-colors ${c.limite_credito > 0 && c.total_deuda > c.limite_credito ? 'bg-red-50' : ''}`}>
-                      <td className="p-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-sm flex-shrink-0">
-                            {c.nombre.charAt(0).toUpperCase()}
+        {/* TABLA */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="overflow-x-auto overflow-y-auto max-h-[60vh] custom-scrollbar">
+            <table className="w-full text-left border-collapse min-w-[600px]">
+              <thead className="bg-slate-50 text-slate-600 font-semibold text-xs uppercase tracking-wider sticky top-0 z-10">
+                <tr>
+                  <th className="p-4 border-b border-slate-200 bg-slate-50">Cliente</th>
+                  <th className="p-4 border-b border-slate-200 bg-slate-50 text-center">Compras</th>
+                  <th className="p-4 border-b border-slate-200 bg-slate-50 text-right">Deuda</th>
+                  {puntosConfig.puntos_activos && <th className="p-4 border-b border-slate-200 bg-slate-50 text-center">Puntos</th>}
+                  <th className="p-4 border-b border-slate-200 bg-slate-50 text-center">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-sm">
+                {loading ? (
+                  <tr><td colSpan={puntosConfig.puntos_activos ? 5 : 4} className="p-8 text-center text-slate-400">Cargando...</td></tr>
+                ) : clientesFiltrados.length === 0 ? (
+                  <tr><td colSpan={puntosConfig.puntos_activos ? 5 : 4} className="p-8 text-center text-slate-400">No se encontraron clientes.</td></tr>
+                ) : clientesFiltrados.map(c => (
+                  <tr key={c.id} className={`hover:bg-slate-50 transition-colors ${c.limite_credito > 0 && c.total_deuda > c.limite_credito ? 'bg-red-50' : ''}`}>
+                    <td className="p-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-sm flex-shrink-0">
+                          {c.nombre.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-bold text-slate-700 truncate">{c.nombre}</div>
+                          <div className="text-xs text-slate-400 flex gap-2">
+                            {c.telefono && <span><Phone size={10} className="inline" /> {c.telefono}</span>}
+                            {c.direccion && <span><MapPin size={10} className="inline" /> {c.direccion}</span>}
                           </div>
-                          <div className="min-w-0">
-                            <div className="font-bold text-slate-700 truncate">{c.nombre}</div>
-                            <div className="text-xs text-slate-400 flex gap-2">
-                              {c.telefono && <span><Phone size={10} className="inline" /> {c.telefono}</span>}
-                              {c.direccion && <span><MapPin size={10} className="inline" /> {c.direccion}</span>}
+                          {c.limite_credito > 0 && (
+                            <div className="text-[10px] text-orange-500 font-medium mt-0.5">
+                              <Shield size={10} className="inline" /> Límite: ${fmtNro(c.limite_credito)}
+                              {c.total_deuda > c.limite_credito && <span className="text-red-600 font-bold ml-1">EXCEDIDO</span>}
                             </div>
-                            {c.limite_credito > 0 && (
-                              <div className="text-[10px] text-orange-500 font-medium mt-0.5">
-                                <Shield size={10} className="inline" /> Límite: ${fmtNro(c.limite_credito)}
-                                {c.total_deuda > c.limite_credito && <span className="text-red-600 font-bold ml-1">EXCEDIDO</span>}
-                              </div>
-                            )}
-                          </div>
+                          )}
                         </div>
-                      </td>
-                      <td className="p-4 text-center">
-                        <div className="text-slate-700 font-bold">{fmtNro(c.total_compras)}</div>
-                        <div className="text-[10px] text-green-500">${fmtNro(c.total_gastado)}</div>
-                      </td>
-                      <td className="p-4 text-right">
-                        <span className={`font-bold px-2 py-1 rounded text-sm ${formatearSaldo(c.total_deuda).claseBadge}`}>
-                          {formatearSaldo(c.total_deuda).texto}
-                        </span>
-                        {c.total_deuda < 0 && (
-                          <div className="text-[9px] text-green-500 font-medium mt-0.5">A favor</div>
-                        )}
-                      </td>
-                      {puntosConfig.puntos_activos && (
-                        <td className="p-4 text-center">
-                          <span className="font-bold text-amber-600 flex items-center justify-center gap-1">
-                            <Star size={12} className="fill-amber-400 text-amber-400" /> {fmtNro(c.puntos)}
-                          </span>
-                        </td>
+                      </div>
+                    </td>
+                    <td className="p-4 text-center">
+                      <div className="text-slate-700 font-bold">{fmtNro(c.total_compras)}</div>
+                      <div className="text-[10px] text-green-500">${fmtNro(c.total_gastado)}</div>
+                    </td>
+                    <td className="p-4 text-right">
+                      <span className={`font-bold px-2 py-1 rounded text-sm ${formatearSaldo(c.total_deuda).claseBadge}`}>
+                        {formatearSaldo(c.total_deuda).texto}
+                      </span>
+                      {c.total_deuda < 0 && (
+                        <div className="text-[9px] text-green-500 font-medium mt-0.5">A favor</div>
                       )}
+                    </td>
+                    {puntosConfig.puntos_activos && (
                       <td className="p-4 text-center">
-                        <div className="flex justify-center gap-1">
-                          <button onClick={() => verDetalles(c)} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-full transition-colors" title="Ver Detalle"><Eye size={16} /></button>
-                          <button onClick={() => prepararEdicion(c)} className="p-1.5 text-purple-500 hover:bg-purple-50 rounded-full transition-colors" title="Editar"><Edit2 size={16} /></button>
-                          <button onClick={() => eliminarCliente(c.id)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors" title="Eliminar"><Trash2 size={16} /></button>
-                        </div>
+                        <span className="font-bold text-amber-600 flex items-center justify-center gap-1">
+                          <Star size={12} className="fill-amber-400 text-amber-400" /> {fmtNro(c.puntos)}
+                        </span>
                       </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="bg-slate-50 px-4 py-2 border-t text-xs text-slate-500 flex justify-between">
-              <span>{fmtNro(clientesFiltrados.length)} de {fmtNro(clientes.length)} clientes</span>
-              <span className="text-red-500 font-medium">{fmtNro(clientes.filter(c => c.total_deuda > 0).length)} con deuda</span>
-            </div>
+                    )}
+                    <td className="p-4 text-center">
+                      <div className="flex justify-center gap-1">
+                        <button onClick={() => verDetalles(c)} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-full transition-colors" title="Ver Detalle"><Eye size={16} /></button>
+                        <button onClick={() => prepararEdicion(c)} className="p-1.5 text-purple-500 hover:bg-purple-50 rounded-full transition-colors" title="Editar"><Edit2 size={16} /></button>
+                        <button onClick={() => eliminarCliente(c.id)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors" title="Eliminar"><Trash2 size={16} /></button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="bg-slate-50 px-4 py-2 border-t text-xs text-slate-500 flex justify-between">
+            <span>{fmtNro(clientesFiltrados.length)} de {fmtNro(clientes.length)} clientes</span>
+            <span className="text-red-500 font-medium">{fmtNro(clientes.filter(c => c.total_deuda > 0).length)} con deuda</span>
           </div>
         </div>
       </div>
+
+      {/* ==================== MODAL FORMULARIO CLIENTE ==================== */}
+      {modalFormAbierto && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={(e) => { if (e.target === e.currentTarget) cancelarEdicion(); }}
+        >
+          <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200 border border-slate-100">
+            
+            {/* CABECERA DEL MODAL */}
+            <div className="p-5 border-b border-slate-100 flex justify-between items-start bg-slate-50 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className={`p-2.5 rounded-xl ${modoEdicion ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-700'}`}>
+                  {modoEdicion ? <Edit2 size={22} /> : <User size={22} />}
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-slate-800">
+                    {modoEdicion ? "Editar Cliente" : "Nuevo Cliente"}
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {modoEdicion ? "Modifica los datos del cliente registrado" : "Registra un cliente para fiados y fidelización"}
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={cancelarEdicion}
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-lg transition-colors"
+                title="Cerrar ventana"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* FORMULARIO */}
+            <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto custom-scrollbar flex-1">
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1.5">Nombre Completo *</label>
+                <div className="relative">
+                  <User size={16} className="absolute left-3 top-3 text-slate-400" />
+                  <input
+                    autoFocus
+                    className="w-full pl-9 p-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm text-slate-800 font-medium"
+                    placeholder="Nombre y apellido del cliente"
+                    value={nombre}
+                    onChange={e => setNombre(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1.5">Teléfono / Celular</label>
+                <div className="relative">
+                  <Phone size={16} className="absolute left-3 top-3 text-slate-400" />
+                  <input
+                    className="w-full pl-9 p-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm text-slate-800"
+                    placeholder="Ej: 3814123456"
+                    value={telefono}
+                    onChange={e => setTelefono(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1.5">Dirección</label>
+                <div className="relative">
+                  <MapPin size={16} className="absolute left-3 top-3 text-slate-400" />
+                  <input
+                    className="w-full pl-9 p-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm text-slate-800"
+                    placeholder="Domicilio del cliente (opcional)"
+                    value={direccion}
+                    onChange={e => setDireccion(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1.5">Límite de Crédito ($)</label>
+                <div className="relative">
+                  <Shield size={16} className="absolute left-3 top-3 text-orange-400" />
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    className="w-full pl-9 p-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-orange-400 outline-none text-sm text-slate-800 font-semibold"
+                    placeholder="0 = sin límite de crédito"
+                    value={limiteCredito}
+                    onChange={e => setLimiteCredito(e.target.value)}
+                  />
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">Monto máximo permitido para compras a cuenta corriente. 0 o vacío = sin límite.</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1.5">Cargar Deuda / Traspaso Inicial ($)</label>
+                <div className="relative">
+                  <DollarSign size={16} className="absolute left-3 top-3 text-blue-500" />
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    className="w-full pl-9 p-2.5 border border-blue-200 bg-blue-50/40 text-blue-800 rounded-xl focus:ring-2 focus:ring-blue-400 outline-none text-sm font-bold"
+                    placeholder="0.00"
+                    value={saldoInicial}
+                    onChange={e => setSaldoInicial(e.target.value)}
+                  />
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">Monto a sumar directamente a la deuda del cliente.</p>
+              </div>
+
+              {/* PIE DE ACCIONES */}
+              <div className="flex gap-2 pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={cancelarEdicion}
+                  className="px-4 py-2.5 text-slate-600 hover:bg-slate-100 font-bold rounded-xl text-sm transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className={`flex-1 py-2.5 text-white font-bold rounded-xl shadow-md transition-transform active:scale-95 flex justify-center items-center gap-2 text-sm ${
+                    modoEdicion ? 'bg-blue-600 hover:bg-blue-700' : 'bg-slate-800 hover:bg-slate-900'
+                  }`}
+                >
+                  {modoEdicion ? <Save size={16} /> : <Plus size={16} />}
+                  {modoEdicion ? 'Guardar Cambios' : 'Agregar Cliente'}
+                </button>
+              </div>
+            </form>
+
+          </div>
+        </div>
+      )}
 
       {/* ==================== MODAL DETALLE CLIENTE ==================== */}
       {verHistorial && clienteSel && (
@@ -973,86 +1146,207 @@ function Deudores() {
               )}
             </div>
 
-            {/* PIE: FORMULARIO DE PAGO */}
+            {/* PIE: FORMULARIO DE REGISTRO (PAGO O DEUDA) */}
             <div className="p-5 border-t border-slate-100 bg-gradient-to-r from-slate-50 to-blue-50 rounded-b-2xl space-y-3">
-              {deudaActualSel > 0 && (
-                <form onSubmit={registrarPago} className="space-y-3">
-                  <div className="grid grid-cols-3 gap-3">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-600 mb-1">Monto a Pagar</label>
-                      <div className="relative flex gap-1.5">
-                        <div className="relative flex-1">
-                          <DollarSign size={14} className="absolute left-2.5 top-2.5 text-slate-400" />
-                          <input type="number" step="0.01" min="0" placeholder="0.00" value={montoPago} onChange={e => setMontoPago(e.target.value)}
-                            className="w-full pl-8 p-2 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none text-sm" disabled={procesandoPago} />
-                        </div>
-                        <button type="button" onClick={() => setMontoPago(String(deudaActualSel.toFixed(2)))} disabled={procesandoPago}
-                          className="px-2.5 py-2 bg-slate-200 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-300 transition-colors disabled:opacity-50 whitespace-nowrap">
+              <form onSubmit={(e) => { e.preventDefault(); setMenuOpcionesAbierto(true); }} className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-1">Monto a Registrar</label>
+                    <div className="relative flex gap-1.5">
+                      <div className="relative flex-1">
+                        <DollarSign size={14} className="absolute left-2.5 top-2.5 text-slate-400" />
+                        <input
+                          ref={montoInputRef}
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="0.00"
+                          value={montoPago}
+                          onChange={e => setMontoPago(e.target.value)}
+                          className="w-full pl-8 p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-white font-medium"
+                          disabled={procesandoPago}
+                        />
+                      </div>
+                      {deudaActualSel > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setMontoPago(String(deudaActualSel.toFixed(2)))}
+                          disabled={procesandoPago}
+                          className="px-2.5 py-2 bg-slate-200 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-300 transition-colors disabled:opacity-50 whitespace-nowrap"
+                          title="Copiar monto de deuda actual"
+                        >
                           Pagar Total
                         </button>
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-600 mb-1">Método</label>
-                      <select value={metodoPago} onChange={e => setMetodoPago(e.target.value)}
-                        className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none text-sm" disabled={procesandoPago}>
-                        <option value="Efectivo">Efectivo</option>
-                        <option value="MercadoPago">Mercado Pago</option>
-                        <option value="Transferencia">Transferencia</option>
-                        <option value="Tarjeta">Tarjeta</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-600 mb-1">Descripción</label>
-                      <input type="text" placeholder="Pago parcial..." value={descripcionPago} onChange={e => setDescripcionPago(e.target.value)}
-                        className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none text-sm" disabled={procesandoPago} />
+                      )}
                     </div>
                   </div>
-                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                    <div className="text-sm">
-                      {montoPago && parseFloat(montoPago) > 0 && (() => {
-                        const montoPagoNum = parseFloat(montoPago);
-                        const excedente = montoPagoNum - deudaActualSel;
-                        if (montoPagoNum < deudaActualSel) {
-                          return (
-                            <span className="font-bold text-red-600">
-                              Pago: ${fmtMonto(montoPagoNum)} | Resta pagar: ${fmtMonto(deudaActualSel - montoPagoNum)}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-1">Método</label>
+                    <select
+                      value={metodoPago}
+                      onChange={e => setMetodoPago(e.target.value)}
+                      className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-white"
+                      disabled={procesandoPago}
+                    >
+                      <option value="Efectivo">Efectivo</option>
+                      <option value="MercadoPago">Mercado Pago</option>
+                      <option value="Transferencia">Transferencia</option>
+                      <option value="Tarjeta">Tarjeta</option>
+                      <option value="Cuenta Corriente">Cuenta Corriente</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-1">Descripción / Concepto</label>
+                    <input
+                      type="text"
+                      placeholder="Ej: Pago parcial, fiado..."
+                      value={descripcionPago}
+                      onChange={e => setDescripcionPago(e.target.value)}
+                      className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-white"
+                      disabled={procesandoPago}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pt-1">
+                  <div className="text-sm flex-1">
+                    {montoPago && parseFloat(montoPago) > 0 ? (() => {
+                      const montoPagoNum = parseFloat(montoPago);
+                      const excedente = montoPagoNum - deudaActualSel;
+                      const nuevaDeudaSiSuma = deudaActualSel + montoPagoNum;
+                      return (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 font-medium">
+                            <DollarSign size={13} className="text-emerald-600" />
+                            <span>
+                              <strong>Si abona: </strong>
+                              {deudaActualSel <= 0
+                                ? `a favor $${fmtMonto(montoPagoNum)}`
+                                : montoPagoNum < deudaActualSel
+                                ? `resta $${fmtMonto(deudaActualSel - montoPagoNum)}`
+                                : montoPagoNum === deudaActualSel
+                                ? "deuda saldada"
+                                : `excedente $${fmtMonto(excedente)} ${guardarExcedente ? "(a favor)" : "(vuelto)"}`}
                             </span>
-                          );
-                        }
-                        if (montoPagoNum === deudaActualSel) {
-                          return (
-                            <span className="font-bold text-green-600">
-                              Deuda saldada por completo (${fmtMonto(0)})
-                            </span>
-                          );
-                        }
-                        return (
-                          <div className="space-y-1">
-                            <span className="font-bold text-blue-600 block">
-                              Excedente: ${fmtMonto(excedente)} {guardarExcedente ? "→ se acredita como saldo a favor" : "→ se entrega como vuelto"}
-                            </span>
-                            <label className="flex items-center gap-1.5 text-xs font-medium text-slate-600 cursor-pointer">
-                              <input type="checkbox" checked={guardarExcedente} onChange={e => setGuardarExcedente(e.target.checked)}
-                                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
-                              Guardar excedente como saldo a favor del cliente
-                            </label>
                           </div>
-                        );
-                      })()}
+                          <div className="bg-red-50 text-red-800 border border-red-200 px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 font-medium">
+                            <AlertTriangle size={13} className="text-red-600" />
+                            <span>
+                              <strong>Si fía: </strong>
+                              nueva deuda ${fmtMonto(nuevaDeudaSiSuma)}
+                              {clienteSel.limite_credito > 0 && nuevaDeudaSiSuma > clienteSel.limite_credito && (
+                                <span className="text-red-600 font-bold ml-1">(! Supera límite)</span>
+                              )}
+                            </span>
+                          </div>
+                          {excedente > 0 && deudaActualSel > 0 && (
+                            <label className="flex items-center gap-1.5 text-xs font-medium text-slate-600 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={guardarExcedente}
+                                onChange={e => setGuardarExcedente(e.target.checked)}
+                                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                              />
+                              Guardar excedente como saldo a favor
+                            </label>
+                          )}
+                        </div>
+                      );
+                    })() : (
+                      <span className="text-xs text-slate-400">
+                        Ingresá un monto y hacé clic en "Registrar Operación" para elegir si es Pago o Deuda.
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                    {/* BOTÓN CON MENÚ DESPLEGABLE: REGISTRAR PAGO O REGISTRAR DEUDA */}
+                    <div className="relative" ref={menuOpcionesRef}>
+                      <button
+                        type="button"
+                        onClick={() => setMenuOpcionesAbierto(prev => !prev)}
+                        disabled={procesandoPago}
+                        className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-md hover:shadow-lg transition-all active:scale-95 disabled:opacity-50 flex items-center gap-2 text-sm cursor-pointer"
+                      >
+                        {procesandoPago ? (
+                          <>
+                            <Loader2 size={16} className="animate-spin" />
+                            <span>Guardando...</span>
+                          </>
+                        ) : (
+                          <>
+                            <CreditCard size={16} />
+                            <span>Registrar Operación</span>
+                            <ChevronUp size={16} className={`transition-transform duration-200 ${menuOpcionesAbierto ? "rotate-180" : ""}`} />
+                          </>
+                        )}
+                      </button>
+
+                      {menuOpcionesAbierto && (
+                        <div className="absolute bottom-full right-0 mb-2 w-72 bg-white rounded-2xl shadow-2xl border border-slate-200 p-2 z-50 animate-in fade-in zoom-in-95 duration-150">
+                          <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                            ¿Qué deseas registrar?
+                          </div>
+
+                          {/* Opción 1: Registrar Pago */}
+                          <button
+                            type="button"
+                            onClick={() => handleSeleccionOperacion("pago")}
+                            className="w-full flex items-center gap-3 p-3 rounded-xl text-left hover:bg-emerald-50 active:bg-emerald-100 transition-all group cursor-pointer border border-transparent hover:border-emerald-200"
+                          >
+                            <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center flex-shrink-0 group-hover:bg-emerald-600 group-hover:text-white transition-all shadow-sm">
+                              <DollarSign size={20} />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm font-bold text-slate-800 group-hover:text-emerald-700 flex items-center justify-between">
+                                <span>Registrar Pago</span>
+                                <span className="text-[10px] bg-emerald-100 text-emerald-700 font-bold px-1.5 py-0.5 rounded uppercase">Abono</span>
+                              </div>
+                              <p className="text-[11px] text-slate-500 mt-0.5">
+                                {montoPago && parseFloat(montoPago) > 0 
+                                  ? `Abonar $ ${fmtMonto(parseFloat(montoPago))} al saldo`
+                                  : "Abona o salda la deuda del cliente"}
+                              </p>
+                            </div>
+                          </button>
+
+                          <div className="border-t border-slate-100 my-1"></div>
+
+                          {/* Opción 2: Registrar Deuda */}
+                          <button
+                            type="button"
+                            onClick={() => handleSeleccionOperacion("deuda")}
+                            className="w-full flex items-center gap-3 p-3 rounded-xl text-left hover:bg-red-50 active:bg-red-100 transition-all group cursor-pointer border border-transparent hover:border-red-200"
+                          >
+                            <div className="w-10 h-10 rounded-xl bg-red-100 text-red-600 flex items-center justify-center flex-shrink-0 group-hover:bg-red-600 group-hover:text-white transition-all shadow-sm">
+                              <AlertTriangle size={20} />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm font-bold text-slate-800 group-hover:text-red-700 flex items-center justify-between">
+                                <span>Registrar Deuda</span>
+                                <span className="text-[10px] bg-red-100 text-red-700 font-bold px-1.5 py-0.5 rounded uppercase">Cargo</span>
+                              </div>
+                              <p className="text-[11px] text-slate-500 mt-0.5">
+                                {montoPago && parseFloat(montoPago) > 0 
+                                  ? `Cargar +$ ${fmtMonto(parseFloat(montoPago))} a la cuenta`
+                                  : "Carga nuevo fiado a la cuenta corriente"}
+                              </p>
+                            </div>
+                          </button>
+                        </div>
+                      )}
                     </div>
-                    <button type="submit" disabled={procesandoPago || !montoPago}
-                      className="px-5 py-2 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center gap-2 text-sm shrink-0">
-                      <DollarSign size={16} /> Registrar Pago
+
+                    <button
+                      type="button"
+                      onClick={cerrarDetalles}
+                      className="px-5 py-2.5 bg-slate-800 text-white font-bold rounded-xl hover:bg-slate-900 transition-colors text-sm"
+                    >
+                      Cerrar
                     </button>
                   </div>
-                </form>
-              )}
-              <div className="flex justify-end">
-                <button onClick={cerrarDetalles} className="px-6 py-2 bg-slate-800 text-white font-bold rounded-lg hover:bg-slate-900 transition-colors text-sm">
-                  Cerrar
-                </button>
-              </div>
+                </div>
+              </form>
             </div>
           </div>
         </div>

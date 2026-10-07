@@ -76,6 +76,7 @@ function TabProveedores() {
   const [rubro, setRubro] = useState("");
   const [modoEdicion, setModoEdicion] = useState(false);
   const [idEdicion, setIdEdicion] = useState(null);
+  const [modalFormAbierto, setModalFormAbierto] = useState(false);
   const [verHistorial, setVerHistorial] = useState(false);
   const [provSeleccionado, setProvSeleccionado] = useState(null);
   const [historialSeleccionado, setHistorialSeleccionado] = useState([]);
@@ -97,14 +98,31 @@ function TabProveedores() {
       });
   };
 
+  const abrirNuevoProveedor = () => {
+    cancelarEdicion();
+    setModalFormAbierto(true);
+  };
+
   const prepararEdicion = (prov) => {
-    setNombre(prov.nombre); setTelefono(prov.telefono || ""); setDireccion(prov.direccion || "");
-    setDiaVisita(prov.dia_visita || ""); setRubro(prov.rubro || ""); setIdEdicion(prov.id); setModoEdicion(true);
+    setNombre(prov.nombre);
+    setTelefono(prov.telefono || "");
+    setDireccion(prov.direccion || "");
+    setDiaVisita(prov.dia_visita || "");
+    setRubro(prov.rubro || "");
+    setIdEdicion(prov.id);
+    setModoEdicion(true);
+    setModalFormAbierto(true);
   };
 
   const cancelarEdicion = () => {
-    setNombre(""); setTelefono(""); setDireccion(""); setDiaVisita(""); setRubro("");
-    setModoEdicion(false); setIdEdicion(null);
+    setNombre("");
+    setTelefono("");
+    setDireccion("");
+    setDiaVisita("");
+    setRubro("");
+    setModoEdicion(false);
+    setIdEdicion(null);
+    setModalFormAbierto(false);
   };
 
   const verDetalles = (prov) => {
@@ -159,14 +177,18 @@ function TabProveedores() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!nombre) return toast("El nombre es obligatorio", "warn");
-    const provData = { nombre, telefono, direccion, dia_visita: diaVisita, rubro };
+    if (!nombre || !nombre.trim()) return toast("El nombre es obligatorio", "warn");
+    const provData = { nombre: nombre.trim(), telefono, direccion, dia_visita: diaVisita, rubro };
     try {
       const url = modoEdicion ? `/api/proveedores/${idEdicion}` : "/api/proveedores";
       const res = await apiFetch(url, { method: modoEdicion ? "PUT" : "POST", body: JSON.stringify(provData) });
       const data = await res.json();
-      if (data.success) { cargarProveedores(); cancelarEdicion(); }
-      else toast("Error: " + (data.error || ""), "err");
+      if (data.success) {
+        cargarProveedores();
+        cancelarEdicion();
+        toast(modoEdicion ? "Proveedor actualizado correctamente" : "Proveedor agregado correctamente", "ok");
+      }
+      else toast("Error: " + (data.error || "No se pudo guardar"), "err");
     } catch (error) { toast("Error: " + error.message, "err"); }
   };
 
@@ -184,135 +206,236 @@ function TabProveedores() {
   );
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* FORMULARIO */}
-        <div className="lg:col-span-1">
-          <div className={`p-6 rounded-xl shadow-sm border sticky top-0 transition-all ${modoEdicion ? "bg-indigo-50 border-indigo-200" : "bg-white border-slate-200"}`}>
-            <h3 className={`font-bold mb-4 flex items-center gap-2 ${modoEdicion ? "text-indigo-700" : "text-slate-700"}`}>
-              {modoEdicion ? <Edit2 size={20} /> : <Plus size={20} className="text-indigo-500" />}
-              {modoEdicion ? "Editando Proveedor" : "Nuevo Proveedor"}
-            </h3>
-            <form onSubmit={handleSubmit} className="space-y-4">
+    <div className="space-y-4 animate-in fade-in duration-500">
+      
+      {/* BARRA SUPERIOR: BÚSQUEDA Y BOTÓN NUEVO PROVEEDOR */}
+      <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+        <div className="flex-1 flex items-center gap-3">
+          <Search className="text-slate-400" size={20} />
+          <input
+            type="text"
+            placeholder="Buscar proveedor o rubro..."
+            className="flex-1 outline-none text-slate-600 text-sm"
+            value={busqueda}
+            onChange={(e) => setBusqueda(e.target.value)}
+          />
+          <span className="text-xs text-slate-400 whitespace-nowrap">{proveedoresFiltrados.length} proveedor{proveedoresFiltrados.length === 1 ? "" : "es"}</span>
+        </div>
+
+        <button
+          onClick={abrirNuevoProveedor}
+          className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2.5 rounded-xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 text-sm whitespace-nowrap"
+        >
+          <Plus size={18} />
+          <span>Nuevo Proveedor</span>
+        </button>
+      </div>
+
+      {/* TABLA LISTADO A PANTALLA COMPLETA */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="overflow-x-auto overflow-y-auto max-h-[62vh] custom-scrollbar">
+          <table className="w-full text-left border-collapse min-w-[650px]">
+            <thead className="bg-slate-50 text-slate-600 font-semibold text-xs uppercase tracking-wider sticky top-0 z-10">
+              <tr>
+                <th className="p-4 border-b border-slate-200 bg-slate-50">Proveedor</th>
+                <th className="p-4 border-b border-slate-200 bg-slate-50">Rubro / Visita</th>
+                <th className="p-4 border-b border-slate-200 bg-slate-50">Contacto</th>
+                <th className="p-4 border-b border-slate-200 bg-slate-50 text-right">Saldo</th>
+                <th className="p-4 border-b border-slate-200 bg-slate-50 text-center">Acciones</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-sm">
+              {proveedoresFiltrados.length > 0 ? (
+                proveedoresFiltrados.map((p) => (
+                  <tr key={p.id} className="hover:bg-slate-50/80 transition-colors">
+                    <td className="p-4">
+                      <p className="font-bold text-slate-800 text-base">{p.nombre}</p>
+                      {p.direccion && <p className="text-slate-500 text-xs flex items-center gap-1 mt-0.5"><MapPin size={11} className="text-slate-400" /> {p.direccion}</p>}
+                    </td>
+                    <td className="p-4">
+                      {p.rubro && <span className="inline-block text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md mb-1">{p.rubro}</span>}
+                      {p.dia_visita ? (
+                        <span className="flex items-center gap-1 bg-green-50 text-green-700 px-2 py-0.5 rounded text-xs border border-green-100 w-fit">
+                          <Calendar size={11} /> {p.dia_visita}
+                        </span>
+                      ) : <span className="text-slate-400 text-xs italic block">Sin día fijo</span>}
+                    </td>
+                    <td className="p-4 text-slate-600">
+                      {p.telefono ? (
+                        <div className="flex items-center gap-1 text-xs font-medium">
+                          <Phone size={13} className="text-slate-400" /> {p.telefono}
+                        </div>
+                      ) : <span className="text-slate-300 italic text-xs">-</span>}
+                    </td>
+                    <td className="p-4 text-right">
+                      {p.saldo != null ? (
+                        <span className={`font-bold ${p.saldo > 0 ? "text-red-600" : p.saldo < 0 ? "text-emerald-600" : "text-slate-400"}`}>
+                          {p.saldo > 0 ? `Debo ${fmtMoney(p.saldo)}` : p.saldo < 0 ? `A favor ${fmtMoney(Math.abs(p.saldo))}` : "-"}
+                        </span>
+                      ) : <span className="text-slate-400">-</span>}
+                    </td>
+                    <td className="p-4 text-center whitespace-nowrap">
+                      <div className="flex justify-center gap-1">
+                        <button onClick={() => verDetalles(p)} className="p-2 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors" title="Ver Historial y Pagos"><Eye size={18} /></button>
+                        <button onClick={() => prepararEdicion(p)} className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors" title="Editar Proveedor"><Edit2 size={18} /></button>
+                        <button onClick={() => eliminarProveedor(p.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Eliminar"><Trash2 size={18} /></button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan="5" className="p-12 text-center text-slate-400">
+                    <Truck size={36} className="mx-auto mb-2 opacity-30 text-slate-400" />
+                    <p className="font-medium text-slate-500">No se encontraron proveedores.</p>
+                    <button
+                      onClick={abrirNuevoProveedor}
+                      className="mt-3 text-indigo-600 hover:text-indigo-700 text-xs font-bold inline-flex items-center gap-1"
+                    >
+                      <Plus size={14} /> Registrar un nuevo proveedor
+                    </button>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="bg-slate-50 px-4 py-2.5 border-t border-slate-200 text-xs text-slate-500 flex justify-between">
+          <span>{proveedoresFiltrados.length} de {proveedores.length} proveedores</span>
+          <span className="font-medium text-slate-700">Total con saldo pendiente: {proveedores.filter(p => p.saldo > 0).length}</span>
+        </div>
+      </div>
+
+      {/* ==================== MODAL FORMULARIO PROVEEDOR ==================== */}
+      {modalFormAbierto && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={(e) => { if (e.target === e.currentTarget) cancelarEdicion(); }}
+        >
+          <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200 border border-slate-100">
+            
+            {/* CABECERA DEL MODAL */}
+            <div className="p-5 border-b border-slate-100 flex justify-between items-start bg-slate-50 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className={`p-2.5 rounded-xl ${modoEdicion ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-700'}`}>
+                  {modoEdicion ? <Edit2 size={22} /> : <Truck size={22} />}
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-slate-800">
+                    {modoEdicion ? "Editar Proveedor" : "Nuevo Proveedor"}
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {modoEdicion ? "Modifica los datos del proveedor seleccionado" : "Registra un nuevo proveedor en el sistema"}
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={cancelarEdicion}
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-lg transition-colors"
+                title="Cerrar ventana"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* FORMULARIO */}
+            <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto custom-scrollbar flex-1">
               <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Empresa / Nombre *</label>
+                <label className="block text-xs font-bold text-slate-600 mb-1.5">Empresa / Nombre *</label>
                 <div className="relative">
                   <Truck size={16} className="absolute left-3 top-3 text-slate-400" />
-                  <input type="text" placeholder="Nombre del proveedor" className="w-full pl-9 p-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                    value={nombre} onChange={(e) => setNombre(e.target.value)} />
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="Nombre del proveedor o distribuidora"
+                    className="w-full pl-9 p-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-sm text-slate-800 font-medium"
+                    value={nombre}
+                    onChange={(e) => setNombre(e.target.value)}
+                  />
                 </div>
               </div>
+
               <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Rubro</label>
+                <label className="block text-xs font-bold text-slate-600 mb-1.5">Rubro</label>
                 <div className="relative">
                   <Tag size={16} className="absolute left-3 top-3 text-slate-400" />
-                  <input type="text" placeholder="Ej: Bebidas, Golosinas..." className="w-full pl-9 p-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                    value={rubro} onChange={(e) => setRubro(e.target.value)} />
+                  <input
+                    type="text"
+                    placeholder="Ej: Bebidas, Golosinas, Lácteos..."
+                    className="w-full pl-9 p-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-sm text-slate-800"
+                    value={rubro}
+                    onChange={(e) => setRubro(e.target.value)}
+                  />
                 </div>
               </div>
+
               <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Día de Visita</label>
+                <label className="block text-xs font-bold text-slate-600 mb-1.5">Día de Visita habitual</label>
                 <div className="relative">
-                  <Calendar size={16} className="absolute left-3 top-3 text-slate-400" />
-                  <select className="w-full pl-9 p-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
-                    value={diaVisita} onChange={(e) => setDiaVisita(e.target.value)}>
-                    <option value="">Sin día fijo</option>
+                  <Calendar size={16} className="absolute left-3 top-3.5 text-slate-400" />
+                  <select
+                    className="w-full pl-9 p-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-sm text-slate-700 font-medium"
+                    value={diaVisita}
+                    onChange={(e) => setDiaVisita(e.target.value)}
+                  >
+                    <option value="">Sin día fijo asignado</option>
                     {DIAS_SEMANA.map(d => <option key={d} value={d}>{d}</option>)}
                   </select>
                 </div>
               </div>
+
               <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Teléfono</label>
+                <label className="block text-xs font-bold text-slate-600 mb-1.5">Teléfono / WhatsApp</label>
                 <div className="relative">
                   <Phone size={16} className="absolute left-3 top-3 text-slate-400" />
-                  <input type="text" placeholder="Teléfono de contacto" className="w-full pl-9 p-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                    value={telefono} onChange={(e) => setTelefono(e.target.value)} />
+                  <input
+                    type="text"
+                    placeholder="Teléfono de contacto o preventista"
+                    className="w-full pl-9 p-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-sm text-slate-800"
+                    value={telefono}
+                    onChange={(e) => setTelefono(e.target.value)}
+                  />
                 </div>
               </div>
+
               <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Dirección</label>
+                <label className="block text-xs font-bold text-slate-600 mb-1.5">Dirección o Depósito</label>
                 <div className="relative">
                   <MapPin size={16} className="absolute left-3 top-3 text-slate-400" />
-                  <input type="text" placeholder="Dirección (opcional)" className="w-full pl-9 p-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                    value={direccion} onChange={(e) => setDireccion(e.target.value)} />
+                  <input
+                    type="text"
+                    placeholder="Dirección comercial (opcional)"
+                    className="w-full pl-9 p-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-sm text-slate-800"
+                    value={direccion}
+                    onChange={(e) => setDireccion(e.target.value)}
+                  />
                 </div>
               </div>
-              <div className="flex gap-2">
-                <button type="submit" className={`flex-1 py-3 font-bold rounded-lg shadow-md transition-transform active:scale-95 flex justify-center items-center gap-2 text-white ${modoEdicion ? "bg-indigo-600 hover:bg-indigo-700" : "bg-slate-800 hover:bg-slate-900"}`}>
-                  {modoEdicion ? <Save size={18} /> : <Plus size={18} />}
-                  {modoEdicion ? "GUARDAR CAMBIOS" : "AGREGAR PROVEEDOR"}
+
+              {/* PIE DE ACCIONES */}
+              <div className="flex gap-2 pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={cancelarEdicion}
+                  className="px-4 py-2.5 text-slate-600 hover:bg-slate-100 font-bold rounded-xl text-sm transition-colors"
+                >
+                  Cancelar
                 </button>
-                {modoEdicion && (
-                  <button type="button" onClick={cancelarEdicion} className="px-4 py-3 bg-red-100 text-red-600 hover:bg-red-200 rounded-lg font-bold">
-                    <X size={20} />
-                  </button>
-                )}
+                <button
+                  type="submit"
+                  className={`flex-1 py-2.5 text-white font-bold rounded-xl shadow-md transition-transform active:scale-95 flex justify-center items-center gap-2 text-sm ${
+                    modoEdicion ? "bg-indigo-600 hover:bg-indigo-700" : "bg-slate-800 hover:bg-slate-900"
+                  }`}
+                >
+                  {modoEdicion ? <Save size={16} /> : <Plus size={16} />}
+                  {modoEdicion ? "Guardar Cambios" : "Agregar Proveedor"}
+                </button>
               </div>
             </form>
+
           </div>
         </div>
-
-        {/* LISTADO */}
-        <div className="lg:col-span-2 space-y-4">
-          <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
-            <Search className="text-slate-400" size={20} />
-            <input type="text" placeholder="Buscar proveedor o rubro..." className="flex-1 outline-none text-slate-600"
-              value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
-            <span className="text-xs text-slate-400">{proveedoresFiltrados.length} proveedores</span>
-          </div>
-
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="overflow-x-auto overflow-y-auto max-h-[50vh] md:max-h-[600px]">
-              <table className="w-full text-left border-collapse min-w-[650px]">
-                <thead className="bg-slate-50 text-slate-600 font-semibold text-xs uppercase tracking-wider sticky top-0 z-10">
-                  <tr>
-                    <th className="p-4 border-b border-slate-200 bg-slate-50">Proveedor</th>
-                    <th className="p-4 border-b border-slate-200 bg-slate-50">Rubro / Visita</th>
-                    <th className="p-4 border-b border-slate-200 bg-slate-50">Contacto</th>
-                    <th className="p-4 border-b border-slate-200 bg-slate-50 text-right">Saldo</th>
-                    <th className="p-4 border-b border-slate-200 bg-slate-50 text-center">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-sm">
-                  {proveedoresFiltrados.map((p) => (
-                    <tr key={p.id} className="hover:bg-slate-50 transition-colors">
-                      <td className="p-4">
-                        <p className="font-bold text-slate-700 text-base">{p.nombre}</p>
-                        {p.direccion && <p className="text-slate-500 text-xs flex items-center gap-1"><MapPin size={10} /> {p.direccion}</p>}
-                      </td>
-                      <td className="p-4">
-                        {p.rubro && <span className="block text-xs font-bold text-indigo-600 mb-1">{p.rubro}</span>}
-                        {p.dia_visita ? (
-                          <span className="inline-flex items-center gap-1 bg-green-50 text-green-700 px-2 py-0.5 rounded text-xs border border-green-100">
-                            <Calendar size={10} /> {p.dia_visita}
-                          </span>
-                        ) : <span className="text-slate-400 text-xs italic">Sin día</span>}
-                      </td>
-                      <td className="p-4 text-slate-500">
-                        {p.telefono ? <div className="flex items-center gap-1"><Phone size={12} /> {p.telefono}</div> : <span className="text-slate-300 italic">-</span>}
-                      </td>
-                      <td className="p-4 text-right">
-                        {p.saldo != null ? (
-                          <span className={`font-bold ${p.saldo > 0 ? "text-red-600" : p.saldo < 0 ? "text-emerald-600" : "text-slate-400"}`}>
-                            {p.saldo > 0 ? `Debo ${fmtMoney(p.saldo)}` : p.saldo < 0 ? `A favor ${fmtMoney(Math.abs(p.saldo))}` : "-"}
-                          </span>
-                        ) : <span className="text-slate-400">-</span>}
-                      </td>
-                      <td className="p-4 text-center">
-                        <div className="flex justify-center gap-1">
-                          <button onClick={() => verDetalles(p)} className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg" title="Ver Historial"><Eye size={18} /></button>
-                          <button onClick={() => prepararEdicion(p)} className="p-2 text-indigo-500 hover:bg-indigo-50 rounded-lg" title="Editar"><Edit2 size={18} /></button>
-                          <button onClick={() => eliminarProveedor(p.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg" title="Eliminar"><Trash2 size={18} /></button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      </div>
+      )}
 
       {/* MODAL HISTORIAL */}
       {verHistorial && provSeleccionado && (

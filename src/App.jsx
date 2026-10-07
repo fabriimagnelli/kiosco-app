@@ -10,6 +10,8 @@ import Login from "./components/Login";
 import BusquedaGlobal from "./components/BusquedaGlobal";
 import Tutorial from "./components/Tutorial";
 import { Download, X, RefreshCw, Menu, Cloud, CloudOff } from "lucide-react";
+import logoWhite from "./assets/brand/logo-blanco.png";
+import logoDark from "./assets/brand/logo-negro.png";
 
 import Inicio from "./components/Inicio";
 import Ventas from "./components/Ventas";
@@ -34,7 +36,7 @@ const SplashScreen = () => (
   <div className="fixed inset-0 bg-slate-900 flex flex-col items-center justify-center z-50">
     <div className="relative animate-bounce-slow">
        <div className="absolute inset-0 bg-blue-500 rounded-full blur-3xl opacity-20 animate-pulse"></div>
-       <img src="/logo.png" alt="SACWare Loading" className="w-48 md:w-64 relative z-10 drop-shadow-2xl"/>
+       <img src={logoWhite} alt="SACWare Loading" className="w-48 md:w-64 relative z-10 drop-shadow-2xl"/>
     </div>
     <div className="mt-8 flex flex-col items-center gap-2">
        <div className="w-12 h-12 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin"></div>
@@ -344,7 +346,7 @@ const Layout = ({ children }) => {
             <Menu size={22} />
           </button>
           <div className="flex items-center gap-2">
-            <img src="/logo.png" alt="Logo" className="w-7 h-7 object-contain" />
+            <img src={logoDark} alt="Logo" className="w-7 h-7 object-contain" />
             <span className="font-bold text-sm text-slate-800">SAC<span className="text-blue-500">Ware</span></span>
           </div>
         </div>

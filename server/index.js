@@ -2822,6 +2822,19 @@ app.delete("/api/gastos/:id", async (req, res) => {
     }
 });
 
+app.put("/api/gastos/:id", async (req, res) => {
+    try {
+        const { descripcion, monto, categoria, metodo_pago } = req.body;
+        await dbRun(
+            "UPDATE gastos SET descripcion = ?, monto = ?, categoria = ?, metodo_pago = ? WHERE id = ?",
+            [descripcion, parseFloat(monto) || 0, categoria || 'General', metodo_pago || 'Efectivo', req.params.id]
+        );
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // --- GESTIÓN DE USUARIOS ---
 app.get("/api/usuarios", async (req, res) => {
     try {

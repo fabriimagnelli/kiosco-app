@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import {
   Search, ShoppingCart, Trash2, CreditCard, User, RefreshCw, Plus, Printer,
   Percent, CheckCircle, X, QrCode, MessageCircle, Loader2, Minus, Banknote,
-  Send, Users, ChevronDown,
+  Send, Users, ChevronDown, Phone,
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiFetch } from "../lib/api";
@@ -45,6 +45,100 @@ function Ventas() {
   // Clientes y Fiados
   const [clientes, setClientes] = useState([]);
   const [clienteSelec, setClienteSelec] = useState("");
+  const [busquedaClienteTipeada, setBusquedaClienteTipeada] = useState("");
+  const [busquedaClienteFiltrada, setBusquedaClienteFiltrada] = useState("");
+  const [buscandoCliente, setBuscandoCliente] = useState(false);
+  const [dropdownClienteAbierto, setDropdownClienteAbierto] = useState(false);
+  const clienteComboboxRef = useRef(null);
+  const inputClienteRef = useRef(null);
+  const debounceClienteRef = useRef(null);
+
+  // Cliente actualmente seleccionado
+  const clienteActual = useMemo(() => {
+    return clientes.find(c => String(c.id) === String(clienteSelec)) || null;
+  }, [clientes, clienteSelec]);
+
+  // Sincronizar texto del input con el cliente seleccionado
+  useEffect(() => {
+    if (debounceClienteRef.current) clearTimeout(debounceClienteRef.current);
+    const nombre = clienteActual ? clienteActual.nombre : "";
+    setBusquedaClienteTipeada(nombre);
+    setBusquedaClienteFiltrada(nombre);
+    setBuscandoCliente(false);
+  }, [clienteActual]);
+
+  // Cerrar el dropdown al hacer clic fuera del componente
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (clienteComboboxRef.current && !clienteComboboxRef.current.contains(event.target)) {
+        if (debounceClienteRef.current) clearTimeout(debounceClienteRef.current);
+        setDropdownClienteAbierto(false);
+        setBuscandoCliente(false);
+        const nombre = clienteActual ? clienteActual.nombre : "";
+        setBusquedaClienteTipeada(nombre);
+        setBusquedaClienteFiltrada(nombre);
+      }
+    };
+    if (dropdownClienteAbierto) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [dropdownClienteAbierto, clienteActual]);
+
+  // Manejar cambio en el input con debounce para escribir fluidamente sin lag
+  const manejarCambioBusquedaCliente = (e) => {
+    const val = e.target.value;
+    setBusquedaClienteTipeada(val);
+    if (!dropdownClienteAbierto) setDropdownClienteAbierto(true);
+
+    if (debounceClienteRef.current) {
+      clearTimeout(debounceClienteRef.current);
+    }
+
+    if (!val.trim()) {
+      setBusquedaClienteFiltrada("");
+      setBuscandoCliente(false);
+      return;
+    }
+
+    setBuscandoCliente(true);
+    debounceClienteRef.current = setTimeout(() => {
+      setBusquedaClienteFiltrada(val);
+      setBuscandoCliente(false);
+    }, 280);
+  };
+
+  const seleccionarCliente = (id, nombre) => {
+    if (debounceClienteRef.current) clearTimeout(debounceClienteRef.current);
+    setClienteSelec(id);
+    setBusquedaClienteTipeada(nombre);
+    setBusquedaClienteFiltrada(nombre);
+    setBuscandoCliente(false);
+    setDropdownClienteAbierto(false);
+  };
+
+  const limpiarCliente = () => {
+    if (debounceClienteRef.current) clearTimeout(debounceClienteRef.current);
+    setClienteSelec("");
+    setBusquedaClienteTipeada("");
+    setBusquedaClienteFiltrada("");
+    setBuscandoCliente(false);
+    inputClienteRef.current?.focus();
+  };
+
+  // Lista de clientes filtrados por término de búsqueda (nombre o teléfono) optimizada a 50 resultados
+  const clientesFiltrados = useMemo(() => {
+    const q = busquedaClienteFiltrada.trim().toLowerCase();
+    if (!q || (clienteActual && q === clienteActual.nombre.toLowerCase())) {
+      return clientes.slice(0, 50);
+    }
+    return clientes.filter(c =>
+      c.nombre?.toLowerCase().includes(q) ||
+      (c.telefono && String(c.telefono).toLowerCase().includes(q))
+    ).slice(0, 50);
+  }, [clientes, busquedaClienteFiltrada, clienteActual]);
 
   // Estado para Edición
   const [ticketEditando, setTicketEditando] = useState(null);
@@ -261,6 +355,7 @@ function Ventas() {
 
   const cerrarCheckout = () => {
     if (guardandoCobro) return;
+    setDropdownClienteAbierto(false);
     setCheckoutAbierto(false);
     setTimeout(() => busquedaRef.current?.focus(), 60);
   };
@@ -1184,19 +1279,184 @@ td, th {
 
             {/* CUERPO */}
             <div className="flex-1 overflow-y-auto custom-scrollbar px-6 py-4 space-y-4">
-              {/* Selector de Cliente */}
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1">
-                  <User size={12}/> Cliente
-                </label>
-                <select
-                  className={`w-full p-2.5 border rounded-xl text-sm bg-white font-medium outline-none focus:ring-2 focus:ring-blue-100 ${metodo === 'Fiado' && !clienteSelec ? 'border-red-400 ring-2 ring-red-100' : 'border-slate-200'}`}
-                  value={clienteSelec}
-                  onChange={e => setClienteSelec(e.target.value)}
-                >
-                  <option value="">-- Consumidor Final --</option>
-                  {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                </select>
+              {/* Selector de Cliente con Búsqueda Integrada */}
+              <div className="space-y-1.5 relative" ref={clienteComboboxRef}>
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1">
+                    <User size={12}/> Cliente
+                  </label>
+                  {clienteActual && (
+                    <span className="text-[10px] text-slate-400">
+                      {clienteActual.telefono ? `Tel: ${clienteActual.telefono}` : "Cliente registrado"}
+                    </span>
+                  )}
+                </div>
+
+                {/* Input Buscador / Selector */}
+                <div className="relative">
+                  <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                    {buscandoCliente ? (
+                      <Loader2 size={15} className="animate-spin text-blue-500" />
+                    ) : dropdownClienteAbierto ? (
+                      <Search size={15} className="text-blue-500" />
+                    ) : (
+                      <User size={15} />
+                    )}
+                  </div>
+                  <input
+                    ref={inputClienteRef}
+                    type="text"
+                    placeholder="Consumidor Final (Escribí para buscar...)"
+                    value={busquedaClienteTipeada}
+                    onChange={manejarCambioBusquedaCliente}
+                    onFocus={(e) => {
+                      setDropdownClienteAbierto(true);
+                      e.target.select();
+                    }}
+                    className={`w-full pl-9 pr-16 p-2.5 border rounded-xl text-sm bg-white font-medium outline-none transition-all focus:ring-2 focus:ring-blue-100 focus:border-blue-400 ${
+                      metodo === 'Fiado' && !clienteSelec
+                        ? 'border-red-400 ring-2 ring-red-100'
+                        : 'border-slate-200'
+                    }`}
+                  />
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                    {buscandoCliente && (
+                      <span className="text-[10px] text-blue-500 font-semibold px-1 animate-pulse">
+                        Buscando...
+                      </span>
+                    )}
+                    {clienteSelec && (
+                      <button
+                        type="button"
+                        onClick={limpiarCliente}
+                        className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                        title="Quitar cliente (Consumidor Final)"
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDropdownClienteAbierto(prev => !prev);
+                        if (!dropdownClienteAbierto) inputClienteRef.current?.focus();
+                      }}
+                      className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                      tabIndex={-1}
+                    >
+                      <ChevronDown
+                        size={15}
+                        className={`transition-transform duration-200 ${dropdownClienteAbierto ? "rotate-180 text-blue-500" : ""}`}
+                      />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Dropdown flotante amplio y cómodo */}
+                {dropdownClienteAbierto && (
+                  <div className="absolute top-full left-0 right-0 mt-1.5 bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                    <div className="p-2 bg-slate-50 border-b border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-bold uppercase tracking-wider">
+                      <span>{buscandoCliente ? "Esperando que termines de escribir..." : "Seleccionar Cliente"}</span>
+                      <span className="text-[10px] lowercase font-normal text-slate-400">
+                        {buscandoCliente
+                          ? "escribiendo..."
+                          : `${clientesFiltrados.length} ${clientesFiltrados.length === 1 ? "resultado" : "resultados"}`}
+                      </span>
+                    </div>
+
+                    <div className="max-h-60 overflow-y-auto custom-scrollbar divide-y divide-slate-100">
+                      {/* Opción Consumidor Final */}
+                      <button
+                        type="button"
+                        onClick={() => seleccionarCliente("", "")}
+                        className={`w-full flex items-center gap-3 p-3 text-left transition-colors cursor-pointer ${
+                          !clienteSelec ? "bg-blue-50/70 text-blue-800" : "hover:bg-slate-50 text-slate-700"
+                        }`}
+                      >
+                        <div className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center font-bold text-xs flex-shrink-0">
+                          CF
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold text-slate-800 leading-tight">Consumidor Final</p>
+                          <p className="text-[11px] text-slate-400">Venta estándar al mostrador</p>
+                        </div>
+                        {!clienteSelec && <CheckCircle size={16} className="text-blue-600 ml-auto flex-shrink-0" />}
+                      </button>
+
+                      {/* Lista filtrada de Clientes */}
+                      {clientesFiltrados.map(c => {
+                        const seleccionado = String(c.id) === String(clienteSelec);
+                        const deuda = Number(c.total_deuda || 0);
+                        return (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onClick={() => seleccionarCliente(c.id, c.nombre)}
+                            className={`w-full flex items-center gap-3 p-3 text-left transition-colors cursor-pointer ${
+                              seleccionado ? "bg-blue-50/70" : "hover:bg-slate-50"
+                            }`}
+                          >
+                            <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-xs flex-shrink-0">
+                              {c.nombre.charAt(0).toUpperCase()}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <p className="text-sm font-bold text-slate-800 truncate leading-tight">{c.nombre}</p>
+                                {deuda > 0 && (
+                                  <span className="text-[10px] font-bold px-1.5 py-0.5 bg-red-100 text-red-700 rounded-full shrink-0">
+                                    Debe {formatMoney(deuda)}
+                                  </span>
+                                )}
+                                {deuda < 0 && (
+                                  <span className="text-[10px] font-bold px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded-full shrink-0">
+                                    A favor {formatMoney(Math.abs(deuda))}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 mt-0.5 text-[11px] text-slate-400">
+                                {c.telefono ? (
+                                  <span className="flex items-center gap-1">
+                                    <Phone size={10} /> {c.telefono}
+                                  </span>
+                                ) : (
+                                  <span>Sin teléfono</span>
+                                )}
+                                {c.limite_credito > 0 && (
+                                  <span>• Límite: {formatMoney(c.limite_credito)}</span>
+                                )}
+                              </div>
+                            </div>
+                            {seleccionado && <CheckCircle size={16} className="text-blue-600 ml-auto flex-shrink-0" />}
+                          </button>
+                        );
+                      })}
+
+                      {buscandoCliente && clientesFiltrados.length === 0 && (
+                        <div className="p-6 text-center text-slate-400 space-y-2">
+                          <Loader2 size={24} className="animate-spin mx-auto text-blue-500" />
+                          <p className="text-xs font-medium text-slate-500">Filtrando clientes...</p>
+                        </div>
+                      )}
+
+                      {!buscandoCliente && clientesFiltrados.length === 0 && (
+                        <div className="p-6 text-center text-slate-400 space-y-2">
+                          <User size={28} className="mx-auto text-slate-300" />
+                          <p className="text-sm font-medium">No se encontró "{busquedaClienteFiltrada}"</p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setBusquedaClienteTipeada("");
+                              setBusquedaClienteFiltrada("");
+                            }}
+                            className="text-xs text-blue-600 hover:underline font-bold cursor-pointer"
+                          >
+                            Ver todos los clientes ({clientes.length})
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Métodos de Pago */}
