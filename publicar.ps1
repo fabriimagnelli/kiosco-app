@@ -12,7 +12,8 @@
 
 param(
     [string]$Notas = "",
-    [switch]$SinPublicar
+    [switch]$SinPublicar,
+    [string]$Bump = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -76,18 +77,33 @@ Write-Host "    [3] major  (cambios grandes/incompatibles) -> ej: 1.3.5 -> 2.0.0
 Write-Host "    [4] sin cambio (publicar con v$currentVersion)" -ForegroundColor Gray
 Write-Host ""
 
-$bumpChoice = Read-Host "  Opcion (1/2/3/4) [default=1]"
-if (-not $bumpChoice) { $bumpChoice = "1" }
+if (-not $Bump) {
+    $bumpChoice = Read-Host "  Opcion (1/2/3/4) [default=1]"
+    if (-not $bumpChoice) { $bumpChoice = "1" }
 
-switch ($bumpChoice) {
-    "1" { $bumpType = "patch" }
-    "2" { $bumpType = "minor" }
-    "3" { $bumpType = "major" }
-    "4" { $bumpType = $null }
-    default { 
-        Write-Host "  Opcion invalida. Usando patch." -ForegroundColor Yellow
-        $bumpType = "patch"
+    switch ($bumpChoice) {
+        "1" { $bumpType = "patch" }
+        "2" { $bumpType = "minor" }
+        "3" { $bumpType = "major" }
+        "4" { $bumpType = $null }
+        default { 
+            Write-Host "  Opcion invalida. Usando patch." -ForegroundColor Yellow
+            $bumpType = "patch"
+        }
     }
+} else {
+    switch ($Bump.ToLower()) {
+        "1" { $bumpType = "patch" }
+        "patch" { $bumpType = "patch" }
+        "2" { $bumpType = "minor" }
+        "minor" { $bumpType = "minor" }
+        "3" { $bumpType = "major" }
+        "major" { $bumpType = "major" }
+        "4" { $bumpType = $null }
+        "none" { $bumpType = $null }
+        default { $bumpType = "patch" }
+    }
+    Write-Host "  Tipo de cambio especificado por parametro: $bumpType" -ForegroundColor Cyan
 }
 
 if ($bumpType) {
@@ -266,7 +282,13 @@ if (-not (Test-Path $distDir)) {
 }
 
 $setupExe = Get-ChildItem $distDir -Filter "SACWare Kiosco Setup $version.exe" -ErrorAction SilentlyContinue
+if (-not $setupExe) {
+    $setupExe = Get-ChildItem $distDir -Filter "*Setup*$version.exe" -ErrorAction SilentlyContinue
+}
 $blockmap = Get-ChildItem $distDir -Filter "SACWare Kiosco Setup $version.exe.blockmap" -ErrorAction SilentlyContinue
+if (-not $blockmap) {
+    $blockmap = Get-ChildItem $distDir -Filter "*Setup*$version.exe.blockmap" -ErrorAction SilentlyContinue
+}
 $latestYml = Join-Path $distDir "latest.yml"
 
 if (-not $setupExe) {
@@ -329,7 +351,17 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "  Tag v$version ya existia (omitido)" -ForegroundColor Gray
 }
 
-cmd /c "git push origin main 2>&1" | Out-Null
+# Subir la rama actual y mantener sincronizado origin/main
+$currentBranch = (cmd /c "git branch --show-current 2>&1").Trim()
+if ($currentBranch) {
+    cmd /c "git push origin $currentBranch 2>&1" | Out-Null
+    Write-Host "  Push OK ($currentBranch)" -ForegroundColor Green
+}
+if ($currentBranch -ne "main") {
+    cmd /c "git push origin ${currentBranch}:main 2>&1" | Out-Null
+    Write-Host "  Push OK (sincronizado origin/main)" -ForegroundColor Green
+}
+
 cmd /c "git push origin --tags 2>&1" | Out-Null
 $ErrorActionPreference = "Stop"
 Write-Host "  Push OK (codigo + tags)" -ForegroundColor Green
