@@ -7,7 +7,7 @@ import {
   TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, Clock,
   Package, AlertTriangle, Download, FileSpreadsheet, FileText, Calendar,
   DollarSign, BarChart3, PieChart as PieIcon, Activity, Archive,
-  ChevronDown, RefreshCw, Filter, Printer, Search, Eye, ChevronRight, Receipt, MessageCircle, Trash2
+  ChevronDown, RefreshCw, Filter, Printer, Search, Eye, ChevronRight, Receipt, MessageCircle, Trash2, Lock
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -1130,6 +1130,7 @@ function HistorialVentas() {
           metodo_pago: v.metodo_pago,
           cliente: v.nombre_cliente || "Consumidor Final",
           notas: v.notas,
+          cerrado_ciclo: v.cerrado_ciclo === 1,
           items: [],
           total: 0,
           descuento: 0
@@ -1375,23 +1376,38 @@ function HistorialVentas() {
                     {ticket.cliente !== "Consumidor Final" && (
                       <span className="text-xs text-slate-500">• {ticket.cliente}</span>
                     )}
+                    {ticket.cerrado_ciclo && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 flex items-center gap-1 shadow-2xs" title="Venta perteneciente a un ciclo mensual congelado">
+                        <Lock size={10} className="text-slate-500" /> Cerrado
+                      </span>
+                    )}
                     <span className="text-xs text-slate-400">{ticket.items.length} item{ticket.items.length !== 1 ? 's' : ''}</span>
                   </div>
                   <span className="font-bold text-lg text-slate-800">{fmtMoney(ticket.total)}</span>
                   <button
                     onClick={e => { e.stopPropagation(); imprimirTicket(ticket); }}
-                    className="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                    className="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
                     title="Imprimir ticket"
                   >
                     <Printer size={16} />
                   </button>
-                  <button
-                    onClick={e => { e.stopPropagation(); setTicketAEliminar(ticket); }}
-                    className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-                    title="Eliminar ticket"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                  {ticket.cerrado_ciclo ? (
+                    <span
+                      onClick={e => e.stopPropagation()}
+                      className="p-2 rounded-lg text-slate-300 cursor-not-allowed"
+                      title="Ticket protegido: pertenece a un período mensual cerrado"
+                    >
+                      <Lock size={16} />
+                    </span>
+                  ) : (
+                    <button
+                      onClick={e => { e.stopPropagation(); setTicketAEliminar(ticket); }}
+                      className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+                      title="Eliminar ticket"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  )}
                 </div>
 
                 {/* Detalle expandido */}

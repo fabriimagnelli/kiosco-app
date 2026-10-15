@@ -354,6 +354,34 @@ const initDB = async () => {
         await ensureColumn("ventas", "descuento", "REAL DEFAULT 0");
         await ensureColumn("ventas", "notas", "TEXT DEFAULT ''");
         await ensureColumn("ventas", "descuento_item", "REAL DEFAULT 0");
+        await ensureColumn("ventas", "cerrado_ciclo", "INTEGER DEFAULT 0");
+        await ensureColumn("ventas", "cierre_periodo_id", "INTEGER DEFAULT NULL");
+
+        // --- Migraciones para Corte y Congelamiento Mensual de Cuentas Corrientes ---
+        await ensureColumn("fiados", "ciclo_cerrado", "INTEGER DEFAULT 0");
+        await ensureColumn("fiados", "cierre_periodo_id", "INTEGER DEFAULT NULL");
+        await ensureColumn("fiados", "imputacion", "TEXT DEFAULT 'mes_actual'");
+        await ensureColumn("clientes", "ultimo_cierre_fecha", "DATETIME DEFAULT NULL");
+        await ensureColumn("clientes", "ultimo_cierre_periodo", "TEXT DEFAULT NULL");
+
+        await dbRun(`CREATE TABLE IF NOT EXISTS cierres_cuentas_corrientes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+            periodo TEXT NOT NULL,
+            clientes_afectados INTEGER DEFAULT 0,
+            monto_total_congelado REAL DEFAULT 0,
+            usuario TEXT DEFAULT 'Admin',
+            observacion TEXT DEFAULT ''
+        )`);
+        await dbRun(`CREATE TABLE IF NOT EXISTS cierres_cuentas_corrientes_detalle (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cierre_id INTEGER NOT NULL,
+            cliente_id INTEGER NOT NULL,
+            cliente_nombre TEXT NOT NULL,
+            saldo_congelado REAL NOT NULL,
+            fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
+
 
         // --- MIGRACIÓN: Corregir ticket_ids corruptos (strings de "1" repetidos) ---
         try {
@@ -1484,6 +1512,8 @@ app.get("/api/clientes", async (req, res) => {
         const rows = await dbAll(`
             SELECT c.*,
                 COALESCE((SELECT SUM(f.monto) FROM fiados f WHERE f.cliente_id = c.id), 0) as total_deuda,
+                COALESCE((SELECT SUM(f.monto) FROM fiados f WHERE f.cliente_id = c.id AND (f.ciclo_cerrado = 1 OR f.imputacion = 'saldo_congelado')), 0) as saldo_congelado,
+                COALESCE((SELECT SUM(f.monto) FROM fiados f WHERE f.cliente_id = c.id AND (f.ciclo_cerrado = 0 OR f.ciclo_cerrado IS NULL) AND (f.imputacion != 'saldo_congelado' OR f.imputacion IS NULL)), 0) as consumos_mes_actual,
                 COALESCE((SELECT MAX(f.fecha) FROM fiados f WHERE f.cliente_id = c.id AND f.monto > 0), NULL) as ultimo_fiado_fecha,
                 COALESCE((SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id), 0) as total_compras,
                 COALESCE((SELECT SUM(v.precio_total) FROM ventas v WHERE v.cliente_id = c.id), 0) as total_gastado
@@ -1718,14 +1748,310 @@ app.get("/api/clientes/:id/validar_credito", async (req, res) => {
 
 app.get("/api/fiados", (req, res) => { db.all("SELECT * FROM fiados ORDER BY fecha DESC", [], (err, rows) => { if (err) res.status(500).json({ error: err.message }); else res.json(rows); }); });
 app.get("/api/fiados/:id", (req, res) => { db.all("SELECT * FROM fiados WHERE cliente_id = ? ORDER BY fecha DESC", [req.params.id], (err, rows) => { if (err) res.status(500).json({ error: err.message }); else res.json(rows || []); }); });
-app.post("/api/fiados", (req, res) => {
-    db.get("SELECT nombre FROM clientes WHERE id = ?", [req.body.cliente_id], (err, row) => {
-        db.run("INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago) VALUES (?,?,?,?,?)",
-            [row ? row.nombre : "Desconocido", req.body.cliente_id, req.body.monto, req.body.descripcion, req.body.metodo_pago || 'Efectivo'],
-            function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ id: this.lastID }); });
-    });
+app.post("/api/fiados", async (req, res) => {
+    try {
+        const { cliente_id, monto, descripcion, metodo_pago, imputacion, monto_congelado, monto_mes_actual } = req.body;
+        const cli = await dbGet("SELECT nombre, ultimo_cierre_periodo FROM clientes WHERE id = ?", [cliente_id]);
+        const clienteNombre = cli ? cli.nombre : "Desconocido";
+        const periodoTag = cli?.ultimo_cierre_periodo ? ` (${cli.ultimo_cierre_periodo})` : " (Mes anterior)";
+        const metodo = metodo_pago || 'Efectivo';
+        const numMonto = parseFloat(monto) || 0;
+
+        // Si es un pago (monto negativo o montos divididos)
+        if (numMonto < 0 || (monto_congelado !== undefined && monto_mes_actual !== undefined)) {
+            const pagoTotal = Math.abs(numMonto);
+            const mCongelado = parseFloat(monto_congelado) || 0;
+            const mMes = parseFloat(monto_mes_actual) || 0;
+
+            // Caso 1: Montos explícitos por concepto
+            if (mCongelado > 0 || mMes > 0) {
+                await dbRun("BEGIN TRANSACTION");
+                try {
+                    let lastId = null;
+                    if (mCongelado > 0) {
+                        const desc = descripcion ? `${descripcion} - Saldo congelado${periodoTag}` : `Pago a saldo congelado${periodoTag}`;
+                        const r = await dbRun(
+                            "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, ciclo_cerrado, imputacion) VALUES (?,?,?,?,?,?,?)",
+                            [clienteNombre, cliente_id, -mCongelado, desc, metodo, 1, 'saldo_congelado']
+                        );
+                        lastId = r.lastID;
+                    }
+                    if (mMes > 0) {
+                        const desc = descripcion ? `${descripcion} - Mes actual` : "Pago a consumos del mes en curso";
+                        const r = await dbRun(
+                            "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, ciclo_cerrado, imputacion) VALUES (?,?,?,?,?,?,?)",
+                            [clienteNombre, cliente_id, -mMes, desc, metodo, 0, 'mes_actual']
+                        );
+                        lastId = r.lastID;
+                    }
+                    await dbRun("COMMIT");
+                    return res.json({ success: true, id: lastId });
+                } catch (txErr) {
+                    await dbRun("ROLLBACK");
+                    throw txErr;
+                }
+            }
+
+            // Caso 2: imputacion === 'distribuir' (auto distribución: salda saldo congelado primero, remanente a mes actual)
+            if (imputacion === 'distribuir') {
+                const sCongeladoRow = await dbGet(`
+                    SELECT COALESCE(SUM(monto), 0) as s_congelado
+                    FROM fiados WHERE cliente_id = ? AND (ciclo_cerrado = 1 OR imputacion = 'saldo_congelado')
+                `, [cliente_id]);
+                const saldoCongelado = Math.max(0, sCongeladoRow?.s_congelado || 0);
+
+                if (saldoCongelado > 0 && pagoTotal > 0) {
+                    const parteCongelada = Math.min(pagoTotal, saldoCongelado);
+                    const parteMes = pagoTotal - parteCongelada;
+
+                    await dbRun("BEGIN TRANSACTION");
+                    try {
+                        let lastId = null;
+                        const descC = descripcion ? `${descripcion} - Saldo congelado${periodoTag}` : `Pago a saldo congelado${periodoTag}`;
+                        const r1 = await dbRun(
+                            "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, ciclo_cerrado, imputacion) VALUES (?,?,?,?,?,?,?)",
+                            [clienteNombre, cliente_id, -parteCongelada, descC, metodo, 1, 'saldo_congelado']
+                        );
+                        lastId = r1.lastID;
+
+                        if (parteMes > 0) {
+                            const descM = descripcion ? `${descripcion} - Mes actual` : "Pago a consumos del mes en curso";
+                            const r2 = await dbRun(
+                                "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, ciclo_cerrado, imputacion) VALUES (?,?,?,?,?,?,?)",
+                                [clienteNombre, cliente_id, -parteMes, descM, metodo, 0, 'mes_actual']
+                            );
+                            lastId = r2.lastID;
+                        }
+                        await dbRun("COMMIT");
+                        return res.json({ success: true, id: lastId });
+                    } catch (txErr) {
+                        await dbRun("ROLLBACK");
+                        throw txErr;
+                    }
+                }
+            }
+
+            // Caso 3: imputacion === 'saldo_congelado'
+            if (imputacion === 'saldo_congelado') {
+                const desc = descripcion ? `${descripcion} - Saldo congelado${periodoTag}` : `Pago a saldo congelado${periodoTag}`;
+                const insert = await dbRun(
+                    "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, ciclo_cerrado, imputacion) VALUES (?,?,?,?,?,?,?)",
+                    [clienteNombre, cliente_id, -pagoTotal, desc, metodo, 1, 'saldo_congelado']
+                );
+                return res.json({ success: true, id: insert.lastID });
+            }
+
+            // Caso 4: imputacion === 'mes_actual' (o default)
+            const desc = descripcion ? `${descripcion} - Mes actual` : "Pago a consumos del mes en curso";
+            const insert = await dbRun(
+                "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, ciclo_cerrado, imputacion) VALUES (?,?,?,?,?,?,?)",
+                [clienteNombre, cliente_id, -pagoTotal, desc, metodo, 0, 'mes_actual']
+            );
+            return res.json({ success: true, id: insert.lastID });
+        }
+
+        // Si es carga de deuda manual (monto positivo)
+        const insert = await dbRun(
+            "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, ciclo_cerrado, imputacion) VALUES (?,?,?,?,?,?,?)",
+            [clienteNombre, cliente_id, numMonto, descripcion || 'Carga de deuda', metodo, 0, 'mes_actual']
+        );
+        res.json({ success: true, id: insert.lastID });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
-app.delete("/api/fiados/:id", (req, res) => { db.run("DELETE FROM fiados WHERE id=?", req.params.id, function (err) { if (err) res.status(500).json({ error: err.message }); else res.json({ success: true }); }); });
+app.delete("/api/fiados/:id", async (req, res) => {
+    try {
+        const fiado = await dbGet("SELECT * FROM fiados WHERE id = ?", [req.params.id]);
+        if (!fiado) return res.status(404).json({ error: "Transacción no encontrada" });
+        if (fiado.ciclo_cerrado === 1 || fiado.cierre_periodo_id || fiado.imputacion === 'saldo_congelado') {
+            return res.status(403).json({
+                error: "Esta transacción pertenece a un ciclo mensual congelado y está protegida contra eliminación para preservar la contabilidad. Si necesitas revertirla, utiliza 'Deshacer Cierre' desde el panel de Cierre de Ciclo."
+            });
+        }
+        await dbRun("DELETE FROM fiados WHERE id = ?", [req.params.id]);
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ---------- GESTIÓN DE CORTE Y CONGELAMIENTO MENSUAL DE CUENTAS CORRIENTES ----------
+
+app.get("/api/cuentas_corrientes/cierre_preview", async (req, res) => {
+    try {
+        const clientes = await dbAll(`
+            SELECT c.*,
+                COALESCE((SELECT SUM(f.monto) FROM fiados f WHERE f.cliente_id = c.id), 0) as total_deuda,
+                COALESCE((SELECT SUM(f.monto) FROM fiados f WHERE f.cliente_id = c.id AND (f.ciclo_cerrado = 1 OR f.imputacion = 'saldo_congelado')), 0) as saldo_congelado,
+                COALESCE((SELECT SUM(f.monto) FROM fiados f WHERE f.cliente_id = c.id AND (f.ciclo_cerrado = 1 OR f.imputacion = 'saldo_congelado')), 0) as saldo_congelado_actual,
+                COALESCE((SELECT SUM(f.monto) FROM fiados f WHERE f.cliente_id = c.id AND (f.ciclo_cerrado = 0 OR f.ciclo_cerrado IS NULL) AND (f.imputacion != 'saldo_congelado' OR f.imputacion IS NULL)), 0) as consumos_mes_actual
+            FROM clientes c
+            ORDER BY c.nombre
+        `);
+
+        // Calcular mes sugerido
+        const fechaActual = new Date();
+        const MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+        let mesObj = new Date();
+        if (fechaActual.getDate() <= 10) {
+            mesObj.setMonth(mesObj.getMonth() - 1);
+        }
+        const periodoSugerido = `${MESES[mesObj.getMonth()]} ${mesObj.getFullYear()}`;
+
+        const ultimosCierres = await dbAll(`
+            SELECT * FROM cierres_cuentas_corrientes ORDER BY fecha DESC LIMIT 15
+        `);
+
+        res.json({
+            clientes,
+            periodoSugerido,
+            ultimosCierres
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post("/api/cuentas_corrientes/ejecutar_cierre", async (req, res) => {
+    try {
+        const { periodo, cliente_ids, observacion } = req.body;
+        if (!periodo || typeof periodo !== 'string' || !periodo.trim()) {
+            return res.status(400).json({ error: "Debe ingresar el nombre del período a congelar (ej: 'Septiembre 2026')" });
+        }
+        if (!Array.isArray(cliente_ids) || cliente_ids.length === 0) {
+            return res.status(400).json({ error: "Debe seleccionar al menos un cliente para congelar" });
+        }
+
+        const periodoLimpio = periodo.trim();
+        let totalCongeladoGlobal = 0;
+        let clientesProcesados = 0;
+
+        await dbRun("BEGIN TRANSACTION");
+        try {
+            const cierreInsert = await dbRun(
+                "INSERT INTO cierres_cuentas_corrientes (periodo, clientes_afectados, monto_total_congelado, observacion) VALUES (?, ?, 0, ?)",
+                [periodoLimpio, cliente_ids.length, observacion || '']
+            );
+            const cierreId = cierreInsert.lastID;
+
+            for (const cId of cliente_ids) {
+                const cli = await dbGet("SELECT id, nombre FROM clientes WHERE id = ?", [cId]);
+                if (!cli) continue;
+
+                // Saldo pendiente de consumos a congelar
+                const saldoConsumos = await dbGet(`
+                    SELECT COALESCE(SUM(monto), 0) as pendiente
+                    FROM fiados WHERE cliente_id = ? AND (ciclo_cerrado = 0 OR ciclo_cerrado IS NULL)
+                `, [cId]);
+                const pendienteMonto = redondear2(saldoConsumos?.pendiente || 0);
+
+                // Congelar movimientos abiertos de este cliente
+                await dbRun(
+                    "UPDATE fiados SET ciclo_cerrado = 1, cierre_periodo_id = ? WHERE cliente_id = ? AND (ciclo_cerrado = 0 OR ciclo_cerrado IS NULL)",
+                    [cierreId, cId]
+                );
+
+                // Congelar / proteger las ventas asociadas de este cliente hasta la fecha vinculándolas al cierre
+                await dbRun(
+                    "UPDATE ventas SET cerrado_ciclo = 1, cierre_periodo_id = ? WHERE cliente_id = ? AND (cerrado_ciclo = 0 OR cerrado_ciclo IS NULL)",
+                    [cierreId, cId]
+                );
+
+                // Actualizar registro del cliente con el último período cerrado
+                await dbRun(
+                    "UPDATE clientes SET ultimo_cierre_periodo = ?, ultimo_cierre_fecha = CURRENT_TIMESTAMP WHERE id = ?",
+                    [periodoLimpio, cId]
+                );
+
+                // Registrar en detalle
+                await dbRun(
+                    "INSERT INTO cierres_cuentas_corrientes_detalle (cierre_id, cliente_id, cliente_nombre, saldo_congelado) VALUES (?, ?, ?, ?)",
+                    [cierreId, cId, cli.nombre, pendienteMonto]
+                );
+
+                if (pendienteMonto > 0) {
+                    totalCongeladoGlobal += pendienteMonto;
+                }
+                clientesProcesados++;
+            }
+
+            // Actualizar total general en el cierre
+            await dbRun(
+                "UPDATE cierres_cuentas_corrientes SET monto_total_congelado = ?, clientes_afectados = ? WHERE id = ?",
+                [redondear2(totalCongeladoGlobal), clientesProcesados, cierreId]
+            );
+
+            await dbRun("COMMIT");
+            res.json({
+                success: true,
+                cierre_id: cierreId,
+                periodo: periodoLimpio,
+                clientes_afectados: clientesProcesados,
+                monto_total_congelado: redondear2(totalCongeladoGlobal)
+            });
+        } catch (txErr) {
+            await dbRun("ROLLBACK");
+            throw txErr;
+        }
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post("/api/cuentas_corrientes/deshacer_cierre/:id", async (req, res) => {
+    try {
+        const cierreId = parseInt(req.params.id, 10);
+        const cierre = await dbGet("SELECT * FROM cierres_cuentas_corrientes WHERE id = ?", [cierreId]);
+        if (!cierre) return res.status(404).json({ error: "Cierre no encontrado" });
+
+        await dbRun("BEGIN TRANSACTION");
+        try {
+            // Descongelar los fiados vinculados a este cierre
+            await dbRun("UPDATE fiados SET ciclo_cerrado = 0, cierre_periodo_id = NULL WHERE cierre_periodo_id = ?", [cierreId]);
+
+            // Descongelar las ventas vinculadas a este cierre
+            await dbRun("UPDATE ventas SET cerrado_ciclo = 0, cierre_periodo_id = NULL WHERE cierre_periodo_id = ?", [cierreId]);
+
+            // Obtener clientes afectados para restaurar su último cierre previo
+            const detalles = await dbAll("SELECT cliente_id FROM cierres_cuentas_corrientes_detalle WHERE cierre_id = ?", [cierreId]);
+            for (const d of detalles) {
+                const prevCierre = await dbGet(`
+                    SELECT c.periodo, c.fecha
+                    FROM cierres_cuentas_corrientes_detalle cd
+                    JOIN cierres_cuentas_corrientes c ON cd.cierre_id = c.id
+                    WHERE cd.cliente_id = ? AND cd.cierre_id != ?
+                    ORDER BY c.fecha DESC LIMIT 1
+                `, [d.cliente_id, cierreId]);
+
+                await dbRun(
+                    "UPDATE clientes SET ultimo_cierre_periodo = ?, ultimo_cierre_fecha = ? WHERE id = ?",
+                    [prevCierre?.periodo || null, prevCierre?.fecha || null, d.cliente_id]
+                );
+            }
+
+            await dbRun("DELETE FROM cierres_cuentas_corrientes_detalle WHERE cierre_id = ?", [cierreId]);
+            await dbRun("DELETE FROM cierres_cuentas_corrientes WHERE id = ?", [cierreId]);
+            await dbRun("COMMIT");
+            res.json({ success: true, message: "Cierre revertido con éxito." });
+        } catch (txErr) {
+            await dbRun("ROLLBACK");
+            throw txErr;
+        }
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get("/api/cuentas_corrientes/historial", async (req, res) => {
+    try {
+        const cierres = await dbAll("SELECT * FROM cierres_cuentas_corrientes ORDER BY fecha DESC LIMIT 50");
+        res.json(cierres);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 
 const redondear2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
@@ -2371,7 +2697,15 @@ app.post("/api/ventas", async (req, res) => {
     const total = Math.max(0, subtotal - descuento);
     try {
         await dbRun("BEGIN TRANSACTION");
-        if (ticket_a_corregir) { await dbRun("DELETE FROM ventas WHERE ticket_id = ?", [ticket_a_corregir]); await dbRun("DELETE FROM fiados WHERE descripcion LIKE ?", [`%Ticket ${ticket_a_corregir}%`]); }
+        if (ticket_a_corregir) {
+            const ticketCerrado = await dbGet("SELECT cerrado_ciclo FROM ventas WHERE ticket_id = ? AND cerrado_ciclo = 1 LIMIT 1", [ticket_a_corregir]);
+            if (ticketCerrado) {
+                await dbRun("ROLLBACK");
+                return res.status(403).json({ error: "Este ticket pertenece a un período mensual cerrado y está protegido contra modificaciones." });
+            }
+            await dbRun("DELETE FROM ventas WHERE ticket_id = ?", [ticket_a_corregir]);
+            await dbRun("DELETE FROM fiados WHERE descripcion LIKE ?", [`%Ticket ${ticket_a_corregir}%`]);
+        }
         const ticket_id = await obtenerSiguienteTicket();
         let pEfvo = 0, pDig = 0;
         if (metodo_pago === 'Mixto') { pEfvo = parseFloat(req.body.pago_efectivo) || 0; pDig = parseFloat(req.body.pago_digital) || 0; }
@@ -2479,6 +2813,10 @@ app.post("/api/ventas", async (req, res) => {
 
 app.delete("/api/ventas/:ticket_id", async (req, res) => {
     try {
+        const ticketCerrado = await dbGet("SELECT cerrado_ciclo FROM ventas WHERE ticket_id = ? AND cerrado_ciclo = 1 LIMIT 1", [req.params.ticket_id]);
+        if (ticketCerrado) {
+            return res.status(403).json({ error: "Este ticket pertenece a un período mensual cerrado y está protegido contra eliminaciones para preservar la contabilidad." });
+        }
         await dbRun("BEGIN TRANSACTION");
         const items = await dbAll("SELECT * FROM ventas WHERE ticket_id = ?", [req.params.ticket_id]);
         if (items.length === 0) { await dbRun("ROLLBACK"); return res.status(404).json({ error: "No encontrada" }); }

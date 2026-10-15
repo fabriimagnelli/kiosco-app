@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { User, Plus, Search, Trash2, Edit2, Phone, MapPin, Save, X, Eye, Calendar, Star, Gift, AlertTriangle, TrendingUp, Clock, Bell, DollarSign, CreditCard, Award, ChevronDown, ChevronUp, History, Shield, Percent, Loader2, CheckCircle } from "lucide-react";
+import { User, Plus, Search, Trash2, Edit2, Phone, MapPin, Save, X, Eye, Calendar, Star, Gift, AlertTriangle, TrendingUp, Clock, Bell, DollarSign, CreditCard, Award, ChevronDown, ChevronUp, History, Shield, Percent, Loader2, CheckCircle, Lock, Snowflake, RotateCcw, CheckSquare, Square, Layers, ArrowRight } from "lucide-react";
 import { apiFetch } from "../lib/api";
 import { useNotify } from "../context/NotificationContext";
 
@@ -109,6 +109,25 @@ function Deudores() {
 
   // Orden
   const [ordenarPor, setOrdenarPor] = useState("nombre");
+
+  // Cierre de Ciclo Mensual (Corte y Congelamiento)
+  const [modalCierreAbierto, setModalCierreAbierto] = useState(false);
+  const [cierrePeriodo, setCierrePeriodo] = useState("");
+  const [cierreObservacion, setCierreObservacion] = useState("");
+  const [cierreClientes, setCierreClientes] = useState([]);
+  const [clientesSeleccionados, setClientesSeleccionados] = useState(new Set());
+  const [cargandoCierrePreview, setCargandoCierrePreview] = useState(false);
+  const [ejecutandoCierre, setEjecutandoCierre] = useState(false);
+  const [historialCierres, setHistorialCierres] = useState([]);
+  const [vistaHistorialCierres, setVistaHistorialCierres] = useState(false);
+  const [busquedaCierre, setBusquedaCierre] = useState("");
+
+  // Imputación y filtrado en modal detalle del cliente
+  const [imputacionPago, setImputacionPago] = useState("distribuir"); // 'distribuir' | 'saldo_congelado' | 'mes_actual' | 'manual'
+  const [montoCongeladoManual, setMontoCongeladoManual] = useState("");
+  const [montoMesManual, setMontoMesManual] = useState("");
+  const [filtroMovimientos, setFiltroMovimientos] = useState("todos"); // 'todos' | 'mes_actual' | 'congelados'
+
 
   useEffect(() => {
     cargarClientes();
@@ -293,10 +312,143 @@ function Deudores() {
     } catch (err) { console.error(err); }
   };
 
+  // --- Funciones de Cierre de Ciclo Mensual ---
+  const abrirModalCierre = async () => {
+    setCargandoCierrePreview(true);
+    setVistaHistorialCierres(false);
+    setBusquedaCierre("");
+    try {
+      const res = await apiFetch("/api/cuentas_corrientes/cierre_preview");
+      const data = await res.json();
+      setCierrePeriodo(data.periodoSugerido || "");
+      const clientesList = data.clientes || [];
+      setCierreClientes(clientesList);
+      setHistorialCierres(data.ultimosCierres || []);
+      
+      // Pre-seleccionar todos los clientes con saldo pendiente deudor o consumos
+      const preseleccion = new Set(
+        clientesList
+          .filter(c => (c.consumos_mes_actual || 0) > 0 || (c.total_deuda || 0) > 0)
+          .map(c => c.id)
+      );
+      setClientesSeleccionados(preseleccion);
+      setModalCierreAbierto(true);
+    } catch (err) {
+      console.error("Error al cargar preview de cierre:", err);
+      toast("Error al cargar datos para el cierre de ciclo.", "err");
+    } finally {
+      setCargandoCierrePreview(false);
+    }
+  };
+
+  const toggleClienteSeleccionado = (id) => {
+    setClientesSeleccionados(prev => {
+      const nuevo = new Set(prev);
+      if (nuevo.has(id)) nuevo.delete(id);
+      else nuevo.add(id);
+      return nuevo;
+    });
+  };
+
+  const toggleSeleccionarTodosCierre = () => {
+    const todosSeleccionados = cierreClientes.length > 0 && clientesSeleccionados.size === cierreClientes.length;
+    if (todosSeleccionados) {
+      setClientesSeleccionados(new Set());
+    } else {
+      setClientesSeleccionados(new Set(cierreClientes.map(c => c.id)));
+    }
+  };
+
+  const seleccionarSoloConDeudaCierre = () => {
+    const conDeuda = new Set(
+      cierreClientes
+        .filter(c => (c.consumos_mes_actual || 0) > 0 || (c.total_deuda || 0) > 0)
+        .map(c => c.id)
+    );
+    setClientesSeleccionados(conDeuda);
+  };
+
+  const ejecutarCierreCiclo = async () => {
+    if (!cierrePeriodo.trim()) {
+      return toast("Ingresá el nombre del período a cerrar (ej: 'Septiembre 2026')", "warn");
+    }
+    const ids = Array.from(clientesSeleccionados);
+    if (ids.length === 0) {
+      return toast("Seleccioná al menos un cliente para congelar su deuda", "warn");
+    }
+
+    const totalACongelar = cierreClientes
+      .filter(c => clientesSeleccionados.has(c.id))
+      .reduce((acc, c) => acc + Math.max(0, c.consumos_mes_actual || 0), 0);
+
+    const confirmar = await confirmDialog(
+      `¿Confirmar Cierre de Ciclo para el período "${cierrePeriodo.trim()}"?\n\n` +
+      `• Clientes a congelar: ${ids.length}\n` +
+      `• Saldo de consumos a consolidar: $ ${fmtMonto(totalACongelar)}\n\n` +
+      `Los consumos del nuevo mes partirán en $0 para estos clientes y los registros de ventas quedarán protegidos.`
+    );
+    if (!confirmar) return;
+
+    setEjecutandoCierre(true);
+    try {
+      const res = await apiFetch("/api/cuentas_corrientes/ejecutar_cierre", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          periodo: cierrePeriodo.trim(),
+          cliente_ids: ids,
+          observacion: cierreObservacion.trim()
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast(`¡Corte realizado! Se congelaron las deudas de ${data.clientes_afectados} clientes por $ ${fmtMonto(data.monto_total_congelado)}. Nuevo ciclo iniciado en $0.`, "ok");
+        setModalCierreAbierto(false);
+        cargarClientes();
+      } else {
+        toast(data.error || "Error al ejecutar el cierre", "err");
+      }
+    } catch (err) {
+      console.error("Error al ejecutar cierre:", err);
+      toast("Error de conexión al ejecutar el cierre", "err");
+    } finally {
+      setEjecutandoCierre(false);
+    }
+  };
+
+  const deshacerCierreCiclo = async (cierreId, periodoNombre) => {
+    const confirmar = await confirmDialog(
+      `¿Deseas revertir y deshacer el cierre del período "${periodoNombre}"?\n\n` +
+      `Las transacciones de fiados volverán al estado abierto del mes corriente.`
+    );
+    if (!confirmar) return;
+
+    try {
+      const res = await apiFetch(`/api/cuentas_corrientes/deshacer_cierre/${cierreId}`, { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        toast("Cierre de ciclo revertido correctamente.", "ok");
+        cargarClientes();
+        const prev = await apiFetch("/api/cuentas_corrientes/cierre_preview").then(r => r.json());
+        setCierreClientes(prev.clientes || []);
+        setHistorialCierres(prev.ultimosCierres || []);
+      } else {
+        toast(data.error || "Error al revertir el cierre", "err");
+      }
+    } catch (err) {
+      console.error(err);
+      toast("Error al revertir el cierre", "err");
+    }
+  };
+
   // --- Modal cliente ---
   const verDetalles = async (cliente) => {
     setClienteSel(cliente);
     setTabActiva("fiados");
+    setImputacionPago("distribuir");
+    setMontoCongeladoManual("");
+    setMontoMesManual("");
+    setFiltroMovimientos("todos");
     try {
       const [fiados, puntos] = await Promise.all([
         apiFetch(`/api/fiados/${cliente.id}`).then(r => r.json()),
@@ -311,11 +463,17 @@ function Deudores() {
   const cerrarDetalles = () => {
     setVerHistorial(false); setClienteSel(null); setHistorialFiados([]); setHistorialPuntos([]);
     setMontoPago(""); setMetodoPago("Efectivo"); setDescripcionPago(""); setGuardarExcedente(false);
+    setMontoCongeladoManual(""); setMontoMesManual("");
     setMenuOpcionesAbierto(false);
     setPuntosACanjear(""); setAjustePuntos(""); setAjusteDesc("");
+    setImputacionPago("distribuir"); setFiltroMovimientos("todos");
   };
 
   const eliminarFiado = async (fiadoId) => {
+    const movObj = historialFiados.find(m => m.id === fiadoId);
+    if (movObj && (movObj.ciclo_cerrado === 1 || movObj.imputacion === 'saldo_congelado' || movObj.cierre_periodo_id)) {
+      return toast("Esta transacción pertenece a un ciclo mensual congelado y está protegida contra eliminación.", "warn");
+    }
     if (!(await confirmDialog("¿Eliminar esta transacción? La deuda volverá al estado anterior."))) return;
     try {
       const res = await apiFetch(`/api/fiados/${fiadoId}`, { method: "DELETE" });
@@ -324,32 +482,53 @@ function Deudores() {
         const nuevosFiados = await apiFetch(`/api/fiados/${clienteSel.id}`).then(r => r.json());
         setHistorialFiados(nuevosFiados);
         cargarClientes();
+        toast("Transacción eliminada con éxito", "ok");
       } else {
-        toast("Error al eliminar la transacción", "err");
+        toast(data.error || "Error al eliminar la transacción", "err");
       }
     } catch (err) { console.error(err); toast("Error al eliminar", "err"); }
   };
 
   const registrarPago = async (e) => {
     if (e && e.preventDefault) e.preventDefault();
-    const montoPagoNum = parseFloat(montoPago) || 0;
-    if (!montoPago || montoPagoNum <= 0) return toast("Ingresa un monto válido mayor a 0", "warn");
 
-    // Si el cliente entrega de más y no se guarda como saldo a favor, solo se cancela la deuda (el resto es vuelto en mano)
-    const hayExcedente = deudaActualSel > 0 && montoPagoNum > deudaActualSel;
-    const montoARegistrar = (hayExcedente && !guardarExcedente) ? deudaActualSel : montoPagoNum;
+    let montoARegistrar = 0;
+    const payload = {
+      cliente_id: clienteSel.id,
+      metodo_pago: metodoPago || "Efectivo",
+      imputacion: imputacionPago
+    };
+
+    if (imputacionPago === "manual") {
+      const mCong = parseFloat(montoCongeladoManual) || 0;
+      const mMes = parseFloat(montoMesManual) || 0;
+      if (mCong <= 0 && mMes <= 0) return toast("Ingresa al menos un monto para saldo congelado o mes actual", "warn");
+      montoARegistrar = mCong + mMes;
+      payload.monto = -montoARegistrar;
+      payload.monto_congelado = mCong;
+      payload.monto_mes_actual = mMes;
+      payload.descripcion = descripcionPago.trim() || `Pago distribuido ($${fmtMonto(mCong)} congelado + $${fmtMonto(mMes)} mes actual)`;
+    } else {
+      const montoPagoNum = parseFloat(montoPago) || 0;
+      if (!montoPago || montoPagoNum <= 0) return toast("Ingresa un monto válido mayor a 0", "warn");
+
+      // Si el cliente entrega de más y no se guarda como saldo a favor, solo se cancela la deuda (el resto es vuelto en mano)
+      const hayExcedente = deudaActualSel > 0 && montoPagoNum > deudaActualSel;
+      montoARegistrar = (hayExcedente && !guardarExcedente) ? deudaActualSel : montoPagoNum;
+
+      payload.monto = -montoARegistrar;
+      payload.descripcion = descripcionPago.trim() || (
+        imputacionPago === "saldo_congelado" ? "Pago a deuda congelada (períodos anteriores)" :
+        imputacionPago === "mes_actual" ? "Pago a consumos del mes en curso" : "Pago de deuda"
+      );
+    }
 
     setProcesandoPago(true);
     try {
       const res = await apiFetch("/api/fiados", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          cliente_id: clienteSel.id,
-          monto: -montoARegistrar,
-          descripcion: descripcionPago.trim() || "Pago de deuda",
-          metodo_pago: metodoPago || "Efectivo"
-        })
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (data.id || data.success) {
@@ -357,7 +536,7 @@ function Deudores() {
         const nuevosFiados = await apiFetch(`/api/fiados/${clienteSel.id}`).then(r => r.json());
         setHistorialFiados(nuevosFiados);
         cargarClientes();
-        setMontoPago(""); setDescripcionPago(""); setGuardarExcedente(false); setMenuOpcionesAbierto(false);
+        setMontoPago(""); setMontoCongeladoManual(""); setMontoMesManual(""); setDescripcionPago(""); setGuardarExcedente(false); setMenuOpcionesAbierto(false);
       } else {
         toast(data.error || "Error al registrar el pago", "err");
       }
@@ -477,7 +656,25 @@ function Deudores() {
       return a.nombre.localeCompare(b.nombre);
     });
 
-  const deudaActualSel = historialFiados.reduce((acc, m) => acc + m.monto, 0);
+  const saldoCongeladoSel = historialFiados
+    .filter(m => m.ciclo_cerrado === 1 || m.imputacion === 'saldo_congelado')
+    .reduce((acc, m) => acc + m.monto, 0);
+
+  const consumosMesSel = historialFiados
+    .filter(m => (!m.ciclo_cerrado || m.ciclo_cerrado === 0) && m.imputacion !== 'saldo_congelado')
+    .reduce((acc, m) => acc + m.monto, 0);
+
+  const deudaActualSel = saldoCongeladoSel + consumosMesSel;
+
+  const totalDeudaGlobal = clientes.reduce((a, c) => a + Math.max(0, c.total_deuda || 0), 0);
+  const totalCongeladoGlobal = clientes.reduce((a, c) => a + Math.max(0, c.saldo_congelado || 0), 0);
+  const totalMesGlobal = clientes.reduce((a, c) => a + Math.max(0, c.consumos_mes_actual || 0), 0);
+
+  const historialFiadosFiltrados = historialFiados.filter(m => {
+    if (filtroMovimientos === "mes_actual") return (!m.ciclo_cerrado || m.ciclo_cerrado === 0) && m.imputacion !== 'saldo_congelado';
+    if (filtroMovimientos === "congelados") return m.ciclo_cerrado === 1 || m.imputacion === 'saldo_congelado';
+    return true;
+  });
 
   // Vista previa del recargo, calculada localmente sobre el listado de clientes
   const clientesConDeuda = clientes.filter(c => (c.total_deuda || 0) > 0);
@@ -505,6 +702,14 @@ function Deudores() {
             className="px-4 py-2.5 rounded-lg font-bold flex items-center gap-2 shadow-md transition-all text-sm bg-blue-600 hover:bg-blue-700 text-white active:scale-95"
           >
             <Plus size={16} /> Nuevo Cliente
+          </button>
+          {/* Cierre de ciclo mensual / Congelamiento */}
+          <button
+            onClick={abrirModalCierre}
+            className="px-4 py-2.5 rounded-lg font-bold flex items-center gap-2 shadow-md transition-all text-sm bg-indigo-600 hover:bg-indigo-700 text-white active:scale-95"
+            title="Corte y Congelamiento de Período Mensual"
+          >
+            <Lock size={16} /> Cierre de Ciclo
           </button>
           {/* Alerta deudas */}
           <button
@@ -711,8 +916,12 @@ function Deudores() {
         </div>
         <div className="bg-red-50 rounded-2xl border border-red-200 p-4">
           <div className="flex items-center gap-2 mb-1"><AlertTriangle size={16} className="text-red-500" /><p className="text-xs text-red-600 font-normal">Deuda Total</p></div>
-          <p className="text-2xl font-semibold text-red-700">$ {fmtMonto(clientes.reduce((a, c) => a + Math.max(0, c.total_deuda || 0), 0))}</p>
-          <p className="text-[11px] text-red-400 mt-1 font-light">{fmtNro(clientes.filter(c => c.total_deuda > 0).length)} clientes</p>
+          <p className="text-2xl font-semibold text-red-700">$ {fmtMonto(totalDeudaGlobal)}</p>
+          <div className="flex flex-wrap items-center gap-x-2 text-[11px] text-red-700/80 mt-1 font-medium">
+            <span>❄️ Ant: ${fmtMonto(totalCongeladoGlobal)}</span>
+            <span>•</span>
+            <span>📅 Mes: ${fmtMonto(totalMesGlobal)}</span>
+          </div>
         </div>
         <div className="bg-emerald-50 rounded-2xl border border-emerald-200 p-4">
           <div className="flex items-center gap-2 mb-1"><TrendingUp size={16} className="text-emerald-500" /><p className="text-xs text-emerald-600 font-normal">Total Vendido</p></div>
@@ -796,12 +1005,36 @@ function Deudores() {
                       <div className="text-[10px] text-green-500">${fmtNro(c.total_gastado)}</div>
                     </td>
                     <td className="p-4 text-right">
-                      <span className={`font-bold px-2 py-1 rounded text-sm ${formatearSaldo(c.total_deuda).claseBadge}`}>
-                        {formatearSaldo(c.total_deuda).texto}
-                      </span>
-                      {c.total_deuda < 0 && (
-                        <div className="text-[9px] text-green-500 font-medium mt-0.5">A favor</div>
-                      )}
+                      <div className="flex flex-col items-end">
+                        <span className={`font-bold px-2 py-1 rounded text-sm ${formatearSaldo(c.total_deuda).claseBadge}`}>
+                          {formatearSaldo(c.total_deuda).texto}
+                        </span>
+                        {/* Discriminación de saldo congelado vs mes actual */}
+                        {c.total_deuda > 0 && ((c.saldo_congelado || 0) > 0 || (c.consumos_mes_actual || 0) > 0) && (
+                          <div className="mt-1 space-y-0.5 text-[11px] font-medium text-right">
+                            {(c.saldo_congelado || 0) > 0 && (
+                              <div className="text-indigo-600 flex items-center justify-end gap-1">
+                                <Lock size={10} className="inline text-indigo-500" />
+                                <span>Ant: ${fmtMonto(c.saldo_congelado)}</span>
+                              </div>
+                            )}
+                            {(c.consumos_mes_actual || 0) > 0 && (
+                              <div className="text-slate-600 flex items-center justify-end gap-1">
+                                <Calendar size={10} className="inline text-slate-400" />
+                                <span>Mes: ${fmtMonto(c.consumos_mes_actual)}</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {c.ultimo_cierre_periodo && (
+                          <span className="text-[10px] text-slate-400 mt-0.5">
+                            Corte: {c.ultimo_cierre_periodo}
+                          </span>
+                        )}
+                        {c.total_deuda < 0 && (
+                          <div className="text-[9px] text-green-500 font-medium mt-0.5">A favor</div>
+                        )}
+                      </div>
                     </td>
                     {puntosConfig.puntos_activos && (
                       <td className="p-4 text-center">
@@ -981,21 +1214,59 @@ function Deudores() {
                     {clienteSel.limite_credito > 0 && <span className="text-orange-500"><Shield size={10} className="inline" /> Límite: ${fmtNro(clienteSel.limite_credito)}</span>}
                   </p>
                 </div>
-                <div className="flex gap-3 text-right">
-                  <div>
-                    <p className="text-[10px] uppercase text-slate-400 font-bold">Saldo</p>
-                    <p className={`text-xl font-black ${formatearSaldo(deudaActualSel).clase}`}>
+                <div className="flex flex-wrap gap-2 text-right justify-end">
+                  {/* Saldo Congelado */}
+                  <div className={`px-3 py-1.5 rounded-xl text-center min-w-[110px] transition-all border ${
+                    saldoCongeladoSel <= 0
+                      ? "bg-emerald-50 border-emerald-200"
+                      : "bg-indigo-50 border-indigo-200"
+                  }`}>
+                    <p className={`text-[10px] uppercase font-bold flex items-center justify-center gap-1 ${
+                      saldoCongeladoSel <= 0 ? "text-emerald-700" : "text-indigo-700"
+                    }`}>
+                      {saldoCongeladoSel <= 0 ? <CheckCircle size={10} /> : <Lock size={10} />} Saldo Congelado
+                    </p>
+                    <p className={`text-base font-black ${
+                      saldoCongeladoSel <= 0 ? "text-emerald-700" : "text-indigo-700"
+                    }`}>
+                      $ {fmtMonto(Math.max(0, saldoCongeladoSel))}
+                    </p>
+                    <p className={`text-[9px] font-bold ${
+                      saldoCongeladoSel <= 0 ? "text-emerald-600" : "text-indigo-500"
+                    }`}>
+                      {saldoCongeladoSel <= 0 ? "✓ SALDADO / AL DÍA" : "Períodos anteriores"}
+                    </p>
+                  </div>
+
+                  {/* Consumos Mes Actual */}
+                  <div className="bg-sky-50 border border-sky-200 px-3 py-1.5 rounded-xl text-center min-w-[105px]">
+                    <p className="text-[10px] uppercase text-sky-700 font-bold flex items-center justify-center gap-1">
+                      <Calendar size={10} /> Consumos del Mes
+                    </p>
+                    <p className="text-base font-black text-sky-800">
+                      $ {fmtMonto(Math.max(0, consumosMesSel))}
+                    </p>
+                    <p className="text-[9px] text-sky-500 font-medium">Ciclo vigente</p>
+                  </div>
+
+                  {/* Total Acumulado */}
+                  <div className="bg-white border border-slate-200 px-3 py-1.5 rounded-xl text-center min-w-[105px] shadow-sm">
+                    <p className="text-[10px] uppercase text-slate-500 font-bold">Deuda Acumulada</p>
+                    <p className={`text-base font-black ${formatearSaldo(deudaActualSel).clase}`}>
                       {formatearSaldo(deudaActualSel).texto}
                     </p>
-                    <p className={`text-[10px] font-bold uppercase tracking-wide ${formatearSaldo(deudaActualSel).clase} opacity-70`}>
+                    <p className={`text-[9px] font-bold uppercase ${formatearSaldo(deudaActualSel).clase}`}>
                       {formatearSaldo(deudaActualSel).etiqueta}
                     </p>
                   </div>
+
                   {puntosConfig.puntos_activos && (
-                    <div>
-                      <p className="text-[10px] uppercase text-amber-400 font-bold">Puntos</p>
-                      <p className="text-xl font-black text-amber-600 flex items-center gap-1">
-                        <Star size={14} className="fill-amber-400 text-amber-400" /> {fmtNro(clienteSel.puntos)}
+                    <div className="bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-xl text-center min-w-[80px]">
+                      <p className="text-[10px] uppercase text-amber-700 font-bold flex items-center justify-center gap-1">
+                        <Star size={10} className="fill-amber-400 text-amber-400" /> Puntos
+                      </p>
+                      <p className="text-base font-black text-amber-700">
+                        {fmtNro(clienteSel.puntos)}
                       </p>
                     </div>
                   )}
@@ -1024,27 +1295,103 @@ function Deudores() {
               {/* TAB: FIADOS */}
               {tabActiva === "fiados" && (
                 <div>
-                  {historialFiados.length === 0 ? (
-                    <div className="p-10 text-center text-slate-400">No hay movimientos de fiados.</div>
+                  {/* Resumen de estado de cierre */}
+                  {clienteSel?.ultimo_cierre_periodo && (
+                    <div className="mx-4 my-2.5 p-3 rounded-xl border flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 text-xs shadow-2xs transition-all bg-white border-slate-200">
+                      <div className="flex items-center gap-2.5">
+                        <div className={`p-2 rounded-lg ${saldoCongeladoSel <= 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-100 text-indigo-700'}`}>
+                          {saldoCongeladoSel <= 0 ? <CheckCircle size={16} /> : <Lock size={16} />}
+                        </div>
+                        <div>
+                          <div className="font-bold text-slate-800 flex items-center gap-2">
+                            <span>Último Corte: {clienteSel.ultimo_cierre_periodo}</span>
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${saldoCongeladoSel <= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-indigo-100 text-indigo-800'}`}>
+                              {saldoCongeladoSel <= 0 ? "✓ Saldado al 100%" : "Deuda pendiente"}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-500 mt-0.5">
+                            {saldoCongeladoSel <= 0
+                              ? "El cliente canceló completamente la deuda congelada de períodos anteriores."
+                              : `Resta saldar $${fmtMonto(saldoCongeladoSel)} del período cerrado.`}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 font-bold shrink-0">
+                        <div className={`px-2.5 py-1 rounded-lg border text-center ${saldoCongeladoSel <= 0 ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-indigo-50 border-indigo-200 text-indigo-800'}`}>
+                          <span className="text-[10px] block font-normal text-slate-500">Saldo Anterior</span>
+                          ${fmtMonto(Math.max(0, saldoCongeladoSel))}
+                        </div>
+                        <div className="px-2.5 py-1 rounded-lg border bg-sky-50 border-sky-200 text-sky-800 text-center">
+                          <span className="text-[10px] block font-normal text-slate-500">Mes Actual</span>
+                          ${fmtMonto(Math.max(0, consumosMesSel))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Filtro de movimientos */}
+                  <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-b border-slate-200 text-xs flex-wrap gap-2">
+                    <span className="font-bold text-slate-500 uppercase tracking-wider text-[11px]">Movimientos</span>
+                    <div className="flex bg-white p-0.5 rounded-lg border border-slate-200">
+                      {[
+                        { id: "todos", label: `Todos (${historialFiados.length})` },
+                        { id: "mes_actual", label: `Mes actual (${historialFiados.filter(m => (!m.ciclo_cerrado || m.ciclo_cerrado === 0) && m.imputacion !== 'saldo_congelado').length})` },
+                        { id: "congelados", label: `Períodos anteriores (${historialFiados.filter(m => m.ciclo_cerrado === 1 || m.imputacion === 'saldo_congelado').length})` }
+                      ].map(f => (
+                        <button
+                          key={f.id}
+                          type="button"
+                          onClick={() => setFiltroMovimientos(f.id)}
+                          className={`px-2.5 py-1 rounded-md font-semibold transition-all ${
+                            filtroMovimientos === f.id
+                              ? "bg-slate-800 text-white shadow-xs"
+                              : "text-slate-600 hover:text-slate-900"
+                          }`}
+                        >
+                          {f.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {historialFiadosFiltrados.length === 0 ? (
+                    <div className="p-10 text-center text-slate-400">No hay movimientos en esta vista.</div>
                   ) : (
                     <table className="w-full text-left border-collapse">
                       <thead className="bg-slate-100 text-slate-500 text-xs uppercase sticky top-0">
                         <tr>
                           <th className="p-3">Fecha</th>
-                          <th className="p-3">Descripción</th>
+                          <th className="p-3">Descripción y Período</th>
                           <th className="p-3">Método</th>
                           <th className="p-3 text-right">Monto</th>
                           <th className="p-3 text-center w-10"></th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-sm">
-                        {historialFiados.map(mov => (
+                        {historialFiadosFiltrados.map(mov => (
                           <tr key={mov.id} className="hover:bg-slate-50 group">
                             <td className="p-3 text-slate-500 text-xs">
                               {fmtFecha(mov.fecha)}
                               <span className="block text-[10px] opacity-50">{fmtHora(mov.fecha)}</span>
                             </td>
-                            <td className="p-3 font-medium text-slate-700">{mov.descripcion}</td>
+                            <td className="p-3 font-medium text-slate-700">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className={mov.monto < 0 ? "font-semibold text-slate-800" : ""}>{mov.descripcion}</span>
+                                {mov.monto < 0 && (mov.ciclo_cerrado === 1 || mov.imputacion === 'saldo_congelado') ? (
+                                  <span className="text-[10px] bg-emerald-100 text-emerald-800 border border-emerald-200 px-1.5 py-0.5 rounded font-bold flex items-center gap-0.5">
+                                    <CheckCircle size={9} className="text-emerald-600" /> Cobro Deuda Anterior
+                                  </span>
+                                ) : (mov.ciclo_cerrado === 1 || mov.imputacion === 'saldo_congelado') ? (
+                                  <span className="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-bold flex items-center gap-0.5">
+                                    <Lock size={9} /> Período anterior
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] bg-sky-100 text-sky-700 px-1.5 py-0.5 rounded font-medium flex items-center gap-0.5">
+                                    <Calendar size={9} /> Mes actual
+                                  </span>
+                                )}
+                              </div>
+                            </td>
                             <td className="p-3 text-slate-500 text-xs">{mov.metodo_pago}</td>
                             <td className="p-3 text-right font-bold">
                               {mov.monto > 0 ? (
@@ -1054,13 +1401,22 @@ function Deudores() {
                               )}
                             </td>
                             <td className="p-3 text-center">
-                              <button
-                                onClick={() => eliminarFiado(mov.id)}
-                                className="p-1 text-slate-300 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors opacity-0 group-hover:opacity-100"
-                                title="Eliminar transacción"
-                              >
-                                <Trash2 size={14} />
-                              </button>
+                              {(mov.ciclo_cerrado === 1 || mov.imputacion === 'saldo_congelado' || mov.cierre_periodo_id) ? (
+                                <span
+                                  className="p-1 text-slate-400 inline-flex items-center justify-center cursor-not-allowed opacity-50 group-hover:opacity-100"
+                                  title="Transacción congelada protegida contra eliminación"
+                                >
+                                  <Lock size={13} className="text-indigo-400" />
+                                </span>
+                              ) : (
+                                <button
+                                  onClick={() => eliminarFiado(mov.id)}
+                                  className="p-1 text-slate-300 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors opacity-0 group-hover:opacity-100 cursor-pointer"
+                                  title="Eliminar transacción del mes actual"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              )}
                             </td>
                           </tr>
                         ))}
@@ -1167,13 +1523,27 @@ function Deudores() {
                           disabled={procesandoPago}
                         />
                       </div>
+                      {saldoCongeladoSel > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMontoPago(String(saldoCongeladoSel.toFixed(2)));
+                            setImputacionPago("saldo_congelado");
+                          }}
+                          disabled={procesandoPago}
+                          className="px-2.5 py-2 bg-indigo-100 text-indigo-700 hover:bg-indigo-200 border border-indigo-200 rounded-lg text-xs font-bold transition-colors disabled:opacity-50 whitespace-nowrap flex items-center gap-1 cursor-pointer"
+                          title="Copiar monto de saldo congelado para pagarlo directamente"
+                        >
+                          <Lock size={12} /> Saldo Ant.
+                        </button>
+                      )}
                       {deudaActualSel > 0 && (
                         <button
                           type="button"
                           onClick={() => setMontoPago(String(deudaActualSel.toFixed(2)))}
                           disabled={procesandoPago}
-                          className="px-2.5 py-2 bg-slate-200 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-300 transition-colors disabled:opacity-50 whitespace-nowrap"
-                          title="Copiar monto de deuda actual"
+                          className="px-2.5 py-2 bg-slate-200 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-300 transition-colors disabled:opacity-50 whitespace-nowrap cursor-pointer"
+                          title="Copiar monto de deuda total"
                         >
                           Pagar Total
                         </button>
@@ -1208,12 +1578,143 @@ function Deudores() {
                   </div>
                 </div>
 
+                {/* SELECTOR DE IMPUTACIÓN DE PAGO */}
+                {saldoCongeladoSel > 0 && (
+                  <div className="bg-white border border-indigo-200 rounded-xl p-3 space-y-2 shadow-xs">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-slate-700 flex items-center gap-1.5">
+                        <Lock size={12} className="text-indigo-600" /> Imputar el pago a:
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        {imputacionPago === "distribuir" ? "Cancela deuda congelada primero" :
+                         imputacionPago === "saldo_congelado" ? "Cancela solo saldo congelado histórico" :
+                         imputacionPago === "mes_actual" ? "Cancela solo compras del mes en curso" :
+                         "Distribuir montos exactos manualmente"}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setImputacionPago("distribuir")}
+                        className={`p-2 rounded-lg border text-xs font-bold transition-all text-left flex flex-col justify-between ${
+                          imputacionPago === "distribuir"
+                            ? "bg-indigo-50 border-indigo-400 text-indigo-800 ring-1 ring-indigo-300"
+                            : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                        }`}
+                      >
+                        <span className="flex items-center gap-1">⚖️ Automático</span>
+                        <span className="text-[10px] font-normal text-slate-500 mt-0.5">Congelado primero</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setImputacionPago("saldo_congelado")}
+                        className={`p-2 rounded-lg border text-xs font-bold transition-all text-left flex flex-col justify-between ${
+                          imputacionPago === "saldo_congelado"
+                            ? "bg-indigo-50 border-indigo-400 text-indigo-800 ring-1 ring-indigo-300"
+                            : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                        }`}
+                      >
+                        <span className="flex items-center gap-1"><Lock size={12} /> Congelado</span>
+                        <span className="text-[10px] font-bold text-indigo-600 mt-0.5">${fmtMonto(saldoCongeladoSel)}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setImputacionPago("mes_actual")}
+                        className={`p-2 rounded-lg border text-xs font-bold transition-all text-left flex flex-col justify-between ${
+                          imputacionPago === "mes_actual"
+                            ? "bg-sky-50 border-sky-400 text-sky-800 ring-1 ring-sky-300"
+                            : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                        }`}
+                      >
+                        <span className="flex items-center gap-1"><Calendar size={12} /> Mes Actual</span>
+                        <span className="text-[10px] font-bold text-sky-600 mt-0.5">${fmtMonto(consumosMesSel)}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setImputacionPago("manual")}
+                        className={`p-2 rounded-lg border text-xs font-bold transition-all text-left flex flex-col justify-between ${
+                          imputacionPago === "manual"
+                            ? "bg-purple-50 border-purple-400 text-purple-800 ring-1 ring-purple-300"
+                            : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                        }`}
+                      >
+                        <span className="flex items-center gap-1">✏️ Personalizado</span>
+                        <span className="text-[10px] font-normal text-slate-500 mt-0.5">Dividir montos</span>
+                      </button>
+                    </div>
+
+                    {/* Inputs de división manual */}
+                    {imputacionPago === "manual" && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-indigo-100 animate-in fade-in duration-200">
+                        <div className="bg-indigo-50/60 p-2.5 rounded-lg border border-indigo-200">
+                          <label className="block text-[11px] font-bold text-indigo-900 mb-1 flex items-center justify-between">
+                            <span>A Deuda Congelada</span>
+                            <span className="text-[10px] text-indigo-600 font-normal">Máx: ${fmtMonto(saldoCongeladoSel)}</span>
+                          </label>
+                          <div className="relative">
+                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-indigo-700">$</span>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={montoCongeladoManual}
+                              onChange={e => {
+                                const val = e.target.value;
+                                setMontoCongeladoManual(val);
+                                const sum = (parseFloat(val) || 0) + (parseFloat(montoMesManual) || 0);
+                                setMontoPago(sum > 0 ? String(sum) : "");
+                              }}
+                              placeholder="0.00"
+                              className="w-full pl-6 pr-2 py-1.5 text-xs bg-white border border-indigo-300 rounded-lg outline-none font-bold text-indigo-900 focus:ring-1 focus:ring-indigo-500"
+                            />
+                          </div>
+                        </div>
+                        <div className="bg-sky-50/60 p-2.5 rounded-lg border border-sky-200">
+                          <label className="block text-[11px] font-bold text-sky-900 mb-1 flex items-center justify-between">
+                            <span>A Consumos Mes Actual</span>
+                            <span className="text-[10px] text-sky-600 font-normal">Máx: ${fmtMonto(consumosMesSel)}</span>
+                          </label>
+                          <div className="relative">
+                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-sky-700">$</span>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={montoMesManual}
+                              onChange={e => {
+                                const val = e.target.value;
+                                setMontoMesManual(val);
+                                const sum = (parseFloat(montoCongeladoManual) || 0) + (parseFloat(val) || 0);
+                                setMontoPago(sum > 0 ? String(sum) : "");
+                              }}
+                              placeholder="0.00"
+                              className="w-full pl-6 pr-2 py-1.5 text-xs bg-white border border-sky-300 rounded-lg outline-none font-bold text-sky-900 focus:ring-1 focus:ring-sky-500"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pt-1">
                   <div className="text-sm flex-1">
                     {montoPago && parseFloat(montoPago) > 0 ? (() => {
                       const montoPagoNum = parseFloat(montoPago);
                       const excedente = montoPagoNum - deudaActualSel;
                       const nuevaDeudaSiSuma = deudaActualSel + montoPagoNum;
+
+                      let abonoCongelado = 0;
+                      let abonoMes = 0;
+                      if (imputacionPago === "distribuir") {
+                        abonoCongelado = Math.min(montoPagoNum, Math.max(0, saldoCongeladoSel));
+                        abonoMes = Math.min(montoPagoNum - abonoCongelado, Math.max(0, consumosMesSel));
+                      } else if (imputacionPago === "saldo_congelado") {
+                        abonoCongelado = Math.min(montoPagoNum, Math.max(0, saldoCongeladoSel));
+                      } else {
+                        abonoMes = Math.min(montoPagoNum, Math.max(0, consumosMesSel));
+                      }
+
                       return (
                         <div className="flex flex-wrap items-center gap-2">
                           <div className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 font-medium">
@@ -1223,12 +1724,19 @@ function Deudores() {
                               {deudaActualSel <= 0
                                 ? `a favor $${fmtMonto(montoPagoNum)}`
                                 : montoPagoNum < deudaActualSel
-                                ? `resta $${fmtMonto(deudaActualSel - montoPagoNum)}`
+                                ? `resta total $${fmtMonto(deudaActualSel - montoPagoNum)}`
                                 : montoPagoNum === deudaActualSel
-                                ? "deuda saldada"
+                                ? "deuda total saldada"
                                 : `excedente $${fmtMonto(excedente)} ${guardarExcedente ? "(a favor)" : "(vuelto)"}`}
                             </span>
                           </div>
+                          {saldoCongeladoSel > 0 && consumosMesSel > 0 && (
+                            <div className="text-[11px] text-slate-500 font-medium flex items-center gap-1.5">
+                              <span>❄️ Ant: -${fmtMonto(abonoCongelado)}</span>
+                              <span>•</span>
+                              <span>📅 Mes: -${fmtMonto(abonoMes)}</span>
+                            </div>
+                          )}
                           <div className="bg-red-50 text-red-800 border border-red-200 px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 font-medium">
                             <AlertTriangle size={13} className="text-red-600" />
                             <span>
@@ -1347,6 +1855,365 @@ function Deudores() {
                   </div>
                 </div>
               </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== MODAL CIERRE DE CICLO MENSUAL ==================== */}
+      {modalCierreAbierto && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full max-h-[92vh] flex flex-col overflow-hidden border border-slate-100">
+            {/* Modal Header */}
+            <div className="p-5 sm:p-6 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-slate-50 via-white to-indigo-50/30">
+              <div className="flex items-center gap-3.5">
+                <div className="w-11 h-11 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shadow-md shadow-indigo-200">
+                  <Snowflake size={22} />
+                </div>
+                <div>
+                  <h3 className="text-lg sm:text-xl font-bold text-slate-900 flex items-center gap-2">
+                    Cierre y Congelamiento de Ciclo Mensual
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Segmenta temporalmente las deudas acumuladas e inicia el nuevo mes en $0.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="flex bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setVistaHistorialCierres(false)}
+                    className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                      !vistaHistorialCierres ? "bg-white text-indigo-700 shadow-xs" : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    Nuevo Cierre
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setVistaHistorialCierres(true)}
+                    className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                      vistaHistorialCierres ? "bg-white text-indigo-700 shadow-xs" : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    <History size={13} />
+                    Historial ({historialCierres.length})
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => setModalCierreAbierto(false)}
+                  className="w-9 h-9 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 flex items-center justify-center transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Content */}
+            {cargandoCierrePreview ? (
+              <div className="p-16 flex flex-col items-center justify-center text-slate-500">
+                <Loader2 size={36} className="animate-spin text-indigo-600 mb-3" />
+                <p className="text-sm font-medium">Cargando estado actual de cuentas corrientes...</p>
+              </div>
+            ) : !vistaHistorialCierres ? (
+              /* VISTA: NUEVO CIERRE */
+              <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-5">
+                {/* Parámetros del corte */}
+                <div className="bg-slate-50/80 border border-slate-200/80 rounded-2xl p-4 sm:p-5 space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                        Nombre del Período a Cerrar <span className="text-red-500">*</span>
+                      </label>
+                      <div className="relative">
+                        <Calendar size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          type="text"
+                          value={cierrePeriodo}
+                          onChange={e => setCierrePeriodo(e.target.value)}
+                          placeholder="Ej: Septiembre 2026"
+                          className="w-full pl-10 pr-3 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                        />
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        Las deudas pendientes de este ciclo quedarán bajo la etiqueta "{cierrePeriodo || "Mes anterior"}".
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                        Observación o Motivo (Opcional)
+                      </label>
+                      <input
+                        type="text"
+                        value={cierreObservacion}
+                        onChange={e => setCierreObservacion(e.target.value)}
+                        placeholder="Ej: Cierre fin de mes regular"
+                        className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Barra de herramientas y filtros de selección */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={toggleSeleccionarTodosCierre}
+                      className="px-3 py-1.5 text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors flex items-center gap-1.5"
+                    >
+                      {clientesSeleccionados.size === cierreClientes.length ? (
+                        <>
+                          <Square size={13} /> Deseleccionar Todos
+                        </>
+                      ) : (
+                        <>
+                          <CheckSquare size={13} /> Seleccionar Todos ({cierreClientes.length})
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={seleccionarSoloConDeudaCierre}
+                      className="px-3 py-1.5 text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg transition-colors"
+                    >
+                      Solo con Deuda Activa
+                    </button>
+                    <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full">
+                      {clientesSeleccionados.size} de {cierreClientes.length} seleccionados
+                    </span>
+                  </div>
+
+                  <div className="relative min-w-[200px]">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={busquedaCierre}
+                      onChange={e => setBusquedaCierre(e.target.value)}
+                      placeholder="Buscar cliente..."
+                      className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Tabla de clientes candidatos */}
+                {(() => {
+                  const clientesFiltrados = cierreClientes.filter(c =>
+                    c.nombre.toLowerCase().includes(busquedaCierre.toLowerCase()) ||
+                    (c.telefono || "").includes(busquedaCierre) ||
+                    (c.alias || "").toLowerCase().includes(busquedaCierre.toLowerCase())
+                  );
+                  const totalACongelar = cierreClientes
+                    .filter(c => clientesSeleccionados.has(c.id))
+                    .reduce((acc, c) => acc + Math.max(0, c.consumos_mes_actual || 0), 0);
+
+                  return (
+                    <div className="space-y-3">
+                      <div className="border border-slate-200 rounded-2xl overflow-hidden max-h-72 overflow-y-auto shadow-xs">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead className="bg-slate-100/80 sticky top-0 z-10 border-b border-slate-200 text-slate-600 font-bold">
+                            <tr>
+                              <th className="p-3 w-10 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={cierreClientes.length > 0 && clientesSeleccionados.size === cierreClientes.length}
+                                  onChange={toggleSeleccionarTodosCierre}
+                                  className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                />
+                              </th>
+                              <th className="p-3">Cliente</th>
+                              <th className="p-3 text-right">Consumos Mes Actual (A Congelar)</th>
+                              <th className="p-3 text-right">Saldo Ya Congelado</th>
+                              <th className="p-3 text-right">Total Deuda</th>
+                              <th className="p-3 text-center">Último Cierre</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {clientesFiltrados.length === 0 ? (
+                              <tr>
+                                <td colSpan={6} className="p-6 text-center text-slate-400 italic">
+                                  No se encontraron clientes con el filtro aplicado.
+                                </td>
+                              </tr>
+                            ) : (
+                              clientesFiltrados.map(c => {
+                                const sel = clientesSeleccionados.has(c.id);
+                                const consumoMes = c.consumos_mes_actual || 0;
+                                const congeladoPrev = c.saldo_congelado || c.saldo_congelado_actual || 0;
+                                const total = c.total_deuda || 0;
+                                return (
+                                  <tr
+                                    key={c.id}
+                                    onClick={() => toggleClienteSeleccionado(c.id)}
+                                    className={`cursor-pointer transition-colors ${
+                                      sel ? "bg-indigo-50/40 hover:bg-indigo-50/70" : "hover:bg-slate-50"
+                                    }`}
+                                  >
+                                    <td className="p-3 text-center" onClick={e => e.stopPropagation()}>
+                                      <input
+                                        type="checkbox"
+                                        checked={sel}
+                                        onChange={() => toggleClienteSeleccionado(c.id)}
+                                        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                      />
+                                    </td>
+                                    <td className="p-3">
+                                      <div className="font-bold text-slate-800">{c.nombre}</div>
+                                      <div className="text-[10px] text-slate-500">
+                                        {c.alias ? `"${c.alias}" • ` : ""}{c.telefono || "Sin teléfono"}
+                                      </div>
+                                    </td>
+                                    <td className="p-3 text-right">
+                                      <span className={`font-bold ${consumoMes > 0 ? "text-sky-700 bg-sky-50 px-2 py-0.5 rounded-full" : "text-slate-400"}`}>
+                                        ${fmtMonto(consumoMes)}
+                                      </span>
+                                    </td>
+                                    <td className="p-3 text-right">
+                                      <span className={`font-medium ${congeladoPrev > 0 ? "text-indigo-700" : "text-slate-400"}`}>
+                                        ${fmtMonto(congeladoPrev)}
+                                      </span>
+                                    </td>
+                                    <td className="p-3 text-right font-black text-slate-900">
+                                      ${fmtMonto(total)}
+                                    </td>
+                                    <td className="p-3 text-center">
+                                      {c.ultimo_cierre_periodo ? (
+                                        <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">
+                                          {c.ultimo_cierre_periodo}
+                                        </span>
+                                      ) : (
+                                        <span className="text-[10px] text-slate-400">Nunca</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                );
+                              })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Resumen del impacto y nota explicativa */}
+                      <div className="bg-indigo-50/60 border border-indigo-200/60 rounded-2xl p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                        <div className="flex items-start gap-3 text-xs text-indigo-950">
+                          <Lock size={18} className="text-indigo-600 shrink-0 mt-0.5" />
+                          <div>
+                            <p className="font-bold">Efecto del Cierre de Ciclo:</p>
+                            <p className="text-indigo-800/80 text-[11px] mt-0.5">
+                              Para los <strong>{clientesSeleccionados.size}</strong> clientes seleccionados, sus consumos pendientes se congelarán en "{cierrePeriodo || "Período anterior"}".
+                              Sus compras futuras sumarán en el nuevo mes partiendo de <strong>$0</strong>. Las ventas de este período quedarán bloqueadas contra edición o eliminación.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="shrink-0 bg-white border border-indigo-200 px-3.5 py-2 rounded-xl text-right shadow-xs">
+                          <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Total a Congelar</div>
+                          <div className="text-base font-black text-indigo-700">${fmtMonto(totalACongelar)}</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            ) : (
+              /* VISTA: HISTORIAL DE CIERRES */
+              <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                    <History size={16} className="text-indigo-600" /> Registro de Cierres Anteriores
+                  </h4>
+                  <span className="text-xs text-slate-500">{historialCierres.length} cortes ejecutados</span>
+                </div>
+
+                {historialCierres.length === 0 ? (
+                  <div className="p-12 text-center text-slate-400 border border-dashed border-slate-200 rounded-2xl">
+                    <Snowflake size={36} className="mx-auto mb-2 text-slate-300" />
+                    <p className="font-medium text-sm">No se han realizado cierres de ciclo aún.</p>
+                    <p className="text-xs text-slate-400 mt-1">Cuando ejecutes un corte mensual, quedará archivado aquí con opción de reversión.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {historialCierres.map(cierre => (
+                      <div
+                        key={cierre.id}
+                        className="bg-slate-50/70 border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:border-slate-300 transition-colors"
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-extrabold text-slate-900 text-sm">{cierre.periodo}</span>
+                            <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-bold">
+                              ID #{cierre.id}
+                            </span>
+                            <span className="text-xs text-slate-500">
+                              {fmtFecha(cierre.fecha)} {fmtHora(cierre.fecha)}
+                            </span>
+                          </div>
+                          <div className="text-xs text-slate-600 flex items-center gap-3">
+                            <span><strong>{cierre.clientes_afectados}</strong> clientes congelados</span>
+                            <span>•</span>
+                            <span>Monto consolidado: <strong className="text-indigo-700">${fmtMonto(cierre.monto_total_congelado)}</strong></span>
+                            {(cierre.usuario || cierre.creado_por) && (
+                              <>
+                                <span>•</span>
+                                <span>Por: {cierre.usuario || cierre.creado_por}</span>
+                              </>
+                            )}
+                          </div>
+                          {cierre.observacion && (
+                            <p className="text-[11px] text-slate-500 italic mt-0.5">"{cierre.observacion}"</p>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => deshacerCierreCiclo(cierre.id, cierre.periodo)}
+                          className="px-3.5 py-2 bg-white border border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-xs cursor-pointer shrink-0"
+                          title="Deshacer corte y devolver movimientos al período abierto"
+                        >
+                          <RotateCcw size={13} /> Deshacer Cierre
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Modal Footer */}
+            <div className="p-4 sm:p-5 border-t border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row justify-between items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setModalCierreAbierto(false)}
+                className="w-full sm:w-auto px-5 py-2.5 bg-white border border-slate-200 text-slate-700 font-bold rounded-xl hover:bg-slate-100 transition-colors text-sm"
+              >
+                Cerrar Ventana
+              </button>
+
+              {!vistaHistorialCierres && (
+                <button
+                  type="button"
+                  onClick={ejecutarCierreCiclo}
+                  disabled={ejecutandoCierre || clientesSeleccionados.size === 0 || !cierrePeriodo.trim()}
+                  className="w-full sm:w-auto px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md hover:shadow-lg transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm cursor-pointer"
+                >
+                  {ejecutandoCierre ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      <span>Procesando Cierre...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Snowflake size={16} />
+                      <span>
+                        Ejecutar Cierre ({clientesSeleccionados.size} Clientes)
+                      </span>
+                    </>
+                  )}
+                </button>
+              )}
             </div>
           </div>
         </div>

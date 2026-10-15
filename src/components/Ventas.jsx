@@ -312,6 +312,10 @@ function Ventas() {
         .then(res => res.json())
         .then(items => {
             if(items.length > 0) {
+                if (items[0].cerrado_ciclo === 1) {
+                    mostrarToastRapido("Este ticket pertenece a un período mensual cerrado y está protegido.", "err");
+                    return;
+                }
                 setMetodo(items[0].metodo_pago);
                 const nuevoCarrito = items.map(item => ({
                     id: item.original_id,
