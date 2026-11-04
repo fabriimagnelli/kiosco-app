@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { apiFetch } from "../lib/api";
 import { useNotify } from "../context/NotificationContext";
+import { formatFecha, formatHora } from "../lib/dateUtils";
 
 const DIAS_SEMANA = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
 const ESTADOS_ORDEN = {
@@ -16,7 +17,7 @@ const ESTADOS_ORDEN = {
 };
 
 const fmtMoney = (n) => `$${Number(n || 0).toLocaleString("es-AR", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-const fmtDate = (d) => d ? new Date(d).toLocaleDateString("es-AR") : "-";
+const fmtDate = (d) => formatFecha(d);
 
 // ─── TABS ─────────────────────────────────────────────
 const TABS = [
@@ -530,7 +531,7 @@ function TabProveedores() {
                   <tbody className="divide-y divide-slate-100 text-sm">
                     {historialSeleccionado.map((mov) => (
                       <tr key={mov.id}>
-                        <td className="p-4 text-slate-500">{fmtDate(mov.fecha)}<span className="block text-xs opacity-50">{new Date(mov.fecha).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span></td>
+                        <td className="p-4 text-slate-500">{fmtDate(mov.fecha)}<span className="block text-xs opacity-50">{formatHora(mov.fecha)}</span></td>
                         <td className="p-4 font-medium text-slate-700">
                           {mov.descripcion}
                           {mov.monto > 0 && (

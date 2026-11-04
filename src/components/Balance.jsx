@@ -3,12 +3,13 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { apiFetch } from "../lib/api";
 import { useNotify } from "../context/NotificationContext";
+import { getLocalDateString, formatFecha } from "../lib/dateUtils";
 
 function Balance() {
   const { toast } = useNotify();
   // Fechas por defecto: Primer día del mes hasta hoy
-  const hoy = new Date().toISOString().split('T')[0];
-  const primerDia = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
+  const hoy = getLocalDateString();
+  const primerDia = getLocalDateString(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
 
   const [desde, setDesde] = useState(primerDia);
   const [hasta, setHasta] = useState(hoy);
@@ -44,7 +45,7 @@ function Balance() {
     doc.text("Balance General de Movimientos", 105, 20, null, null, "center");
     
     doc.setFontSize(12);
-    doc.text(`Período: ${new Date(desde+"T00:00:00").toLocaleDateString("es-AR")} al ${new Date(hasta+"T00:00:00").toLocaleDateString("es-AR")}`, 105, 30, null, null, "center");
+    doc.text(`Período: ${formatFecha(desde)} al ${formatFecha(hasta)}`, 105, 30, null, null, "center");
 
     doc.line(20, 35, 190, 35);
 

@@ -186,8 +186,8 @@ const runStartupSchemaMigrations = async () => {
             hardware_id TEXT,
             estado TEXT DEFAULT 'activa',
             fecha_vencimiento TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            created_at DATETIME DEFAULT (datetime('now', 'localtime')),
+            updated_at DATETIME DEFAULT (datetime('now', 'localtime'))
         )`);
 
         const configColumns = await dbAll("PRAGMA table_info(configuracion)");
@@ -256,16 +256,16 @@ const initDB = async () => {
     try {
         await dbRun(`CREATE TABLE IF NOT EXISTS productos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, precio REAL NOT NULL, costo REAL DEFAULT 0, stock INTEGER DEFAULT 0, codigo_barras TEXT, categoria TEXT DEFAULT 'General')`);
         await dbRun(`CREATE TABLE IF NOT EXISTS cigarrillos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, precio REAL NOT NULL, precio_qr REAL DEFAULT 0, costo REAL DEFAULT 0, stock INTEGER DEFAULT 0, codigo_barras TEXT, pack TEXT DEFAULT '20')`);
-        await dbRun(`CREATE TABLE IF NOT EXISTS ventas (id INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id INTEGER, producto TEXT, cantidad INTEGER, precio_total REAL, precio_unitario REAL DEFAULT 0, cliente_id INTEGER DEFAULT NULL, metodo_pago TEXT, categoria TEXT, fecha DATETIME DEFAULT CURRENT_TIMESTAMP, pago_efectivo REAL DEFAULT 0, pago_digital REAL DEFAULT 0, editado INTEGER DEFAULT 0, cierre_id INTEGER DEFAULT NULL)`);
-        await dbRun(`CREATE TABLE IF NOT EXISTS fiados (id INTEGER PRIMARY KEY AUTOINCREMENT, cliente TEXT NOT NULL, cliente_id INTEGER, monto REAL NOT NULL, fecha DATETIME DEFAULT CURRENT_TIMESTAMP, descripcion TEXT, pagado INTEGER DEFAULT 0, metodo_pago TEXT DEFAULT 'Efectivo', cierre_id INTEGER DEFAULT NULL)`);
+        await dbRun(`CREATE TABLE IF NOT EXISTS ventas (id INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id INTEGER, producto TEXT, cantidad INTEGER, precio_total REAL, precio_unitario REAL DEFAULT 0, cliente_id INTEGER DEFAULT NULL, metodo_pago TEXT, categoria TEXT, fecha DATETIME DEFAULT (datetime('now', 'localtime')), pago_efectivo REAL DEFAULT 0, pago_digital REAL DEFAULT 0, editado INTEGER DEFAULT 0, cierre_id INTEGER DEFAULT NULL)`);
+        await dbRun(`CREATE TABLE IF NOT EXISTS fiados (id INTEGER PRIMARY KEY AUTOINCREMENT, cliente TEXT NOT NULL, cliente_id INTEGER, monto REAL NOT NULL, fecha DATETIME DEFAULT (datetime('now', 'localtime')), descripcion TEXT, pagado INTEGER DEFAULT 0, metodo_pago TEXT DEFAULT 'Efectivo', cierre_id INTEGER DEFAULT NULL)`);
         await dbRun(`CREATE TABLE IF NOT EXISTS clientes (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, telefono TEXT, direccion TEXT, email TEXT)`);
         await dbRun(`CREATE TABLE IF NOT EXISTS proveedores (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, telefono TEXT, direccion TEXT, dia_visita TEXT, rubro TEXT)`);
-        await dbRun(`CREATE TABLE IF NOT EXISTS gastos (id INTEGER PRIMARY KEY AUTOINCREMENT, descripcion TEXT NOT NULL, monto REAL NOT NULL, categoria TEXT DEFAULT 'General', fecha DATETIME DEFAULT CURRENT_TIMESTAMP, cierre_id INTEGER DEFAULT NULL, metodo_pago TEXT DEFAULT 'Efectivo')`);
+        await dbRun(`CREATE TABLE IF NOT EXISTS gastos (id INTEGER PRIMARY KEY AUTOINCREMENT, descripcion TEXT NOT NULL, monto REAL NOT NULL, categoria TEXT DEFAULT 'General', fecha DATETIME DEFAULT (datetime('now', 'localtime')), cierre_id INTEGER DEFAULT NULL, metodo_pago TEXT DEFAULT 'Efectivo')`);
         await dbRun(`CREATE TABLE IF NOT EXISTS caja_diaria (id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT UNIQUE, inicio_caja REAL DEFAULT 0, total_efectivo REAL DEFAULT 0, total_digital REAL DEFAULT 0, gastos REAL DEFAULT 0, retiros REAL DEFAULT 0, diferencia REAL DEFAULT 0, cerrado INTEGER DEFAULT 0)`);
-        await dbRun(`CREATE TABLE IF NOT EXISTS movimientos_proveedores (id INTEGER PRIMARY KEY AUTOINCREMENT, proveedor_id INTEGER, monto REAL, descripcion TEXT, metodo_pago TEXT DEFAULT 'Efectivo', fecha DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+        await dbRun(`CREATE TABLE IF NOT EXISTS movimientos_proveedores (id INTEGER PRIMARY KEY AUTOINCREMENT, proveedor_id INTEGER, monto REAL, descripcion TEXT, metodo_pago TEXT DEFAULT 'Efectivo', fecha DATETIME DEFAULT (datetime('now', 'localtime')))`);
         await dbRun(`CREATE TABLE IF NOT EXISTS caja_cigarrillos (id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT UNIQUE, inicio REAL DEFAULT 0)`);
-        await dbRun(`CREATE TABLE IF NOT EXISTS retiros (id INTEGER PRIMARY KEY AUTOINCREMENT, descripcion TEXT, monto REAL NOT NULL, fecha DATETIME DEFAULT CURRENT_TIMESTAMP, cierre_id INTEGER DEFAULT NULL)`);
-        await dbRun(`CREATE TABLE IF NOT EXISTS historial_cierres (id INTEGER PRIMARY KEY AUTOINCREMENT, fecha DATETIME DEFAULT CURRENT_TIMESTAMP, tipo TEXT DEFAULT 'General', total_ventas REAL, total_gastos REAL, total_efectivo_real REAL, monto_retiro REAL, observacion TEXT)`);
+        await dbRun(`CREATE TABLE IF NOT EXISTS retiros (id INTEGER PRIMARY KEY AUTOINCREMENT, descripcion TEXT, monto REAL NOT NULL, fecha DATETIME DEFAULT (datetime('now', 'localtime')), cierre_id INTEGER DEFAULT NULL)`);
+        await dbRun(`CREATE TABLE IF NOT EXISTS historial_cierres (id INTEGER PRIMARY KEY AUTOINCREMENT, fecha DATETIME DEFAULT (datetime('now', 'localtime')), tipo TEXT DEFAULT 'General', total_ventas REAL, total_gastos REAL, total_efectivo_real REAL, monto_retiro REAL, observacion TEXT)`);
         await dbRun(`CREATE TABLE IF NOT EXISTS promos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, precio REAL NOT NULL, codigo_barras TEXT, componentes TEXT)`);
         await dbRun(`CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL UNIQUE, password TEXT NOT NULL, rol TEXT DEFAULT 'cajero', activo INTEGER DEFAULT 1)`);
 
@@ -347,7 +347,7 @@ const initDB = async () => {
             tipo TEXT NOT NULL,
             descripcion TEXT DEFAULT '',
             ticket_id INTEGER,
-            fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+            fecha DATETIME DEFAULT (datetime('now', 'localtime'))
         )`);
         await ensureColumn("productos", "stock_minimo", "INTEGER DEFAULT 5");
         await ensureColumn("cigarrillos", "stock_minimo", "INTEGER DEFAULT 5");
@@ -366,7 +366,7 @@ const initDB = async () => {
 
         await dbRun(`CREATE TABLE IF NOT EXISTS cierres_cuentas_corrientes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+            fecha DATETIME DEFAULT (datetime('now', 'localtime')),
             periodo TEXT NOT NULL,
             clientes_afectados INTEGER DEFAULT 0,
             monto_total_congelado REAL DEFAULT 0,
@@ -379,7 +379,7 @@ const initDB = async () => {
             cliente_id INTEGER NOT NULL,
             cliente_nombre TEXT NOT NULL,
             saldo_congelado REAL NOT NULL,
-            fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+            fecha DATETIME DEFAULT (datetime('now', 'localtime'))
         )`);
 
 
@@ -432,7 +432,7 @@ const initDB = async () => {
             precio_nuevo REAL,
             costo_anterior REAL,
             costo_nuevo REAL,
-            fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+            fecha DATETIME DEFAULT (datetime('now', 'localtime')),
             usuario TEXT DEFAULT ''
         )`);
 
@@ -444,7 +444,7 @@ const initDB = async () => {
             cantidad INTEGER NOT NULL,
             monto REAL NOT NULL,
             motivo TEXT DEFAULT '',
-            fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+            fecha DATETIME DEFAULT (datetime('now', 'localtime'))
         )`);
 
         // --- TABLAS NUEVAS: Caja y Finanzas ---
@@ -456,7 +456,7 @@ const initDB = async () => {
             monto REAL NOT NULL,
             observacion TEXT DEFAULT '',
             usuario TEXT DEFAULT '',
-            fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+            fecha DATETIME DEFAULT (datetime('now', 'localtime'))
         )`);
 
         // 24. Arqueo de caja con foto
@@ -467,7 +467,7 @@ const initDB = async () => {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             nombre TEXT NOT NULL,
             activa INTEGER DEFAULT 1,
-            fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP
+            fecha_creacion DATETIME DEFAULT (datetime('now', 'localtime'))
         )`);
         // Insertar caja principal si no existe
         const cajaDefault = await dbGet("SELECT id FROM cajas WHERE id = 1");
@@ -488,7 +488,7 @@ const initDB = async () => {
             estado TEXT DEFAULT 'pendiente',
             observacion TEXT DEFAULT '',
             total REAL DEFAULT 0,
-            fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
+            fecha_creacion DATETIME DEFAULT (datetime('now', 'localtime')),
             fecha_entrega TEXT DEFAULT '',
             fecha_recibido TEXT DEFAULT '',
             recibido_por TEXT DEFAULT ''
@@ -527,7 +527,7 @@ const initDB = async () => {
             diferencia REAL DEFAULT 0,
             observacion TEXT DEFAULT '',
             items TEXT DEFAULT '[]',
-            fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+            fecha DATETIME DEFAULT (datetime('now', 'localtime'))
         )`);
 
         // Migración: asegurar que la tabla usuarios tenga la estructura correcta
@@ -538,6 +538,37 @@ const initDB = async () => {
             console.log("[MIGRACIÓN] Recreando tabla usuarios con estructura correcta...");
             await dbRun("DROP TABLE IF EXISTS usuarios");
             await dbRun(`CREATE TABLE usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL UNIQUE, password TEXT NOT NULL, rol TEXT DEFAULT 'cajero', activo INTEGER DEFAULT 1)`);
+        }
+
+
+        // --- Migración: Unificar fechas de transacciones a hora local ---
+        try {
+            const migFechas = await dbGet("SELECT value FROM configuracion WHERE key = 'migracion_fechas_localtime_v2'");
+            if (!migFechas) {
+                console.log("[MIGRACIÓN] Corrigiendo timestamps UTC / legacy a hora local...");
+                await dbRun(`UPDATE fiados SET fecha = datetime(fecha, 'localtime') WHERE fecha IS NOT NULL AND fecha NOT LIKE '%/%' AND length(fecha) >= 19`);
+                await dbRun(`UPDATE gastos SET fecha = datetime(fecha, 'localtime') WHERE fecha IS NOT NULL AND fecha NOT LIKE '%/%' AND length(fecha) >= 19`);
+                await dbRun(`UPDATE movimientos_proveedores SET fecha = datetime(fecha, 'localtime') WHERE fecha IS NOT NULL AND fecha NOT LIKE '%/%' AND length(fecha) >= 19`);
+                await dbRun(`UPDATE cierres_cuentas_corrientes SET fecha = datetime(fecha, 'localtime') WHERE fecha IS NOT NULL AND fecha NOT LIKE '%/%' AND length(fecha) >= 19`);
+                await dbRun(`UPDATE cierres_cuentas_corrientes_detalle SET fecha = datetime(fecha, 'localtime') WHERE fecha IS NOT NULL AND fecha NOT LIKE '%/%' AND length(fecha) >= 19`);
+                await dbRun(`UPDATE historial_precios SET fecha = datetime(fecha, 'localtime') WHERE fecha IS NOT NULL AND fecha NOT LIKE '%/%' AND length(fecha) >= 19`);
+                const retirosLegacy = await dbAll("SELECT id, fecha FROM retiros WHERE fecha LIKE '%/%'");
+                if (retirosLegacy && retirosLegacy.length > 0) {
+                    for (const r of retirosLegacy) {
+                        const m = String(r.fecha).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+                        if (m) {
+                            const [, d, mo, y, h, min, s] = m;
+                            const pad = (n) => String(n).padStart(2, '0');
+                            const fechaNorm = `${y}-${pad(mo)}-${pad(d)} ${pad(h || 0)}:${pad(min || 0)}:${pad(s || 0)}`;
+                            await dbRun("UPDATE retiros SET fecha = ? WHERE id = ?", [fechaNorm, r.id]);
+                        }
+                    }
+                }
+                await dbRun("INSERT OR REPLACE INTO configuracion (key, value) VALUES ('migracion_fechas_localtime_v2', '1')");
+                console.log("[MIGRACIÓN] Fechas de transacciones corregidas exitosamente a hora local.");
+            }
+        } catch (migErr) {
+            console.error("[MIGRACIÓN] Error en migración de fechas:", migErr.message);
         }
 
         console.log("DB inicializada.");
@@ -1117,18 +1148,23 @@ app.get("/api/retiros", async (req, res) => {
         const manuales = await dbAll("SELECT id, fecha, descripcion, monto, 'MANUAL' as tipo FROM retiros");
         const cierres = await dbAll(`SELECT id, fecha, CASE WHEN tipo = 'cigarrillos' THEN 'Retiro Caja Cigarrillos' ELSE 'Retiro Caja General' END as descripcion, monto_retiro as monto, 'CIERRE' as tipo, id as cierre_id FROM historial_cierres WHERE monto_retiro > 0`);
         // Combinar y ordenar por fecha, manteniendo los más recientes primero
-        const historial = [...manuales, ...cierres].sort((a, b) => {
-            const dateA = a.fecha ? new Date(a.fecha).getTime() : 0;
-            const dateB = b.fecha ? new Date(b.fecha).getTime() : 0;
-            return dateB - dateA;
-        });
+        const parseFechaMs = (f) => {
+            if (!f) return 0;
+            const s = String(f).trim();
+            const dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+            if (dmy) {
+                const [, d, mo, y, h, min, sec] = dmy;
+                return new Date(parseInt(y, 10), parseInt(mo, 10) - 1, parseInt(d, 10), h ? parseInt(h, 10) : 0, min ? parseInt(min, 10) : 0, sec ? parseInt(sec, 10) : 0).getTime() || 0;
+            }
+            return new Date(s.includes('T') ? s : s.replace(' ', 'T')).getTime() || 0;
+        };
+        const historial = [...manuales, ...cierres].sort((a, b) => parseFechaMs(b.fecha) - parseFechaMs(a.fecha));
         const total = historial.reduce((acc, item) => acc + (item.monto || 0), 0);
         res.json({ historial, total });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.post("/api/retiros", (req, res) => {
-    const fecha = new Date().toLocaleString('es-AR');
-    db.run("INSERT INTO retiros (descripcion, monto, fecha) VALUES (?,?,?)", [req.body.descripcion, req.body.monto, fecha], (err) => err ? res.status(500).json({ error: err.message }) : res.json({ success: true }));
+    db.run("INSERT INTO retiros (descripcion, monto, fecha) VALUES (?,?, datetime('now', 'localtime'))", [req.body.descripcion, req.body.monto], (err) => err ? res.status(500).json({ error: err.message }) : res.json({ success: true }));
 });
 app.delete("/api/retiros/:id", async (req, res) => {
     try {
@@ -1331,7 +1367,7 @@ app.post("/api/conciliacion", async (req, res) => {
     try {
         const { fecha_desde, fecha_hasta, total_sistema, total_banco, diferencia, observacion, items } = req.body;
         await dbRun(
-            "INSERT INTO conciliacion_bancaria (fecha_desde, fecha_hasta, total_sistema, total_banco, diferencia, observacion, items) VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO conciliacion_bancaria (fecha_desde, fecha_hasta, total_sistema, total_banco, diferencia, observacion, items, fecha) VALUES (?,?,?,?,?,?,?, datetime('now', 'localtime'))",
             [fecha_desde, fecha_hasta, total_sistema || 0, total_banco || 0, diferencia || 0, observacion || '', JSON.stringify(items || [])]
         );
         res.json({ success: true });
@@ -1538,7 +1574,7 @@ app.post("/api/clientes", (req, res) => {
                     }
                     const nuevoId = this.lastID;
                     if (saldoInicial > 0) {
-                        db.run("INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago) VALUES (?,?,?,?,?)",
+                        db.run("INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, fecha) VALUES (?,?,?,?,?, datetime('now', 'localtime'))",
                             [nombre, nuevoId, saldoInicial, "Saldo inicial (Traspaso de libreta)", "Sistema"],
                             function (err) {
                                 if (err) {
@@ -1580,7 +1616,7 @@ app.put("/api/clientes/:id", (req, res) => {
                         return res.status(500).json({ error: err.message });
                     }
                     if (montoAjuste > 0) {
-                        db.run("INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago) VALUES (?,?,?,?,?)",
+                        db.run("INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, fecha) VALUES (?,?,?,?,?, datetime('now', 'localtime'))",
                             [req.body.nombre, req.params.id, montoAjuste, "Ajuste manual / Carga de deuda", "Sistema"],
                             function (err) {
                                 if (err) {
@@ -1682,7 +1718,7 @@ app.post("/api/clientes/:id/canjear_puntos", async (req, res) => {
         const descuento = (puntosACanjear / valorPorPunto);
 
         await dbRun("UPDATE clientes SET puntos = puntos - ?, puntos_canjeados = puntos_canjeados + ? WHERE id=?", [puntosACanjear, puntosACanjear, req.params.id]);
-        await dbRun("INSERT INTO puntos_historial (cliente_id, puntos, tipo, descripcion) VALUES (?,?,?,?)",
+        await dbRun("INSERT INTO puntos_historial (cliente_id, puntos, tipo, descripcion, fecha) VALUES (?,?,?,?, datetime('now', 'localtime'))",
             [req.params.id, -puntosACanjear, 'canje', `Canje por $${descuento.toFixed(2)} de descuento`]);
 
         res.json({ success: true, descuento, puntos_restantes: cliente.puntos - puntosACanjear });
@@ -1695,7 +1731,7 @@ app.post("/api/clientes/:id/ajustar_puntos", async (req, res) => {
         const puntos = parseInt(req.body.puntos) || 0;
         if (puntos === 0) return res.status(400).json({ error: "Monto inválido" });
         await dbRun("UPDATE clientes SET puntos = MAX(0, puntos + ?) WHERE id=?", [puntos, req.params.id]);
-        await dbRun("INSERT INTO puntos_historial (cliente_id, puntos, tipo, descripcion) VALUES (?,?,?,?)",
+        await dbRun("INSERT INTO puntos_historial (cliente_id, puntos, tipo, descripcion, fecha) VALUES (?,?,?,?, datetime('now', 'localtime'))",
             [req.params.id, puntos, 'ajuste', req.body.descripcion || 'Ajuste manual']);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1771,7 +1807,7 @@ app.post("/api/fiados", async (req, res) => {
                     if (mCongelado > 0) {
                         const desc = descripcion ? `${descripcion} - Saldo congelado${periodoTag}` : `Pago a saldo congelado${periodoTag}`;
                         const r = await dbRun(
-                            "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, ciclo_cerrado, imputacion) VALUES (?,?,?,?,?,?,?)",
+                            "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, ciclo_cerrado, imputacion, fecha) VALUES (?,?,?,?,?,?,?, datetime('now', 'localtime'))",
                             [clienteNombre, cliente_id, -mCongelado, desc, metodo, 1, 'saldo_congelado']
                         );
                         lastId = r.lastID;
@@ -1779,7 +1815,7 @@ app.post("/api/fiados", async (req, res) => {
                     if (mMes > 0) {
                         const desc = descripcion ? `${descripcion} - Mes actual` : "Pago a consumos del mes en curso";
                         const r = await dbRun(
-                            "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, ciclo_cerrado, imputacion) VALUES (?,?,?,?,?,?,?)",
+                            "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, ciclo_cerrado, imputacion, fecha) VALUES (?,?,?,?,?,?,?, datetime('now', 'localtime'))",
                             [clienteNombre, cliente_id, -mMes, desc, metodo, 0, 'mes_actual']
                         );
                         lastId = r.lastID;
@@ -1809,7 +1845,7 @@ app.post("/api/fiados", async (req, res) => {
                         let lastId = null;
                         const descC = descripcion ? `${descripcion} - Saldo congelado${periodoTag}` : `Pago a saldo congelado${periodoTag}`;
                         const r1 = await dbRun(
-                            "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, ciclo_cerrado, imputacion) VALUES (?,?,?,?,?,?,?)",
+                            "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, ciclo_cerrado, imputacion, fecha) VALUES (?,?,?,?,?,?,?, datetime('now', 'localtime'))",
                             [clienteNombre, cliente_id, -parteCongelada, descC, metodo, 1, 'saldo_congelado']
                         );
                         lastId = r1.lastID;
@@ -1817,7 +1853,7 @@ app.post("/api/fiados", async (req, res) => {
                         if (parteMes > 0) {
                             const descM = descripcion ? `${descripcion} - Mes actual` : "Pago a consumos del mes en curso";
                             const r2 = await dbRun(
-                                "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, ciclo_cerrado, imputacion) VALUES (?,?,?,?,?,?,?)",
+                                "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, ciclo_cerrado, imputacion, fecha) VALUES (?,?,?,?,?,?,?, datetime('now', 'localtime'))",
                                 [clienteNombre, cliente_id, -parteMes, descM, metodo, 0, 'mes_actual']
                             );
                             lastId = r2.lastID;
@@ -1835,7 +1871,7 @@ app.post("/api/fiados", async (req, res) => {
             if (imputacion === 'saldo_congelado') {
                 const desc = descripcion ? `${descripcion} - Saldo congelado${periodoTag}` : `Pago a saldo congelado${periodoTag}`;
                 const insert = await dbRun(
-                    "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, ciclo_cerrado, imputacion) VALUES (?,?,?,?,?,?,?)",
+                    "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, ciclo_cerrado, imputacion, fecha) VALUES (?,?,?,?,?,?,?, datetime('now', 'localtime'))",
                     [clienteNombre, cliente_id, -pagoTotal, desc, metodo, 1, 'saldo_congelado']
                 );
                 return res.json({ success: true, id: insert.lastID });
@@ -1844,7 +1880,7 @@ app.post("/api/fiados", async (req, res) => {
             // Caso 4: imputacion === 'mes_actual' (o default)
             const desc = descripcion ? `${descripcion} - Mes actual` : "Pago a consumos del mes en curso";
             const insert = await dbRun(
-                "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, ciclo_cerrado, imputacion) VALUES (?,?,?,?,?,?,?)",
+                "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, ciclo_cerrado, imputacion, fecha) VALUES (?,?,?,?,?,?,?, datetime('now', 'localtime'))",
                 [clienteNombre, cliente_id, -pagoTotal, desc, metodo, 0, 'mes_actual']
             );
             return res.json({ success: true, id: insert.lastID });
@@ -1852,7 +1888,7 @@ app.post("/api/fiados", async (req, res) => {
 
         // Si es carga de deuda manual (monto positivo)
         const insert = await dbRun(
-            "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, ciclo_cerrado, imputacion) VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, ciclo_cerrado, imputacion, fecha) VALUES (?,?,?,?,?,?,?, datetime('now', 'localtime'))",
             [clienteNombre, cliente_id, numMonto, descripcion || 'Carga de deuda', metodo, 0, 'mes_actual']
         );
         res.json({ success: true, id: insert.lastID });
@@ -1930,7 +1966,7 @@ app.post("/api/cuentas_corrientes/ejecutar_cierre", async (req, res) => {
         await dbRun("BEGIN TRANSACTION");
         try {
             const cierreInsert = await dbRun(
-                "INSERT INTO cierres_cuentas_corrientes (periodo, clientes_afectados, monto_total_congelado, observacion) VALUES (?, ?, 0, ?)",
+                "INSERT INTO cierres_cuentas_corrientes (periodo, clientes_afectados, monto_total_congelado, observacion, fecha) VALUES (?, ?, 0, ?, datetime('now', 'localtime'))",
                 [periodoLimpio, cliente_ids.length, observacion || '']
             );
             const cierreId = cierreInsert.lastID;
@@ -1960,13 +1996,13 @@ app.post("/api/cuentas_corrientes/ejecutar_cierre", async (req, res) => {
 
                 // Actualizar registro del cliente con el último período cerrado
                 await dbRun(
-                    "UPDATE clientes SET ultimo_cierre_periodo = ?, ultimo_cierre_fecha = CURRENT_TIMESTAMP WHERE id = ?",
+                    "UPDATE clientes SET ultimo_cierre_periodo = ?, ultimo_cierre_fecha = datetime('now', 'localtime') WHERE id = ?",
                     [periodoLimpio, cId]
                 );
 
                 // Registrar en detalle
                 await dbRun(
-                    "INSERT INTO cierres_cuentas_corrientes_detalle (cierre_id, cliente_id, cliente_nombre, saldo_congelado) VALUES (?, ?, ?, ?)",
+                    "INSERT INTO cierres_cuentas_corrientes_detalle (cierre_id, cliente_id, cliente_nombre, saldo_congelado, fecha) VALUES (?, ?, ?, ?, datetime('now', 'localtime'))",
                     [cierreId, cId, cli.nombre, pendienteMonto]
                 );
 
@@ -2088,7 +2124,7 @@ const aplicarRecargoMora = async (porcentaje, enTransaccion = false) => {
             if (c.recargo <= 0) continue;
             monto_total += c.recargo;
             const insert = await dbRun(
-                "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago) VALUES (?,?,?,?,?)",
+                "INSERT INTO fiados (cliente, cliente_id, monto, descripcion, metodo_pago, fecha) VALUES (?,?,?,?,?, datetime('now', 'localtime'))",
                 [c.nombre, c.id, c.recargo, descripcion, "Recargo"]
             );
             aplicados.push({ cliente_id: c.id, nombre: c.nombre, recargo: c.recargo, fiado_id: insert.lastID });
@@ -2228,21 +2264,20 @@ app.get("/api/movimientos_proveedores/:id", (req, res) => { db.all("SELECT * FRO
 app.post("/api/movimientos_proveedores", async (req, res) => {
     try {
         await dbRun("BEGIN TRANSACTION");
-        const movResult = await dbRun("INSERT INTO movimientos_proveedores (proveedor_id, monto, descripcion, metodo_pago) VALUES (?,?,?,?)", [req.body.proveedor_id, req.body.monto, req.body.descripcion, req.body.metodo_pago || 'Efectivo']);
+        const movResult = await dbRun("INSERT INTO movimientos_proveedores (proveedor_id, monto, descripcion, metodo_pago, fecha) VALUES (?,?,?,?, datetime('now', 'localtime'))", [req.body.proveedor_id, req.body.monto, req.body.descripcion, req.body.metodo_pago || 'Efectivo']);
         const movimientoId = movResult.lastID;
         if (req.body.monto < 0) {
             const prov = await dbGet("SELECT nombre FROM proveedores WHERE id = ?", [req.body.proveedor_id]);
             const desc = `Pago Proveedor: ${prov ? prov.nombre : ''}`;
             if (req.body.metodo_pago === 'Retiros') {
                 console.log(`[DEBUG] Insertando en retiros: desc="${desc}", monto=${req.body.monto}`);
-                const fecha = new Date().toLocaleString('es-AR');
-                const retiroResult = await dbRun("INSERT INTO retiros (descripcion, monto, fecha) VALUES (?, ?, ?)", [desc, req.body.monto, fecha]);
+                const retiroResult = await dbRun("INSERT INTO retiros (descripcion, monto, fecha) VALUES (?, ?, datetime('now', 'localtime'))", [desc, req.body.monto]);
                 const retiroId = retiroResult.lastID;
-                await dbRun("INSERT INTO gastos (descripcion, monto, categoria, metodo_pago, movimiento_id, retiro_id) VALUES (?,?,?,?,?,?)", [desc, Math.abs(req.body.monto), 'Proveedores', 'Retiros', movimientoId, retiroId]);
+                await dbRun("INSERT INTO gastos (descripcion, monto, categoria, metodo_pago, movimiento_id, retiro_id, fecha) VALUES (?,?,?,?,?,?, datetime('now', 'localtime'))", [desc, Math.abs(req.body.monto), 'Proveedores', 'Retiros', movimientoId, retiroId]);
             } else if (!req.body.metodo_pago || req.body.metodo_pago === 'Efectivo') {
-                await dbRun("INSERT INTO gastos (descripcion, monto, categoria, metodo_pago, movimiento_id) VALUES (?,?,?,?,?)", [desc, Math.abs(req.body.monto), 'Proveedores', 'Efectivo', movimientoId]);
+                await dbRun("INSERT INTO gastos (descripcion, monto, categoria, metodo_pago, movimiento_id, fecha) VALUES (?,?,?,?,?, datetime('now', 'localtime'))", [desc, Math.abs(req.body.monto), 'Proveedores', 'Efectivo', movimientoId]);
             } else {
-                await dbRun("INSERT INTO gastos (descripcion, monto, categoria, metodo_pago, movimiento_id) VALUES (?,?,?,?,?)", [desc, Math.abs(req.body.monto), 'Proveedores', req.body.metodo_pago, movimientoId]);
+                await dbRun("INSERT INTO gastos (descripcion, monto, categoria, metodo_pago, movimiento_id, fecha) VALUES (?,?,?,?,?, datetime('now', 'localtime'))", [desc, Math.abs(req.body.monto), 'Proveedores', req.body.metodo_pago, movimientoId]);
             }
         }
         await dbRun("COMMIT");
@@ -2297,7 +2332,7 @@ app.post("/api/ordenes_compra", async (req, res) => {
         if (!proveedor_id || !items || !items.length) return res.status(400).json({ error: "Proveedor e items requeridos" });
         const total = items.reduce((s, i) => s + (i.cantidad * i.costo_unitario), 0);
         await dbRun("BEGIN TRANSACTION");
-        const result = await dbRun("INSERT INTO ordenes_compra (proveedor_id, observacion, total, fecha_entrega) VALUES (?,?,?,?)",
+        const result = await dbRun("INSERT INTO ordenes_compra (proveedor_id, observacion, total, fecha_entrega, fecha_creacion) VALUES (?,?,?,?, datetime('now', 'localtime'))",
             [proveedor_id, observacion || '', total, fecha_entrega || '']);
         const ordenId = result.lastID;
         for (const item of items) {
@@ -2358,7 +2393,7 @@ app.post("/api/ordenes_compra/:id/recibir", async (req, res) => {
         await dbRun("UPDATE ordenes_compra SET estado=?, fecha_recibido=datetime('now','localtime') WHERE id=?", [nuevoEstado, req.params.id]);
         // Registrar movimiento como deuda con proveedor
         if (totalRecibido > 0) {
-            await dbRun("INSERT INTO movimientos_proveedores (proveedor_id, monto, descripcion, metodo_pago) VALUES (?,?,?,?)",
+            await dbRun("INSERT INTO movimientos_proveedores (proveedor_id, monto, descripcion, metodo_pago, fecha) VALUES (?,?,?,?, datetime('now', 'localtime'))",
                 [orden.proveedor_id, totalRecibido, `Orden #${req.params.id} - ${observacion || 'Recepción de mercadería'}`, 'Cuenta Corriente']);
         }
         await dbRun("COMMIT");
@@ -2462,7 +2497,7 @@ app.post("/api/productos", (req, res) => {
         if (err) return res.status(500).json({ error: err.message });
         const prodId = this.lastID;
         // Registrar precio inicial en historial
-        db.run("INSERT INTO historial_precios (producto_id, tipo_producto, precio_anterior, precio_nuevo, costo_anterior, costo_nuevo) VALUES (?,?,?,?,?,?)",
+        db.run("INSERT INTO historial_precios (producto_id, tipo_producto, precio_anterior, precio_nuevo, costo_anterior, costo_nuevo, fecha) VALUES (?,?,?,?,?,?, datetime('now', 'localtime'))",
             [prodId, 'producto', 0, req.body.precio, 0, req.body.costo || 0]);
         res.json({ id: prodId });
     });
@@ -2490,7 +2525,7 @@ app.put("/api/productos/:id", async (req, res) => {
 
         // Registrar cambio de precio si hubo diferencia
         if (actual && (actual.precio !== precioNuevo || actual.costo !== costoNuevo)) {
-            await dbRun("INSERT INTO historial_precios (producto_id, tipo_producto, precio_anterior, precio_nuevo, costo_anterior, costo_nuevo, usuario) VALUES (?,?,?,?,?,?,?)",
+            await dbRun("INSERT INTO historial_precios (producto_id, tipo_producto, precio_anterior, precio_nuevo, costo_anterior, costo_nuevo, usuario, fecha) VALUES (?,?,?,?,?,?,?, datetime('now', 'localtime'))",
                 [req.params.id, 'producto', actual.precio, precioNuevo, actual.costo, costoNuevo, req.body.usuario || '']);
         }
 
@@ -2558,7 +2593,7 @@ app.post("/api/productos/ajuste_masivo", async (req, res) => {
                 if (nuevo === prod.precio) continue;
 
                 await dbRun("UPDATE productos SET precio = ? WHERE id = ?", [nuevo, id]);
-                await dbRun("INSERT INTO historial_precios (producto_id, tipo_producto, precio_anterior, precio_nuevo, costo_anterior, costo_nuevo, usuario) VALUES (?,?,?,?,?,?,?)",
+                await dbRun("INSERT INTO historial_precios (producto_id, tipo_producto, precio_anterior, precio_nuevo, costo_anterior, costo_nuevo, usuario, fecha) VALUES (?,?,?,?,?,?,?, datetime('now', 'localtime'))",
                     [id, 'producto', prod.precio, nuevo, prod.costo, prod.costo, req.body.usuario || 'Ajuste masivo']);
                 actualizados++;
             }
@@ -2788,7 +2823,7 @@ app.post("/api/ventas", async (req, res) => {
                     throw new Error(`Límite de crédito excedido. Límite: $${cli.limite_credito.toFixed(2)}, Deuda actual: $${(deudaActual?.total || 0).toFixed(2)}, Nuevo fiado: $${deuda.toFixed(2)}`);
                 }
             }
-            if (deuda > 0) await dbRun("INSERT INTO fiados (cliente, cliente_id, monto, descripcion) VALUES (?, ?, ?, ?)", [cli ? cli.nombre : "Desconocido", cliente_id, deuda, `Fiado Ticket ${ticket_id}`]);
+            if (deuda > 0) await dbRun("INSERT INTO fiados (cliente, cliente_id, monto, descripcion, fecha) VALUES (?, ?, ?, ?, datetime('now', 'localtime'))", [cli ? cli.nombre : "Desconocido", cliente_id, deuda, `Fiado Ticket ${ticket_id}`]);
         }
         // Acumular puntos de fidelización si el cliente está identificado
         if (cliente_id && metodo_pago !== 'Fiado') {
@@ -2800,7 +2835,7 @@ app.post("/api/ventas", async (req, res) => {
                     const puntosGanados = Math.floor(total / ratio); // 1 punto por cada $ratio
                     if (puntosGanados > 0) {
                         await dbRun("UPDATE clientes SET puntos = puntos + ? WHERE id = ?", [puntosGanados, cliente_id]);
-                        await dbRun("INSERT INTO puntos_historial (cliente_id, puntos, tipo, descripcion, ticket_id) VALUES (?,?,?,?,?)",
+                        await dbRun("INSERT INTO puntos_historial (cliente_id, puntos, tipo, descripcion, ticket_id, fecha) VALUES (?,?,?,?,?, datetime('now', 'localtime'))",
                             [cliente_id, puntosGanados, 'compra', `Compra Ticket #${ticket_id} ($${total.toFixed(2)})`, ticket_id]);
                     }
                 }
@@ -2921,7 +2956,7 @@ app.post("/api/ventas/:ticket_id/devolucion", async (req, res) => {
 
             // Registrar devolución
             await dbRun(
-                "INSERT INTO devoluciones (venta_ticket_id, producto, cantidad, monto, motivo) VALUES (?,?,?,?,?)",
+                "INSERT INTO devoluciones (venta_ticket_id, producto, cantidad, monto, motivo, fecha) VALUES (?,?,?,?,?, datetime('now', 'localtime'))",
                 [ticketId, item.producto, item.cantidad, montoDevolucion, motivo || '']
             );
 
@@ -2979,11 +3014,10 @@ app.post("/api/gastos", async (req, res) => {
         await dbRun("BEGIN TRANSACTION");
         let retiroId = null;
         if (req.body.metodo_pago === 'Retiros') {
-            const fecha = new Date().toLocaleString('es-AR');
-            const retiroResult = await dbRun("INSERT INTO retiros (descripcion, monto, fecha) VALUES (?, ?, ?)", [`Gasto: ${req.body.descripcion}`, -Math.abs(req.body.monto), fecha]);
+            const retiroResult = await dbRun("INSERT INTO retiros (descripcion, monto, fecha) VALUES (?, ?, datetime('now', 'localtime'))", [`Gasto: ${req.body.descripcion}`, -Math.abs(req.body.monto)]);
             retiroId = retiroResult.lastID;
         }
-        await dbRun("INSERT INTO gastos (descripcion, monto, categoria, metodo_pago, retiro_id) VALUES (?,?,?,?,?)", [req.body.descripcion, req.body.monto, req.body.categoria, req.body.metodo_pago || 'Efectivo', retiroId]);
+        await dbRun("INSERT INTO gastos (descripcion, monto, categoria, metodo_pago, retiro_id, fecha) VALUES (?,?,?,?,?, datetime('now', 'localtime'))", [req.body.descripcion, req.body.monto, req.body.categoria, req.body.metodo_pago || 'Efectivo', retiroId]);
         await dbRun("COMMIT");
         res.json({ success: true });
     } catch (e) { await dbRun("ROLLBACK"); res.status(500).json({ error: e.message }); }

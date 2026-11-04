@@ -14,6 +14,7 @@ import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 import { apiFetch } from "../lib/api";
 import { useNotify } from "../context/NotificationContext";
+import { parseDateSafe, formatFecha, formatHora, formatFechaHora, getLocalDateString } from "../lib/dateUtils";
 
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6", "#f97316"];
 
@@ -719,8 +720,8 @@ function SinMovimiento() {
 // ═══════════════════════════════════════════════════════════
 function ExportarReportes() {
   const { toast } = useNotify();
-  const hoy = new Date().toISOString().split("T")[0];
-  const primerDia = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split("T")[0];
+  const hoy = getLocalDateString();
+  const primerDia = getLocalDateString(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [desde, setDesde] = useState(primerDia);
   const [hasta, setHasta] = useState(hoy);
   const [cargando, setCargando] = useState(false);
@@ -755,7 +756,7 @@ function ExportarReportes() {
         Total: v.precio_total,
         "Método Pago": v.metodo_pago,
         Categoría: v.categoria,
-        Fecha: new Date(v.fecha).toLocaleString("es-AR"),
+        Fecha: formatFechaHora(v.fecha),
         Descuento: v.descuento || 0,
       }))
     );
@@ -781,7 +782,7 @@ function ExportarReportes() {
           Monto: g.monto,
           Categoría: g.categoria,
           "Método Pago": g.metodo_pago,
-          Fecha: new Date(g.fecha).toLocaleString("es-AR"),
+          Fecha: formatFechaHora(g.fecha),
         }))
       );
       XLSX.utils.book_append_sheet(wb, wsGastos, "Gastos");
@@ -841,7 +842,7 @@ function ExportarReportes() {
     doc.text("Reporte de Ventas", 105, 18, null, null, "center");
     doc.setFontSize(11);
     doc.text(
-      `Período: ${new Date(desde + "T00:00:00").toLocaleDateString("es-AR")} al ${new Date(hasta + "T00:00:00").toLocaleDateString("es-AR")}`,
+      `Período: ${formatFecha(desde)} al ${formatFecha(hasta)}`,
       105, 26, null, null, "center"
     );
     doc.line(14, 30, 196, 30);
@@ -879,7 +880,7 @@ function ExportarReportes() {
           v.cantidad,
           `$ ${v.precio_total?.toLocaleString()}`,
           v.metodo_pago,
-          new Date(v.fecha).toLocaleDateString("es-AR"),
+          formatFecha(v.fecha),
         ]),
         theme: "striped",
         headStyles: { fillColor: [37, 99, 235] },
@@ -899,7 +900,7 @@ function ExportarReportes() {
     doc.text("Balance General", 105, 18, null, null, "center");
     doc.setFontSize(11);
     doc.text(
-      `Período: ${new Date(desde + "T00:00:00").toLocaleDateString("es-AR")} al ${new Date(hasta + "T00:00:00").toLocaleDateString("es-AR")}`,
+      `Período: ${formatFecha(desde)} al ${formatFecha(hasta)}`,
       105, 26, null, null, "center"
     );
     doc.line(14, 30, 196, 30);
@@ -1089,9 +1090,9 @@ function HistorialVentas() {
   const [busqueda, setBusqueda] = useState("");
   const [desde, setDesde] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 7);
-    return d.toISOString().split("T")[0];
+    return getLocalDateString(d);
   });
-  const [hasta, setHasta] = useState(() => new Date().toISOString().split("T")[0]);
+  const [hasta, setHasta] = useState(() => getLocalDateString());
   const [metodoFiltro, setMetodoFiltro] = useState("");
   const [ticketExpandido, setTicketExpandido] = useState(null);
   const [configNegocio, setConfigNegocio] = useState({ kiosco_nombre: "", kiosco_direccion: "", kiosco_telefono: "" });
@@ -1141,7 +1142,7 @@ function HistorialVentas() {
       agrupado[v.ticket_id].descuento += Number(v.descuento_item) || 0;
     });
     // Ordenar por fecha descendente
-    return Object.values(agrupado).sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+    return Object.values(agrupado).sort((a, b) => (parseDateSafe(b.fecha)?.getTime() || 0) - (parseDateSafe(a.fecha)?.getTime() || 0));
   }, [ventas]);
 
   const imprimirTicket = (ticket) => {
@@ -1171,7 +1172,7 @@ function HistorialVentas() {
 
       // Fecha y ticket
       doc.setFontSize(8);
-      const fechaTicket = ticket.fecha ? new Date(ticket.fecha).toLocaleString("es-AR") : new Date().toLocaleString("es-AR");
+      const fechaTicket = ticket.fecha ? formatFechaHora(ticket.fecha) : formatFechaHora(new Date());
       doc.text(`Fecha: ${fechaTicket}`, margen, y);
       y += 3.5;
       doc.setFont("helvetica", "bold");
@@ -1368,7 +1369,7 @@ function HistorialVentas() {
                   <div className="flex-1 flex items-center gap-3 flex-wrap">
                     <span className="font-bold text-slate-800 min-w-[80px]">#{String(parseInt(ticket.ticket_id, 10) || ticket.ticket_id).padStart(4, '0')}</span>
                     <span className="text-sm text-slate-500">
-                      {new Date(ticket.fecha).toLocaleDateString("es-AR")} {new Date(ticket.fecha).toLocaleTimeString("es-AR", { hour: '2-digit', minute: '2-digit' })}
+                      {formatFecha(ticket.fecha)} {formatHora(ticket.fecha)}
                     </span>
                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${metodoColor(ticket.metodo_pago)}`}>
                       {ticket.metodo_pago}
@@ -1449,7 +1450,7 @@ function HistorialVentas() {
                           const items = ticket.items.map(i => `  ${i.cantidad}x ${i.producto} $${Number(i.precio_total).toFixed(0)}`).join('\n');
                           const msg = `🧾 *Comprobante de compra*\n` +
                             `📍 ${configNegocio.kiosco_nombre || 'Mi Kiosco'}\n` +
-                            `📅 ${new Date(ticket.fecha).toLocaleString('es-AR')}\n` +
+                            `📅 ${formatFechaHora(ticket.fecha)}\n` +
                             `🎫 Ticket #${ticketNum}\n\n` +
                             `${items}\n\n` +
                             `💰 *TOTAL: ${fmtMoney(ticket.total)}*\n` +
@@ -1540,8 +1541,8 @@ function HistorialVentas() {
 // VENTAS POR CATEGORÍA / MÉTODO DE PAGO
 // ═══════════════════════════════════════════════════════════
 function VentasPorCategoria() {
-  const hoy = new Date().toISOString().split("T")[0];
-  const hace30 = () => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().split("T")[0]; };
+  const hoy = getLocalDateString();
+  const hace30 = () => { const d = new Date(); d.setDate(d.getDate() - 30); return getLocalDateString(d); };
 
   const [desde, setDesde] = useState(hace30);
   const [hasta, setHasta] = useState(hoy);
@@ -1840,7 +1841,7 @@ function VentasPorCategoria() {
                               )}
                             </div>
                             <p className="text-xs text-slate-400 mt-0.5">
-                              {ticket.fecha ? new Date(ticket.fecha).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : ""}
+                              {ticket.fecha ? formatFechaHora(ticket.fecha) : ""}
                               · {ticket.items.length} item{ticket.items.length !== 1 ? "s" : ""}
                             </p>
                           </div>

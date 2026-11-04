@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { DollarSign, Calendar, Tag, Plus, Trash2, Edit2, Filter, TrendingDown, X, Save } from "lucide-react";
 import { apiFetch } from "../lib/api";
 import { useNotify } from "../context/NotificationContext";
+import { parseDateSafe, formatFecha, formatHora } from "../lib/dateUtils";
 
 function Gastos() {
   const { toast, confirmDialog } = useNotify();
@@ -190,7 +191,7 @@ function Gastos() {
     const anioActual = hoy.getFullYear();
 
     return gastos.reduce((total, gasto) => {
-      const fechaGasto = new Date(gasto.fecha);
+      const fechaGasto = parseDateSafe(gasto.fecha);
       if (fechaGasto.getMonth() === mesActual && fechaGasto.getFullYear() === anioActual) {
         return total + (parseFloat(gasto.monto) || 0);
       }
@@ -202,7 +203,7 @@ function Gastos() {
   const gastosFiltrados = gastos.filter((gasto) => {
     let coincideFecha = true;
     if (filtroFecha) {
-      const fechaGasto = new Date(gasto.fecha).toISOString().split("T")[0];
+      const fechaGasto = String(gasto.fecha || "").split(" ")[0].split("T")[0];
       coincideFecha = fechaGasto === filtroFecha;
     }
 
@@ -314,8 +315,8 @@ function Gastos() {
                   gastosFiltrados.map((g) => (
                     <tr key={g.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="p-4 text-slate-500 whitespace-nowrap">
-                        <span className="font-medium text-slate-700">{new Date(g.fecha).toLocaleDateString()}</span>
-                        <span className="block text-xs text-slate-400">{new Date(g.fecha).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} hs</span>
+                        <span className="font-medium text-slate-700">{formatFecha(g.fecha)}</span>
+                        <span className="block text-xs text-slate-400">{formatHora(g.fecha)} hs</span>
                       </td>
                       <td className="p-4 font-semibold text-slate-800">{g.descripcion}</td>
                       <td className="p-4">

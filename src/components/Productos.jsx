@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Package, Plus, Trash2, Edit, Search, Barcode, DollarSign, Settings, Check, X, Upload, FileSpreadsheet, Download, Image, History, Tag, Printer, Camera, AlertTriangle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Weight, TrendingUp, Loader2 } from "lucide-react";
 import { apiFetch, exportProductosCsv, getUploadUrl } from "../lib/api";
 import { useNotify } from "../context/NotificationContext";
+import { formatFechaHora } from "../lib/dateUtils";
 
 const UNIDADES_MEDIDA = [
   { value: 'unidad', label: 'Unidad (u.)' },
@@ -805,7 +806,7 @@ function Productos() {
                                           const variacion = h.precio_anterior > 0 ? (((h.precio_nuevo - h.precio_anterior) / h.precio_anterior) * 100).toFixed(1) : null;
                                           return (
                                             <tr key={h.id}>
-                                              <td className="p-1 text-slate-600">{new Date(h.fecha).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
+                                              <td className="p-1 text-slate-600">{formatFechaHora(h.fecha)}</td>
                                               <td className="p-1 text-right">${h.precio_anterior?.toFixed(2)}</td>
                                               <td className="p-1 text-right font-bold">${h.precio_nuevo?.toFixed(2)}</td>
                                               <td className={`p-1 text-right font-bold ${variacion > 0 ? 'text-red-600' : variacion < 0 ? 'text-green-600' : ''}`}>

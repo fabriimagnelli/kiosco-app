@@ -4,6 +4,7 @@ import jsPDF from "jspdf";
 import "jspdf-autotable";
 import { apiFetch } from "../lib/api";
 import { useNotify } from "../context/NotificationContext";
+import { formatFechaHora } from "../lib/dateUtils";
 
 function Retiros() {
   const { toast, confirmDialog } = useNotify();
@@ -112,7 +113,7 @@ function Retiros() {
     doc.text("COMPROBANTE DE RETIRO", 14, 20);
     doc.setFontSize(10);
     doc.text(`ID Transacción: #${item.id}`, 14, 26);
-    doc.text(`Fecha: ${new Date(item.fecha).toLocaleString()}`, 14, 32);
+    doc.text(`Fecha: ${formatFechaHora(item.fecha)}`, 14, 32);
 
     doc.setLineWidth(0.5);
     doc.line(14, 36, 196, 36);
@@ -203,7 +204,7 @@ function Retiros() {
                 const badge = getBadge(item);
                 return (
                   <tr key={item.id} className="border-b hover:bg-slate-50 transition-colors">
-                    <td className="p-4 text-sm text-slate-600">{new Date(item.fecha).toLocaleString()}</td>
+                    <td className="p-4 text-sm text-slate-600">{formatFechaHora(item.fecha)}</td>
                     <td className="p-4 font-medium text-slate-700">{item.descripcion}</td>
                     <td className="p-4">
                       <span className={`px-2 py-1 rounded text-xs font-bold ${badge.cls}`}>

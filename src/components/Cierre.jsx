@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Archive, Cigarette, History, Calendar, DollarSign, TrendingUp, TrendingDown, ChevronLeft, ShoppingCart, Receipt, ArrowDown, Camera, X, Search, ChevronDown, ChevronUp } from "lucide-react";
 import CierreGeneral from "./CierreGeneral";
 import { apiFetch, getUploadUrl } from "../lib/api";
+import { formatFechaHora } from "../lib/dateUtils";
 
 function Cierre() {
   const [tabActiva, setTabActiva] = useState("general");
@@ -42,7 +43,7 @@ function Cierre() {
       (filtroTipo === "cigarrillos" && c.tipo === "cigarrillos");
     const pasaBusqueda = !busqueda || 
       (c.observacion && c.observacion.toLowerCase().includes(busqueda.toLowerCase())) ||
-      new Date(c.fecha).toLocaleString("es-AR").includes(busqueda);
+      formatFechaHora(c.fecha).includes(busqueda);
     return pasaTipo && pasaBusqueda;
   });
 
@@ -137,7 +138,7 @@ function Cierre() {
                             <div>
                               <p className="font-bold text-slate-700">{c.tipo === 'cigarrillos' ? 'Cierre Cigarrillos' : 'Cierre General'}</p>
                               <p className="text-sm text-slate-500 flex items-center gap-1">
-                                <Calendar size={14}/> {new Date(c.fecha).toLocaleString('es-AR')}
+                                <Calendar size={14}/> {formatFechaHora(c.fecha)}
                               </p>
                             </div>
                           </div>

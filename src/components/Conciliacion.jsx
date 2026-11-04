@@ -2,12 +2,13 @@ import React, { useState, useEffect } from "react";
 import { Building2, Search, Calendar, DollarSign, TrendingUp, TrendingDown, AlertTriangle, CheckCircle, Save, History, ChevronDown, ChevronUp, Download } from "lucide-react";
 import { apiFetch } from "../lib/api";
 import { useNotify } from "../context/NotificationContext";
+import { getLocalDateString, formatFecha, formatFechaHora } from "../lib/dateUtils";
 
 function Conciliacion() {
   const { toast, confirmDialog } = useNotify();
   // Fechas por defecto: última semana
-  const hoy = new Date().toISOString().split('T')[0];
-  const haceUnaSemana = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const hoy = getLocalDateString();
+  const haceUnaSemana = getLocalDateString(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
 
   const [desde, setDesde] = useState(haceUnaSemana);
   const [hasta, setHasta] = useState(hoy);
@@ -185,7 +186,7 @@ function Conciliacion() {
                     {datos.por_dia.map((d, i) => (
                       <tr key={i} className="border-t border-slate-50 hover:bg-slate-50">
                         <td className="p-3 font-medium text-slate-700">
-                          {new Date(d.fecha + 'T00:00:00').toLocaleDateString('es-AR')}
+                          {formatFecha(d.fecha)}
                         </td>
                         <td className="p-3 text-center text-slate-500">{d.cantidad}</td>
                         <td className="p-3 text-right font-bold text-indigo-600">${d.total.toLocaleString()}</td>
@@ -253,9 +254,9 @@ function Conciliacion() {
                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
                           <div>
                             <p className="text-sm font-bold text-slate-700">
-                              {new Date(c.fecha_desde + 'T00:00:00').toLocaleDateString('es-AR')} — {new Date(c.fecha_hasta + 'T00:00:00').toLocaleDateString('es-AR')}
+                              {formatFecha(c.fecha_desde)} — {formatFecha(c.fecha_hasta)}
                             </p>
-                            <p className="text-xs text-slate-400">{new Date(c.fecha).toLocaleString('es-AR')}</p>
+                            <p className="text-xs text-slate-400">{formatFechaHora(c.fecha)}</p>
                           </div>
                           <div className="flex gap-4 text-sm">
                             <div className="text-center">
@@ -284,7 +285,7 @@ function Conciliacion() {
                           <p className="font-bold text-slate-500 mb-2">Desglose por día:</p>
                           {c.items.map((d, i) => (
                             <div key={i} className="flex justify-between py-1">
-                              <span>{new Date(d.fecha + 'T00:00:00').toLocaleDateString('es-AR')}</span>
+                              <span>{formatFecha(d.fecha)}</span>
                               <span className="font-bold">${d.total?.toLocaleString()} ({d.cantidad} txns)</span>
                             </div>
                           ))}

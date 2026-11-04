@@ -2,22 +2,15 @@ import React, { useState, useEffect, useRef } from "react";
 import { User, Plus, Search, Trash2, Edit2, Phone, MapPin, Save, X, Eye, Calendar, Star, Gift, AlertTriangle, TrendingUp, Clock, Bell, DollarSign, CreditCard, Award, ChevronDown, ChevronUp, History, Shield, Percent, Loader2, CheckCircle, Lock, Snowflake, RotateCcw, CheckSquare, Square, Layers, ArrowRight } from "lucide-react";
 import { apiFetch } from "../lib/api";
 import { useNotify } from "../context/NotificationContext";
+import { parseDateSafe, formatFecha, formatHora } from "../lib/dateUtils";
 
 // Formato de números en es-AR: separador de miles con punto y decimales con coma (ej: 1.000,00)
 const fmtMonto = (n, dec = 2) => (Number(n) || 0).toLocaleString("es-AR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
 const fmtNro = (n) => (Number(n) || 0).toLocaleString("es-AR");
 
-// La BD guarda las fechas en UTC (CURRENT_TIMESTAMP de SQLite). Se interpretan como UTC
-// y se muestran convertidas a la hora local, así la hora coincide con la de la venta.
-const parseFechaDB = (fecha) => {
-  if (!fecha) return null;
-  const texto = String(fecha);
-  const iso = texto.includes("T") ? texto : texto.replace(" ", "T");
-  const d = new Date(/Z$|[+-]\d{2}:\d{2}$/.test(iso) ? iso : iso + "Z");
-  return Number.isNaN(d.getTime()) ? null : d;
-};
-const fmtFecha = (fecha) => { const d = parseFechaDB(fecha); return d ? d.toLocaleDateString("es-AR") : "—"; };
-const fmtHora = (fecha) => { const d = parseFechaDB(fecha); return d ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"; };
+const parseFechaDB = (fecha) => parseDateSafe(fecha);
+const fmtFecha = (fecha) => formatFecha(fecha);
+const fmtHora = (fecha) => formatHora(fecha);
 
 // Traduce un saldo con signo a algo entendible por el cajero: nunca se muestran números negativos
 const formatearSaldo = (monto) => {
@@ -760,7 +753,7 @@ function Deudores() {
                     <span className="font-bold text-slate-700">{a.nombre}</span>
                     {a.telefono && <span className="text-slate-400 text-xs ml-2"><Phone size={10} className="inline" /> {a.telefono}</span>}
                     <div className="text-xs text-red-500 mt-0.5">
-                      <Clock size={10} className="inline" /> Primer fiado: {new Date(a.fiado_mas_antiguo).toLocaleDateString('es-AR')} ({a.dias_desde_primer_fiado} días)
+                      <Clock size={10} className="inline" /> Primer fiado: {fmtFecha(a.fiado_mas_antiguo)} ({a.dias_desde_primer_fiado} días)
                     </div>
                   </div>
                   <div className="text-right">
@@ -1481,7 +1474,7 @@ function Deudores() {
                       <tbody className="divide-y divide-slate-100 text-sm">
                         {historialPuntos.map(h => (
                           <tr key={h.id} className="hover:bg-slate-50">
-                            <td className="p-3 text-slate-500 text-xs">{new Date(h.fecha).toLocaleDateString('es-AR')}</td>
+                            <td className="p-3 text-slate-500 text-xs">{fmtFecha(h.fecha)}</td>
                             <td className="p-3">
                               <span className={`px-2 py-0.5 rounded text-xs font-bold ${h.tipo === 'compra' ? 'bg-green-100 text-green-700' : h.tipo === 'canje' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
                                 {h.tipo === 'compra' ? 'Compra' : h.tipo === 'canje' ? 'Canje' : 'Ajuste'}
